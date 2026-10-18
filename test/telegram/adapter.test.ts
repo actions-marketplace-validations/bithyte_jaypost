@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   formatCallbackData,
+  formatDismissData,
+  parseDismissData,
   createTelegramMessenger,
   handlePairingMessage,
   createOnPaired,
@@ -79,17 +81,26 @@ function fakeBot() {
   const on = vi.fn((_filter: string, h: typeof handler) => {
     handler = h
   })
-  const run = (fromId: number, data: string | undefined) => {
+  const run = (
+    fromId: number,
+    data: string | undefined,
+    deleteMessage = vi.fn(async () => true),
+  ) => {
     const answerCallbackQuery = vi.fn(async () => true)
-    const p = handler({ from: { id: fromId }, callbackQuery: { data }, answerCallbackQuery })
-    return { answerCallbackQuery, p }
+    const p = handler({
+      from: { id: fromId },
+      callbackQuery: { data },
+      answerCallbackQuery,
+      deleteMessage,
+    })
+    return { answerCallbackQuery, deleteMessage, p }
   }
   return { bot: { on } as unknown as Bot, on, run }
 }
 
 test('handler: owner accepted answers silently', async () => {
   const { bot, on, run } = fakeBot()
-  registerTapHandler(bot, { id: 42 }, () => 'accepted')
+  registerTapHandler(bot, { id: 42 }, () => 'accepted', vi.fn())
   expect(on).toHaveBeenCalledWith('callback_query:data', expect.any(Function))
   const { answerCallbackQuery, p } = run(42, 'abc:0')
   await p
@@ -98,7 +109,7 @@ test('handler: owner accepted answers silently', async () => {
 
 test('handler: expired shows Expired', async () => {
   const { bot, run } = fakeBot()
-  registerTapHandler(bot, { id: 42 }, () => 'expired')
+  registerTapHandler(bot, { id: 42 }, () => 'expired', vi.fn())
   const { answerCallbackQuery, p } = run(42, 'abc:0')
   await p
   expect(answerCallbackQuery).toHaveBeenCalledWith({ text: 'Expired' })
@@ -107,11 +118,98 @@ test('handler: expired shows Expired', async () => {
 test('handler: non-owner ignored, tap not called, no text', async () => {
   const { bot, run } = fakeBot()
   const tap = vi.fn()
-  registerTapHandler(bot, { id: 42 }, tap)
+  registerTapHandler(bot, { id: 42 }, tap, vi.fn())
   const { answerCallbackQuery, p } = run(7, 'abc:0')
   await p
   expect(tap).not.toHaveBeenCalled()
   expect(answerCallbackQuery).toHaveBeenCalledWith()
+})
+
+test('handler: owner dismiss deletes the message and calls dismiss', async () => {
+  const { bot, run } = fakeBot()
+  const tap = vi.fn()
+  const dismiss = vi.fn(() => true)
+  registerTapHandler(bot, { id: 42 }, tap, dismiss)
+  const { answerCallbackQuery, deleteMessage, p } = run(42, 'dismiss/id1')
+  await p
+  expect(dismiss).toHaveBeenCalledWith('id1')
+  expect(deleteMessage).toHaveBeenCalledTimes(1)
+  expect(answerCallbackQuery).toHaveBeenCalledWith()
+  expect(tap).not.toHaveBeenCalled()
+})
+
+test('handler: dismiss for unknown id still deletes the message', async () => {
+  const { bot, run } = fakeBot()
+  registerTapHandler(bot, { id: 42 }, vi.fn(), () => false)
+  const { answerCallbackQuery, deleteMessage, p } = run(42, 'dismiss/gone')
+  await p
+  expect(deleteMessage).toHaveBeenCalledTimes(1)
+  expect(answerCallbackQuery).toHaveBeenCalledWith()
+})
+
+test('handler: failed dismiss delete is logged and the tap answered', async () => {
+  const { bot, run } = fakeBot()
+  const log = vi.fn()
+  registerTapHandler(bot, { id: 42 }, vi.fn(), () => true, log)
+  const deleteMessage = vi.fn(async () => {
+    throw new Error('message to delete not found')
+  })
+  const { answerCallbackQuery, p } = run(42, 'dismiss/id1', deleteMessage)
+  await expect(p).resolves.toBeUndefined()
+  expect(log).toHaveBeenCalledWith('failed to delete notification: message to delete not found')
+  expect(answerCallbackQuery).toHaveBeenCalledWith()
+})
+
+test('handler: non-owner dismiss is ignored', async () => {
+  const { bot, run } = fakeBot()
+  const dismiss = vi.fn()
+  registerTapHandler(bot, { id: 42 }, vi.fn(), dismiss)
+  const { answerCallbackQuery, deleteMessage, p } = run(7, 'dismiss/id1')
+  await p
+  expect(dismiss).not.toHaveBeenCalled()
+  expect(deleteMessage).not.toHaveBeenCalled()
+  expect(answerCallbackQuery).toHaveBeenCalledWith()
+})
+
+test('formatDismissData format', () => expect(formatDismissData('abc')).toBe('dismiss/abc'))
+
+test('formatDismissData fits 64 bytes with a UUID', () => {
+  expect(Buffer.byteLength(formatDismissData(crypto.randomUUID()))).toBeLessThanOrEqual(64)
+})
+
+test("dismiss and approval payloads don't overlap", () => {
+  expect(parseDismissData(formatDismissData('abc'))).toBe('abc')
+  expect(parseDismissData('abc:0')).toBeUndefined()
+  expect(parseDismissData('dismiss/abc:0')).toBeUndefined()
+  const tap = vi.fn()
+  expect(routeTap(42, formatDismissData('abc'), 42, tap)).toBe('expired')
+  expect(tap).not.toHaveBeenCalled()
+})
+
+test('sendNotification sends text with one Dismiss button', async () => {
+  const sendMessage = vi.fn(async () => ({ message_id: 5, chat: { id: 42 } }))
+  const bot = { api: { sendMessage } } as unknown as Bot
+  const ref = await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', 'hi')
+  expect(ref).toEqual({ chatId: 42, messageId: 5 })
+  expect(sendMessage).toHaveBeenCalledWith(42, 'hi', {
+    reply_markup: { inline_keyboard: [[{ text: 'Dismiss', callback_data: 'dismiss/id1' }]] },
+  })
+})
+
+test('sendNotification throws when unpaired', async () => {
+  const sendMessage = vi.fn()
+  const bot = { api: { sendMessage } } as unknown as Bot
+  await expect(
+    createTelegramMessenger(bot, { id: undefined }).sendNotification('id1', 'hi'),
+  ).rejects.toThrow()
+  expect(sendMessage).not.toHaveBeenCalled()
+})
+
+test('deleteMessage deletes by reference', async () => {
+  const deleteMessage = vi.fn(async () => true)
+  const bot = { api: { deleteMessage } } as unknown as Bot
+  await createTelegramMessenger(bot, { id: 42 }).deleteMessage({ chatId: 42, messageId: 5 })
+  expect(deleteMessage).toHaveBeenCalledWith(42, 5)
 })
 
 test('tap with no owner is ignored', () => {

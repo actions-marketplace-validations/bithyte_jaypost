@@ -30,7 +30,12 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
   const owner: Owner = { id: config.ownerId }
   const bot = new Bot(config.botToken)
   const service = new ApprovalService(createTelegramMessenger(bot, owner))
-  registerTapHandler(bot, owner, (id, optionIndex) => service.tap(id, optionIndex))
+  registerTapHandler(
+    bot,
+    owner,
+    (id, optionIndex) => service.tap(id, optionIndex),
+    () => false,
+  )
   // Log handler errors instead of crashing; grammY's error text doesn't include the token.
   bot.catch((error) => {
     console.error('bot error:', error.error instanceof Error ? error.error.message : error.error)

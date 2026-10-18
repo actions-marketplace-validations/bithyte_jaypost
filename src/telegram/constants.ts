@@ -10,3 +10,7 @@ export const START_COMMAND_PATTERN = /^\/start(@\w+)?/i
 export const CODE_SEPARATOR_PATTERN = /[-\s]/g
 /** Matches `<id>:<optionIndex>`, the format `formatCallbackData` writes. */
 export const CALLBACK_DATA_PATTERN = /^([^:]+):(\d+)$/
+/** Label of the button that deletes a notification. */
+export const DISMISS_LABEL = 'Dismiss'
+/** Matches `dismiss/<id>`, the format `formatDismissData` writes; no `:`, so never an approval tap. */
+export const DISMISS_DATA_PATTERN = /^dismiss\/([^:]+)$/

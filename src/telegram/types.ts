@@ -23,3 +23,6 @@ export type PairingMessage = {
  * index is invalid.
  */
 export type Tap = (id: string, optionIndex: number) => 'accepted' | 'expired'
+
+/** Clears the expiry of notification `id`; false when it is unknown or already expired. */
+export type Dismiss = (id: string) => boolean
