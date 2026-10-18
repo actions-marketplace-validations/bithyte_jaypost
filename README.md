@@ -85,12 +85,14 @@ telegram-ask test
 telegram-ask reset-owner
 telegram-ask uninstall
 telegram-ask start
+telegram-ask mcp [--port N]
 ```
 
 - `status`: target, version, port, whether it's running, and pairing state (with the code and instructions if unpaired). The daemon's `/status` returns `provider` and `displayName` along with `paired` and `bot`, plus `code` and `instructions` while unpaired.
 - `test`: sends "This is a test" with Approve/Decline buttons (Decline on timeout) and prints the response.
 - `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the token and owner without asking. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
+- `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [MCP server](#mcp-server).
 
 ## One instance per token
 
@@ -169,6 +171,47 @@ Errors are JSON `{ "error": "..." }`:
 | 500    | Internal error.                                                         |
 
 Known issue: the 8-hour timers live in memory. If the service restarts before a notification's 8 hours are up, that message stays in the chat until you dismiss it (Dismiss still works after a restart).
+
+## MCP server
+
+`telegram-ask mcp [--port N]` is a stdio MCP server with two tools that forward to the API above. `project_name` shows as `[name]` on the first line of the message, so you can tell which agent is asking.
+
+`ask_for_permission` asks a question with buttons and waits for the tap or the timeout:
+
+| Param             | Type     | Required | Notes                                                 |
+| ----------------- | -------- | -------- | ----------------------------------------------------- |
+| `project_name`    | string   | yes      | Max 100 chars.                                        |
+| `text`            | string   | yes      | The question.                                         |
+| `options`         | string[] | yes      | Button labels, unique, max 64 chars each.             |
+| `timeout_option`  | string   | yes      | Answer returned on timeout. Must be one of `options`. |
+| `timeout_seconds` | number   | no       | Default and max 300; longer values are capped to 300. |
+
+It returns the answer as text (with `(timed out, no answer from the user)` appended on timeout) and as structured content `{ "answer": "...", "timed_out": false }`.
+
+`notify_user` sends a message that doesn't need an answer and returns `sent` once Telegram accepts it:
+
+| Param          | Type   | Required | Notes          |
+| -------------- | ------ | -------- | -------------- |
+| `project_name` | string | yes      | Max 100 chars. |
+| `text`         | string | yes      | The message.   |
+
+Register it with Claude Code:
+
+```
+claude mcp add telegram-ask -- telegram-ask mcp
+```
+
+In a container or anywhere the package isn't installed, use `npx -y telegram-ask mcp` as the command. Other clients take the usual JSON:
+
+```json
+{ "mcpServers": { "telegram-ask": { "command": "telegram-ask", "args": ["mcp"] } } }
+```
+
+The port comes from `--port`, then `PORT`, then the install's `install.json`, then 8787. If you run `start` by hand on a custom port without an install, pass `--port` or set `PORT`.
+
+The service has to be running. A call made while it's down returns an error to the agent; the MCP server stays up, so the next call works once the service is back.
+
+`project` needs a service at least as new as this release. An older service sends the message without the project line, and `notify_user` reports that the service is too old. Re-run `init` to upgrade.
 
 ## Security
 

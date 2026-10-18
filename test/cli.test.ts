@@ -25,3 +25,8 @@ test('init --help lists --provider', async () => {
   expect(await main(['init', '--help'])).toBe(0)
   expect(write.mock.calls.map((call) => String(call[0])).join('')).toContain('--provider <name>')
 })
+
+test('mcp rejects a bad port with 2', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  expect(await main(['mcp', '--port', 'abc'])).toBe(2)
+})

@@ -19,6 +19,7 @@ import type { InitArgs } from './commands/index.ts'
 import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
 import { runService } from './daemon/index.ts'
 import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
+import { resolveMcpPort, runMcp } from './mcp/index.ts'
 import type { InstallPaths, Target, TargetName } from './install/index.ts'
 import { PROVIDERS } from './provider/index.ts'
 import { isPortFree, realExec } from './system/index.ts'
@@ -186,6 +187,16 @@ export async function main(argv: readonly string[]): Promise<number> {
     .description('remove the service')
     .action(async () => {
       code = await runUninstallCommand()
+    })
+  program
+    .command('mcp')
+    .description('run an MCP server on stdin/stdout for agents')
+    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .action(async (options: { readonly port?: number }) => {
+      // Not resolvePort(): that reads config.json, which an agent's container may not have.
+      code = await runMcp(
+        resolveMcpPort(options.port, process.env, resolveInstallPaths().installFile),
+      )
     })
   // Runs inside containers to read or clear the owner in the data volume.
   program
