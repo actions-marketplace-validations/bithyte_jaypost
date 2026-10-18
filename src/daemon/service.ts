@@ -22,17 +22,14 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   }
-
   const owner: Owner = { id: config.ownerId }
   const bot = new Bot(config.botToken)
   const service = new ApprovalService(createTelegramMessenger(bot, owner))
   registerTapHandler(bot, owner, (id, optionIndex) => service.tap(id, optionIndex))
-
   // Log handler errors instead of crashing; grammY's error text doesn't include the token.
   bot.catch((error) => {
     console.error('bot error:', error.error instanceof Error ? error.error.message : error.error)
   })
-
   try {
     await bot.init()
   } catch (error) {
@@ -45,7 +42,6 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     process.exit(1)
   }
   const botUsername = bot.botInfo.username
-
   let pairing: Pairing | undefined
   if (owner.id === undefined) {
     const code = generateCode()
@@ -55,7 +51,6 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     )
     registerPairingHandler(bot, pairing, createOnPaired(owner, resolveConfigPath(env)))
   }
-
   const server = createApiServer(service, () =>
     owner.id !== undefined || pairing === undefined || pairing.code === undefined
       ? { paired: true, bot: botUsername }
@@ -68,7 +63,6 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
       process.exit(1)
     },
   )
-
   let stopping = false
   function shutdown(): void {
     if (stopping) {
@@ -84,7 +78,6 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
   }
   process.on('SIGTERM', shutdown)
   process.on('SIGINT', shutdown)
-
   bot
     .start({ onStart: (botUser) => console.log(`bot @${botUser.username} polling`) })
     .catch((error: unknown) => {

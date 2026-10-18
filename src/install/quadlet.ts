@@ -23,7 +23,6 @@ export function createQuadletTarget(deps: TargetDeps): Target {
   const { exec, paths, user } = deps
   const envPath = join(paths.quadletDirectory, '.env')
   const systemctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
-
   return {
     name: 'quadlet',
     async available() {

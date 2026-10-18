@@ -20,7 +20,6 @@ export function createComposeTarget(deps: TargetDeps): Target {
   const envPath = join(paths.composeDirectory, '.env')
   const compose = (args: readonly string[], options?: { readonly inherit?: boolean }) =>
     exec('docker', ['compose', '-f', file, ...args], options)
-
   return {
     name: 'compose',
     async available() {

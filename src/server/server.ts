@@ -11,11 +11,9 @@ export function createApiServer(
 ): FastifyInstance {
   // Pending requests can hang for minutes; close() shouldn't wait for them.
   const app = Fastify({ bodyLimit: MAX_BODY_BYTES, forceCloseConnections: true })
-
   // Take the body as text whatever the content type, so bad JSON gets our own 400.
   app.removeAllContentTypeParsers()
   app.addContentTypeParser('*', { parseAs: 'string' }, (_request, body, done) => done(null, body))
-
   app.setNotFoundHandler((request, reply) => {
     // Not new URL(): it throws on targets like '//'.
     const path = request.url.split('?')[0]
@@ -27,7 +25,6 @@ export function createApiServer(
     }
     return reply.code(404).send({ error: 'not found' })
   })
-
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof SendError) {
       return reply.code(502).send({ error: 'failed to send Telegram message' })
@@ -43,9 +40,7 @@ export function createApiServer(
     console.error('unexpected error handling /request', error)
     return reply.code(500).send({ error: 'internal server error' })
   })
-
   app.get('/status', async () => status())
-
   app.post<{ Body: string | undefined }>('/request', async (request, reply) => {
     if (!status().paired) {
       return reply.code(503).send({ error: 'not paired' })
@@ -56,12 +51,10 @@ export function createApiServer(
     } catch {
       return reply.code(400).send({ error: 'body must be valid JSON' })
     }
-
     const parsed = parseApprovalRequest(json)
     if (!parsed.ok) {
       return reply.code(400).send({ error: parsed.error })
     }
-
     const controller = new AbortController()
     reply.raw.on('close', () => {
       if (!reply.raw.writableEnded) {
@@ -72,7 +65,6 @@ export function createApiServer(
     if (reply.raw.destroyed) {
       controller.abort()
     }
-
     const result = await service.request(parsed.value, controller.signal)
     if (result.kind === 'cancelled') {
       // Normally because the client is gone, so this write is a no-op.
@@ -80,6 +72,5 @@ export function createApiServer(
     }
     return result.outcome
   })
-
   return app
 }

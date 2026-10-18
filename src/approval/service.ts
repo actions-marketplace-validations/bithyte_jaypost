@@ -29,7 +29,6 @@ export class ApprovalService {
     } catch (cause) {
       throw new SendError('failed to send approval request', { cause })
     }
-
     const settled = this.#pending.open(id, request)
     const onAbort = () => {
       this.#pending.cancel(id)
@@ -40,10 +39,8 @@ export class ApprovalService {
     } else {
       signal?.addEventListener('abort', onAbort, { once: true })
     }
-
     const settlement = await settled
     signal?.removeEventListener('abort', onAbort)
-
     try {
       await this.#messenger.finalize(
         reference,
@@ -52,7 +49,6 @@ export class ApprovalService {
     } catch (error) {
       console.error('failed to finalize approval message', error)
     }
-
     if (settlement.kind === 'cancelled') {
       return CANCELLED_RESULT
     }

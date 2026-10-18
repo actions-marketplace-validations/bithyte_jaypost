@@ -66,7 +66,6 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
   const configFile = resolveDefaultConfigFile(paths, env)
   const resolveConfigFile = (record: InstallRecord) => record.configFile ?? configFile
   const fallbackRoot = join(paths.userNpmPrefix, 'lib', 'node_modules')
-
   async function resolveCli(options: InstallOptions): Promise<string> {
     const root = (await exec('npm', ['root', '-g'])).stdout.trim()
     if (isUnder(cli.selfPath, root)) {
@@ -99,7 +98,6 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
     }
     return join(installRoot, PACKAGE_NAME, 'dist', 'cli.js')
   }
-
   return {
     name: 'systemd',
     async available() {

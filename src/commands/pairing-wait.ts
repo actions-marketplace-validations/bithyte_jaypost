@@ -37,7 +37,6 @@ export async function waitForPairing(options: WaitOptions): Promise<WaitResult> 
   const began = Date.now()
   let answered = false
   let shown = false
-
   for (;;) {
     if (options.signal?.aborted) {
       print(

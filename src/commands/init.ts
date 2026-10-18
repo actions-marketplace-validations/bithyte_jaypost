@@ -51,7 +51,6 @@ export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
 async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Promise<number> {
   const { print, prompt } = deps
   const env = deps.env ?? process.env
-
   const detected = await detectTargets(deps.targets)
   let name: TargetName
   if (args.target) {
@@ -83,7 +82,6 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     )
   }
   const target = deps.targets[name]
-
   let secrets: Secrets = {}
   let record: InstallRecord | undefined
   const existing = findExistingInstall(deps.paths, deps.targets, env)
@@ -115,7 +113,6 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
       print('Found a bot token kept from an earlier install.')
     }
   }
-
   let token: string | undefined
   if (secrets.token) {
     const bot = await findBotUsername(deps, secrets.token)
@@ -136,13 +133,11 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
       print('Telegram rejected that token (or could not be reached). Try again.')
     }
   }
-
   const port = args.port ?? record?.port ?? DEFAULT_PORT
   if (!(await deps.isPortFree(port))) {
     print(`Port ${port} is in use. Pick another with --port.`)
     return 1
   }
-
   const installed = await target.install({
     version: deps.version,
     port,
@@ -152,7 +147,6 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     print,
   })
   writeInstall(deps.paths.installFile, installed)
-
   const result = await deps.wait({
     port,
     isRunning: () => target.isRunning(installed),
