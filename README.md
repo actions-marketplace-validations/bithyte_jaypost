@@ -12,7 +12,7 @@ npx telegram-ask init
 
 Create a bot with @BotFather first and have the token ready. `init`:
 
-1. Detects which targets work here (Podman Quadlet, Docker Compose, systemd) and asks where the bot should run. The first usable one in that order is the default. Or pass it: `init quadlet`, `init compose`, `init systemd`.
+1. Detects which targets work here (Podman Quadlet, Docker Compose, systemd) and asks where the bot should run. The first usable one in that order is the default. Or pass it: `init quadlet`, `init compose`, `init systemd`. `--provider NAME` picks the chat app; only `telegram` exists for now, and it's the default.
 2. Asks for the bot token (input hidden) and checks it with Telegram. Port is 8787; use `--port N` to change it. It refuses a port that's already in use.
 3. Installs and starts the service, then waits for pairing.
 
@@ -74,12 +74,12 @@ No container. `init` installs the package globally with npm (`npm i -g`), or int
 
 Logs: `journalctl --user -u telegram-ask -f`. Linger is handled as for Quadlet.
 
-Config is read from `$TELEGRAM_ASK_CONFIG`, else `$XDG_CONFIG_HOME/telegram-ask/config.json`, else `~/.config/telegram-ask/config.json`. The env vars `BOT_TOKEN`, `OWNER_ID`, `PORT` and `HOST` override the file. `HOST` defaults to `127.0.0.1` (the container targets set `0.0.0.0` inside the container and publish only on `127.0.0.1`).
+Config is read from `$TELEGRAM_ASK_CONFIG`, else `$XDG_CONFIG_HOME/telegram-ask/config.json`, else `~/.config/telegram-ask/config.json`. The env vars `PROVIDER`, `BOT_TOKEN`, `OWNER_ID`, `PORT` and `HOST` override the file. `PROVIDER` picks the chat app and defaults to `telegram`, which is the only one for now. `HOST` defaults to `127.0.0.1` (the container targets set `0.0.0.0` inside the container and publish only on `127.0.0.1`).
 
 ## Commands
 
 ```
-telegram-ask init [systemd|compose|quadlet] [--port N]
+telegram-ask init [systemd|compose|quadlet] [--port N] [--provider NAME]
 telegram-ask status
 telegram-ask test
 telegram-ask reset-owner
@@ -87,9 +87,9 @@ telegram-ask uninstall
 telegram-ask start
 ```
 
-- `status`: target, version, port, whether it's running, and pairing state (with the code if unpaired).
+- `status`: target, version, port, whether it's running, and pairing state (with the code and instructions if unpaired). The daemon's `/status` returns `provider` and `displayName` along with `paired` and `bot`, plus `code` and `instructions` while unpaired.
 - `test`: sends "This is a test" with Approve/Decline buttons (Decline on timeout) and prints the response.
-- `uninstall`: stops and removes the service, then asks whether to also delete the bot token and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the token and owner without asking. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
+- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the token and owner without asking. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
 
 ## One instance per token
@@ -131,7 +131,7 @@ Errors are JSON `{ "error": "..." }`:
 | ------ | ----------------------------------------------------------------------- |
 | 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram. |
 | 413    | Body over 64 KiB.                                                       |
-| 502    | Telegram message couldn't be sent.                                      |
+| 502    | Message couldn't be sent.                                               |
 | 500    | Internal error, or the request was cancelled.                           |
 | 404    | Path isn't `/request`, `/notify` or `/status`.                          |
 | 405    | Method isn't POST.                                                      |
@@ -161,7 +161,7 @@ Errors are JSON `{ "error": "..." }`:
 | 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram. |
 | 413    | Body over 64 KiB.                                                       |
 | 501    | Notifications aren't supported.                                         |
-| 502    | Telegram message couldn't be sent.                                      |
+| 502    | Message couldn't be sent.                                               |
 | 503    | Not paired yet.                                                         |
 | 405    | Method isn't POST.                                                      |
 | 500    | Internal error.                                                         |

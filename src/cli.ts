@@ -132,7 +132,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const program = new Command('telegram-ask').version(VERSION, '-v, --version').exitOverride()
   program
     .command('init')
-    .description('set up the bot token and install the service')
+    .description('set up the chat provider and install the service')
     .addArgument(new Argument('[target]').choices(TARGET_ORDER))
     .option('--port <n>', "API port (default 8787, or the existing install's)", parsePort)
     .addOption(

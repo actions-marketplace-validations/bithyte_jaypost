@@ -41,7 +41,7 @@ export function resolveConfigDirectory(env: NodeJS.ProcessEnv = process.env): st
 
 /**
  * Returns {} when the file is missing. Throws on invalid JSON or fields, without quoting the file,
- * since it may hold the bot token. Read errors other than a missing file are rethrown.
+ * since it may hold provider secrets. Read errors other than a missing file are rethrown.
  */
 export function readConfigFile(path: string): FileConfig {
   let text: string
@@ -57,12 +57,12 @@ export function readConfigFile(path: string): FileConfig {
   try {
     parsed = JSON.parse(text)
   } catch {
-    // Don't include the parser's message: V8 can quote part of the file, which may hold the bot
-    // token.
+    // Don't include the parser's message: V8 can quote part of the file, which may hold a
+    // secret.
     throw new Error(`config file ${JSON.stringify(path)} contains invalid JSON; ${INIT_HINT}`)
   }
   const result = fileConfigSchema.safeParse(parsed)
-  // Don't include zod's issues either; keep the token out of error output.
+  // Don't include zod's issues either; keep secrets out of error output.
   if (!result.success) {
     throw new Error(
       `config file ${JSON.stringify(path)} has invalid or missing fields; ${INIT_HINT}`,
@@ -83,7 +83,7 @@ function toInteger(value: unknown): number | undefined {
 
 /**
  * Provider (PROVIDER env, else the file, else telegram), its settings, port and host. Env vars
- * (e.g. BOT_TOKEN, PORT, HOST) override the config file. Throws a user-facing error on an unknown
+ * (e.g. PROVIDER, PORT, HOST) override the config file. Throws a user-facing error on an unknown
  * provider, a missing required setting, or an invalid setting or port; read errors other than a
  * missing config file are rethrown.
  */

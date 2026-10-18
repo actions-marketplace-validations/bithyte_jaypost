@@ -10,5 +10,5 @@ export const DEFAULT_HOST = '127.0.0.1'
 export const INIT_HINT = 'run `telegram-ask init` to set up the bot'
 /** Accepts optionally signed whole numbers in env values. */
 export const INTEGER_PATTERN = /^-?\d+$/
-/** Owner read/write only, for files that hold the bot token. */
+/** Owner read/write only, for files that hold provider secrets. */
 export const SECRET_FILE_MODE = 0o600
