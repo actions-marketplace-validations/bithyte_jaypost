@@ -21,7 +21,7 @@ export type InstallPaths = {
   readonly userNpmPrefix: string
 }
 
-/** Provider name and its settings found in an existing install; a setting is absent when not found. */
+/** Provider name and its settings found in an existing install; absent settings weren't found. */
 export type Secrets = {
   readonly provider: string
   readonly settings: SettingValues

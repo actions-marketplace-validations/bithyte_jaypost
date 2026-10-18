@@ -7,7 +7,7 @@ import {
   writeInstall,
 } from '../install/index.ts'
 import type { InstallRecord, Secrets, TargetName } from '../install/index.ts'
-import { listSecretValues } from '../provider/index.ts'
+import { findProvider, listSecretValues } from '../provider/index.ts'
 import type { Provider, SettingValues } from '../provider/index.ts'
 import { TARGET_LABELS } from './constants.ts'
 import { PromptAborted } from './prompts.ts'
@@ -23,6 +23,15 @@ async function findDisplayName(
   } catch {
     return undefined
   }
+}
+
+/** Secret values of `secrets` when its provider is registered; [] otherwise. */
+function listKnownSecretValues(deps: InitDeps, secrets: Secrets | undefined): readonly string[] {
+  const provider =
+    secrets === undefined ? undefined : findProvider(deps.providers, secrets.provider)
+  return provider === undefined || secrets === undefined
+    ? []
+    : listSecretValues(provider, secrets.settings)
 }
 
 class Aborted extends Error {}
@@ -113,6 +122,8 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     }
     const old = deps.targets[record.target]
     secrets = await old.readSecrets(record)
+    // Mask before anything below can fail with a reused credential in its message.
+    seen.push(...listKnownSecretValues(deps, secrets))
     // Record a legacy install too, so a failed run below can still find its config on retry.
     if (existing.legacy) {
       writeInstall(deps.paths.installFile, record)
@@ -122,12 +133,12 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     await old.remove(record, false)
   } else {
     secrets = findLeftoverSecrets(deps.paths, env, deps.providers)
+    seen.push(...listKnownSecretValues(deps, secrets))
     if (secrets?.provider === provider.name) {
       print(text.leftoverFound)
     }
   }
   const saved = secrets?.provider === provider.name ? secrets.settings : {}
-  seen.push(...listSecretValues(provider, saved))
   let token: string | undefined
   const savedToken = saved[tokenSetting.configKey]
   if (savedToken !== undefined) {

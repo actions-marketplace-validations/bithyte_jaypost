@@ -79,8 +79,9 @@ export function readEnvSecrets(path: string, providers: readonly Provider[]): Se
 }
 
 /**
- * `readEnvSecrets`, plus the owner from `ownerGet` (`owner get` in the container) when the env file
- * has none, since pairing stores it in the data volume. Output the owner setting rejects is ignored.
+ * `readEnvSecrets`, plus the owner from `ownerGet` (`owner get` in the container) when the env
+ * file has none, since pairing stores it in the data volume. Output the owner setting rejects is
+ * ignored.
  */
 export async function readContainerSecrets(
   path: string,

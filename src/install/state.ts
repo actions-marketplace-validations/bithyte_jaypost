@@ -33,7 +33,9 @@ export function resolveRecordProvider(record: InstallRecord): string {
   return record.provider ?? DEFAULT_PROVIDER
 }
 
-/** Owner setting of the record's provider; throws for an unknown provider or one that doesn't pair. */
+/**
+ * Owner setting of the record's provider; throws for an unknown provider or one that doesn't pair.
+ */
 export function requireRecordOwner(
   providers: readonly Provider[],
   record: InstallRecord,

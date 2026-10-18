@@ -53,7 +53,8 @@ volumes:
 
 /**
  * KEY=VALUE lines for the container: `PROVIDER`, then each known setting in declaration order with
- * `PORT` after the first. Throws a RangeError for a value with a line break, which would inject lines.
+ * `PORT` after the first. Throws a RangeError for a value with a line break, which would inject
+ * lines.
  */
 export function formatEnvFile(options: {
   readonly provider: Provider

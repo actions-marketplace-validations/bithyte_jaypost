@@ -78,7 +78,9 @@ export function readConfigSecrets(path: string, providers: readonly Provider[]):
   }
 }
 
-/** `null` for every config key other providers use, so switching providers drops the old settings. */
+/**
+ * `null` for every config key other providers use, so switching providers drops the old settings.
+ */
 function formatOtherProviderKeys(
   providers: readonly Provider[],
   current: Provider,

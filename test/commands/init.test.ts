@@ -407,3 +407,16 @@ test('no install record: leftover token from a container .env, rejected token pr
     expect.objectContaining({ settings: { botToken: 'good-token', ownerId: 4 } }),
   )
 })
+
+test('a reused secret is masked when removing the old install fails', async () => {
+  seed('compose')
+  const old = fake('compose', true, saved({ botToken: 'TOK1', ownerId: 42 }))
+  old.remove = vi.fn(async () => {
+    throw new Error('down failed: TOK1')
+  })
+  const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
+  expect(await runInit({ target: 'quadlet' }, d)).toBe(1)
+  const text = out.join('\n')
+  expect(text).toContain('Install failed: down failed: ***')
+  expect(text).not.toContain('TOK1')
+})
