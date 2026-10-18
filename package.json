@@ -4,9 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/main.ts",
-    "onboard": "node scripts/onboard.ts",
-    "test-request": "node scripts/test-request.ts",
+    "start": "node src/cli.ts start",
+    "cli": "node src/cli.ts",
     "test": "vp test",
     "check": "vp check"
   },
