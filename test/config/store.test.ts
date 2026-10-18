@@ -144,3 +144,7 @@ test('malformed config file gives readable error with path', () => {
   expect(() => loadConfig({ APPROVAL_BOT_CONFIG: bad })).toThrow(/invalid JSON/)
   expect(() => loadConfig({ APPROVAL_BOT_CONFIG: bad })).not.toThrow(/SECRET123/)
 })
+
+test('readConfigFile rethrows read errors other than a missing file', () => {
+  expect(() => readConfigFile(dir)).toThrow(/EISDIR/)
+})

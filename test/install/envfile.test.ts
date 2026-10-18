@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vite-plus/test'
@@ -27,6 +27,16 @@ test('removeEnvKey keeps other lines and mode', () => {
 
 test('removeEnvKey on missing file is a no-op', () => {
   removeEnvKey(join(dir(), 'nope'), 'X')
+})
+
+test('removeEnvKey on a missing file writes nothing', () => {
+  const f = join(dir(), 'nope')
+  removeEnvKey(f, 'X')
+  expect(existsSync(f)).toBe(false)
+})
+
+test('readEnvFile rethrows read errors other than a missing file', () => {
+  expect(() => readEnvFile(dir())).toThrow(/EISDIR/)
 })
 
 test('ignores comments and blanks', () => {

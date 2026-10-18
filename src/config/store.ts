@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { writeFileAtomic } from '../system/index.ts'
+import { isMissingFileError, writeFileAtomic } from '../system/index.ts'
 import {
   DEFAULT_HOST,
   DEFAULT_PORT,
@@ -31,10 +31,16 @@ export function resolveConfigDirectory(env: NodeJS.ProcessEnv = process.env): st
 }
 
 export function readConfigFile(path: string): FileConfig {
-  if (!existsSync(path)) return {}
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch (error) {
+    if (isMissingFileError(error)) return {}
+    throw error
+  }
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'))
+    parsed = JSON.parse(text)
   } catch {
     // Don't include the parser's message: V8 can quote part of the file, which may hold the bot token.
     throw new Error(`Config file ${path} contains invalid JSON; ${INIT_HINT}`)

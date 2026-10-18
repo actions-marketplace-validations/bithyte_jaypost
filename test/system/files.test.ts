@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileS
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vite-plus/test'
-import { writeFileAtomic } from '../../src/system/index.ts'
+import { isMissingFileError, writeFileAtomic } from '../../src/system/index.ts'
 
 function createTempDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'files-test-'))
@@ -36,4 +36,20 @@ test('a failed rename throws, keeps the old target and removes the temp file', (
   expect(statSync(path).isDirectory()).toBe(true)
   expect(readFileSync(join(path, 'marker'), 'utf8')).toBe('keep')
   expect(readdirSync(root).filter((name) => name.endsWith('.tmp'))).toEqual([])
+})
+
+test('isMissingFileError is true only for ENOENT', () => {
+  const root = createTempDirectory()
+  const readError = (path: string): unknown => {
+    try {
+      readFileSync(path, 'utf8')
+    } catch (error) {
+      return error
+    }
+    throw new Error('expected the read to fail')
+  }
+  expect(isMissingFileError(readError(join(root, 'missing')))).toBe(true)
+  expect(isMissingFileError(readError(root))).toBe(false)
+  expect(isMissingFileError(new Error('ENOENT'))).toBe(false)
+  expect(isMissingFileError('ENOENT')).toBe(false)
 })

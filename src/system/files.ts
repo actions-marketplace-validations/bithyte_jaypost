@@ -34,3 +34,8 @@ export function writeFileAtomic(path: string, contents: string, mode: number): v
     throw error
   }
 }
+
+/** True when `error` is a Node error with code `ENOENT`. */
+export function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
