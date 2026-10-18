@@ -12,11 +12,13 @@ let podmanVersion: string
 let ownerOut: string
 let failBuild: boolean
 let failArgs: (args: string[]) => string | undefined
+let failCtl: (args: string[]) => boolean
 
 const fakeExec: Exec = async (cmd, args) => {
   calls.push([cmd, args])
   if (cmd === 'podman' && args[0] === '--version')
     return { code: 0, stdout: `podman version ${podmanVersion}\n`, stderr: '' }
+  if (cmd === 'systemctl' && failCtl(args)) return { code: 1, stdout: '', stderr: 'boom' }
   const f = cmd === 'podman' ? failArgs(args) : undefined
   if (f !== undefined) return { code: 1, stdout: '', stderr: f }
   if (cmd === 'podman' && args[0] === 'build' && failBuild)
@@ -42,6 +44,7 @@ beforeEach(() => {
   ownerOut = ''
   failBuild = false
   failArgs = () => undefined
+  failCtl = () => false
 })
 
 test('quadlet unavailable on podman 4.3', async () => {
@@ -87,6 +90,7 @@ test('quadlet install builds tagged image then starts', async () => {
   expect(readFileSync(envPath, 'utf8')).toContain('BOT_TOKEN=t')
   expect(existsSync(join(paths.quadletDir, 'pkg-1.tgz'))).toBe(true)
   expect(readFileSync(paths.quadletUnit, 'utf8')).toContain(`Image=${TAG}`)
+  expect(readFileSync(join(paths.quadletDir, '.dockerignore'), 'utf8')).toBe('.env\n')
 })
 
 test('install throws when build fails and does not start', async () => {
@@ -212,4 +216,10 @@ test('purge rmi failure alone throws but dir is deleted', async () => {
   failArgs = (a) => (a[0] === 'rmi' ? 'image busy' : undefined)
   await expect(t.remove(rec, true)).rejects.toThrow(/image busy/)
   expect(existsSync(paths.quadletDir)).toBe(false)
+})
+
+test('restart throws on a non-zero exit', async () => {
+  const { t } = make()
+  failCtl = (a) => a.includes('restart')
+  await expect(t.restart(rec)).rejects.toThrow('systemctl restart failed (exit 1)')
 })

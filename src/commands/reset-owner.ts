@@ -41,13 +41,23 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
     return 1
   }
   deps.closePrompts?.()
-  const result = await deps.wait({
-    port: rec.port,
-    isRunning: () => target.isRunning(rec),
-    logsHint: target.logsHint(rec),
-    ...(deps.signal ? { signal: deps.signal } : {}),
-    print,
-  })
+  let result: Awaited<ReturnType<typeof deps.wait>>
+  try {
+    result = await deps.wait({
+      port: rec.port,
+      isRunning: () => target.isRunning(rec),
+      logsHint: target.logsHint(rec),
+      ...(deps.signal ? { signal: deps.signal } : {}),
+      print,
+    })
+  } catch {
+    if (deps.signal?.aborted) {
+      print('')
+      return 130
+    }
+    print(`Waiting for pairing failed. ${target.logsHint(rec)}`)
+    return 1
+  }
   if (result === 'paired') {
     print('Paired. Try it: telegram-approval-bot test')
     return 0

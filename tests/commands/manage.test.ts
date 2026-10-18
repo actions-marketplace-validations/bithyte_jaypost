@@ -216,10 +216,34 @@ test('uninstall failure: generic error, 1, install.json kept', async () => {
 test('test command takes port from install.json first', async () => {
   const { runTest } = await import('../../src/commands/test.ts')
   seed()
-  const f = vi.fn(async () => new Response('ok', { status: 200 }))
+  const f = vi.fn(async (_url: string) => new Response('ok', { status: 200 }))
   vi.stubGlobal('fetch', f)
   vi.spyOn(console, 'log').mockImplementation(() => {})
   expect(await runTest(1234, paths.installFile)).toBe(0)
   expect(f.mock.calls[0]![0]).toBe('http://127.0.0.1:9000/request')
   vi.unstubAllGlobals()
+})
+
+test('reset-owner restart failure reports Reset failed, not Paired', async () => {
+  seed()
+  const t = fake('systemd')
+  t.restart = vi.fn(async () => {
+    throw new Error('systemctl restart failed (exit 1)')
+  })
+  const d = { ...base({ targets: targets({ systemd: t }) }), wait: vi.fn() }
+  expect(await runResetOwner(d)).toBe(1)
+  expect(out.join('\n')).toContain('Reset failed. logs hint')
+  expect(out.join('\n')).not.toContain('Paired')
+  expect(d.wait).not.toHaveBeenCalled()
+})
+
+test('reset-owner wait throwing prints a generic error and returns 1', async () => {
+  seed()
+  const wait = vi.fn(async () => {
+    throw new Error('secret-token-123')
+  })
+  expect(await runResetOwner({ ...base(), wait })).toBe(1)
+  const text = out.join('\n')
+  expect(text).toContain('Waiting for pairing failed. logs hint')
+  expect(text).not.toContain('secret-token-123')
 })

@@ -6,7 +6,13 @@ import { installPaths } from '../../src/install/paths.ts'
 import { writeInstall } from '../../src/install/state.ts'
 import type { TargetName } from '../../src/install/state.ts'
 import type { Target } from '../../src/install/target.ts'
-import { defaultTarget, detect, findExisting, TARGET_ORDER } from '../../src/install/targets.ts'
+import {
+  defaultTarget,
+  detect,
+  findExisting,
+  findLeftoverSecrets,
+  TARGET_ORDER,
+} from '../../src/install/targets.ts'
 
 let tmp: string
 
@@ -60,7 +66,7 @@ test('legacy unit with no install.json', () => {
     HOME: tmp,
   })
   expect(found).toEqual({
-    rec: { target: 'systemd', port: 9000, version: 'legacy' },
+    rec: { target: 'systemd', port: 9000, version: 'legacy', configFile: paths.configFile },
     legacy: true,
   })
 })
@@ -105,4 +111,49 @@ test('install.json wins over legacy unit', () => {
     rec: { target: 'compose', port: 8800, version: '1.2.3' },
     legacy: false,
   })
+})
+
+test('legacy unit Environment=APPROVAL_BOT_CONFIG wins over the env', () => {
+  const env = { HOME: tmp, APPROVAL_BOT_CONFIG: join(tmp, 'env.json') }
+  const paths = installPaths(env)
+  const pinned = join(tmp, 'pin ned.json')
+  writeFileSync(pinned, JSON.stringify({ port: 9200 }))
+  mkdirSync(dirname(paths.systemdUnit), { recursive: true })
+  writeFileSync(
+    paths.systemdUnit,
+    `[Service]\nEnvironment="APPROVAL_BOT_CONFIG=${pinned}"\nExecStart=/n /c start\n`,
+  )
+  expect(findExisting(paths, fakes({ systemd: true, compose: true, quadlet: true }), env)).toEqual({
+    rec: { target: 'systemd', port: 9200, version: 'legacy', configFile: pinned },
+    legacy: true,
+  })
+})
+
+test('leftover secrets: none', () => {
+  expect(findLeftoverSecrets(installPaths({ HOME: tmp }), { HOME: tmp })).toEqual({})
+})
+
+test('leftover secrets from config.json (honoring APPROVAL_BOT_CONFIG)', () => {
+  const env = { HOME: tmp, APPROVAL_BOT_CONFIG: join(tmp, 'c.json') }
+  writeFileSync(env.APPROVAL_BOT_CONFIG, JSON.stringify({ botToken: 'ct', ownerId: 3 }))
+  expect(findLeftoverSecrets(installPaths(env), env)).toEqual({ token: 'ct', ownerId: 3 })
+})
+
+test('leftover secrets from a container .env', () => {
+  const paths = installPaths({ HOME: tmp })
+  mkdirSync(paths.composeDir, { recursive: true })
+  writeFileSync(join(paths.composeDir, '.env'), 'BOT_TOKEN=et\nPORT=1\nOWNER_ID=8\n')
+  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({ token: 'et', ownerId: 8 })
+  mkdirSync(paths.quadletDir, { recursive: true })
+  writeFileSync(join(paths.quadletDir, '.env'), 'BOT_TOKEN=qt\nPORT=1\n')
+  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({ token: 'qt' })
+})
+
+test('leftover secrets ignore corrupt config and token-less files', () => {
+  const paths = installPaths({ HOME: tmp })
+  mkdirSync(paths.configDir, { recursive: true })
+  writeFileSync(paths.configFile, '{oops')
+  mkdirSync(paths.quadletDir, { recursive: true })
+  writeFileSync(join(paths.quadletDir, '.env'), 'PORT=1\nOWNER_ID=2\n')
+  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({})
 })

@@ -61,6 +61,7 @@ function deps(over: Partial<InitDeps> & { targets?: Record<TargetName, Target> }
     wait: vi.fn(async () => 'paired' as const),
     print: (s) => out.push(s),
     version: '1.2.3',
+    env: {},
     ...over,
   }
 }
@@ -279,7 +280,8 @@ test('install throwing returns 1 with generic message, no secrets', async () => 
   })
   expect(await runInit({}, d)).toBe(1)
   const text = out.join('\n')
-  expect(text).toContain('run telegram-approval-bot init again')
+  expect(text).toContain('Install failed: boom ***')
+  expect(text).toContain('Run telegram-approval-bot init again')
   expect(text).not.toContain('good-token')
 })
 
@@ -306,4 +308,88 @@ test('prompts are closed right before wait', async () => {
   })
   expect(await runInit({}, d)).toBe(0)
   expect(order).toEqual(['port', 'install:quadlet', 'close', 'wait'])
+})
+
+test('target error message is shown with a reused token redacted', async () => {
+  seed('compose')
+  const old = fake('compose', true, { token: '123:SECRET' })
+  const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
+  d.targets.quadlet.install = vi.fn(async () => {
+    throw new Error('npm install failed: bad url https://x/bot123:SECRET/getMe')
+  })
+  expect(await runInit({ target: 'quadlet' }, d)).toBe(1)
+  const text = out.join('\n')
+  expect(text).toContain('npm install failed: bad url https://x/bot***/getMe')
+  expect(text).not.toContain('123:SECRET')
+})
+
+test('failure after removing the old target keeps install.json so a re-run reuses secrets', async () => {
+  seed('compose')
+  const old = fake('compose', true, { token: 'TOK1', ownerId: 42 })
+  const targets = { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') }
+  const d1 = deps({ targets, portFree: vi.fn(async () => false) })
+  expect(await runInit({ target: 'quadlet' }, d1)).toBe(1)
+  expect(old.remove).toHaveBeenCalledTimes(1)
+  expect(readInstall(paths.installFile)).toEqual({
+    target: 'compose',
+    port: 9000,
+    version: '1.0.0',
+  })
+
+  targets.quadlet.install = vi.fn(async () => {
+    throw new Error('podman build failed (exit 1)')
+  })
+  expect(await runInit({ target: 'quadlet' }, deps({ targets }))).toBe(1)
+  expect(out.join('\n')).toContain('podman build failed (exit 1)')
+  expect(readInstall(paths.installFile)?.target).toBe('compose')
+
+  targets.quadlet.install = fake('quadlet').install
+  const d3 = deps({ targets })
+  expect(await runInit({ target: 'quadlet' }, d3)).toBe(0)
+  expect(old.remove).toHaveBeenCalledTimes(3)
+  expect(targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ token: 'TOK1', ownerId: 42 }),
+  )
+  expect(d3.prompt.askSecret).not.toHaveBeenCalled()
+  expect(readInstall(paths.installFile)?.target).toBe('quadlet')
+})
+
+test('legacy install is recorded before removal so a failed run can be retried', async () => {
+  mkdirSync(dirname(paths.systemdUnit), { recursive: true })
+  writeFileSync(paths.systemdUnit, '[Service]\n')
+  const d = deps({ portFree: vi.fn(async () => false) })
+  expect(await runInit({ target: 'systemd' }, d)).toBe(1)
+  expect(readInstall(paths.installFile)).toEqual({
+    target: 'systemd',
+    port: 8787,
+    version: 'legacy',
+    configFile: paths.configFile,
+  })
+})
+
+test('no install record: reuses a token and owner kept by uninstall, no replace prompt', async () => {
+  mkdirSync(dirname(paths.configFile), { recursive: true })
+  writeFileSync(paths.configFile, JSON.stringify({ botToken: 'KTOK', ownerId: 11 }))
+  const d = deps()
+  expect(await runInit({ target: 'compose' }, d)).toBe(0)
+  expect(d.prompt.ask).not.toHaveBeenCalled()
+  expect(d.prompt.askSecret).not.toHaveBeenCalled()
+  expect(d.validateToken).toHaveBeenCalledWith('KTOK')
+  expect(d.targets.compose.install).toHaveBeenCalledWith(
+    expect.objectContaining({ token: 'KTOK', ownerId: 11 }),
+  )
+  expect(out.join('\n')).toContain('Reusing the saved bot token (@mybot).')
+  expect(out.join('\n')).not.toContain('KTOK')
+})
+
+test('no install record: leftover token from a container .env, rejected token prompts', async () => {
+  mkdirSync(paths.quadletDir, { recursive: true })
+  writeFileSync(join(paths.quadletDir, '.env'), 'BOT_TOKEN=stale\nPORT=1\nOWNER_ID=4\n')
+  const validate = vi.fn(async (t: string) => (t === 'stale' ? undefined : 'mybot'))
+  const d = deps({ validateToken: validate })
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.prompt.askSecret).toHaveBeenCalledTimes(1)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ token: 'good-token', ownerId: 4 }),
+  )
 })

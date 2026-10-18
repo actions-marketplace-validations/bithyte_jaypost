@@ -4,6 +4,13 @@ export function systemdQuote(s: string): string {
   return `"${s.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('%', '%%')}"`
 }
 
+/** Quotes one ExecStart word; `$` is also escaped there because systemd expands `$VAR` in ExecStart. */
+export function execWord(s: string): string {
+  return systemdQuote(s).replaceAll('$', () => '$$')
+}
+
+export const DOCKERIGNORE = '.env\n'
+
 export function dockerfile(opts: { version: string; tarball?: string }): string {
   const install =
     opts.tarball === undefined
@@ -60,18 +67,15 @@ WantedBy=default.target
 `
 }
 
-export function systemdUnit(opts: { node: string; cli: string; configEnv?: string }): string {
-  const env =
-    opts.configEnv === undefined
-      ? ''
-      : `Environment=${systemdQuote(`APPROVAL_BOT_CONFIG=${opts.configEnv}`)}\n`
+export function systemdUnit(opts: { node: string; cli: string; config: string }): string {
   return `[Unit]
 Description=Telegram approval bot
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-${env}ExecStart=${systemdQuote(opts.node)} ${systemdQuote(opts.cli)} start
+Environment=${systemdQuote(`APPROVAL_BOT_CONFIG=${opts.config}`)}
+ExecStart=${execWord(opts.node)} ${execWord(opts.cli)} start
 Restart=on-failure
 RestartSec=5
 

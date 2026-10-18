@@ -1,6 +1,7 @@
 import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, sep } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { readConfigFile, updateConfigFile } from '../config.ts'
+import type { InstallPaths } from './paths.ts'
 import type { InstallRecord } from './state.ts'
 import { ensureLinger } from './system.ts'
 import type { InstallOptions, Secrets, Target, TargetDeps } from './target.ts'
@@ -22,15 +23,37 @@ function writable(dir: string): boolean {
   }
 }
 
+/** The config file a systemd install uses when nothing recorded one: $APPROVAL_BOT_CONFIG or the default, absolute. */
+export function defaultConfigFile(paths: InstallPaths, env: NodeJS.ProcessEnv): string {
+  return resolve(env.APPROVAL_BOT_CONFIG || paths.configFile)
+}
+
+/** Best-effort read of the APPROVAL_BOT_CONFIG value from a unit's Environment= lines. */
+export function unitConfigFile(unit: string): string | undefined {
+  for (const line of unit.split('\n')) {
+    const m = /^\s*Environment=(.*)$/.exec(line)
+    if (!m) continue
+    let v = m[1]!.trim()
+    if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+      v = v.slice(1, -1).replace(/\\(.)/g, '$1')
+    }
+    v = v.replaceAll('%%', '%')
+    const key = 'APPROVAL_BOT_CONFIG='
+    if (v.startsWith(key) && v.length > key.length) return resolve(v.slice(key.length))
+  }
+  return undefined
+}
+
 export function systemdTarget(
   deps: TargetDeps,
   cli: { selfPath: string; nodePath: string },
 ): Target {
   const { exec, paths, env, user } = deps
   const ctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
-  const configEnv = env.APPROVAL_BOT_CONFIG || undefined
-  // The unit passes APPROVAL_BOT_CONFIG to the bot, so secrets must live in that same file.
-  const configFile = configEnv ?? paths.configFile
+  // The unit always pins APPROVAL_BOT_CONFIG to this absolute path, and install.json records it,
+  // so later commands don't depend on the environment they happen to run in.
+  const configFile = defaultConfigFile(paths, env)
+  const fileOf = (rec: InstallRecord) => rec.configFile ?? configFile
   const fallbackRoot = join(paths.userNpmPrefix, 'lib', 'node_modules')
 
   async function resolveCli(opts: InstallOptions): Promise<string> {
@@ -72,44 +95,50 @@ export function systemdTarget(
     },
     async install(opts): Promise<InstallRecord> {
       const cliPath = await resolveCli(opts)
+      // Only touch ownerId when we have one; clearOwner is the explicit way to drop it.
       updateConfigFile(configFile, {
         botToken: opts.token,
         port: opts.port,
-        ownerId: opts.ownerId ?? null,
+        ...(opts.ownerId === undefined ? {} : { ownerId: opts.ownerId }),
       })
       mkdirSync(dirname(paths.systemdUnit), { recursive: true })
       writeFileSync(
         paths.systemdUnit,
-        systemdUnit({ node: cli.nodePath, cli: cliPath, ...(configEnv ? { configEnv } : {}) }),
+        systemdUnit({ node: cli.nodePath, cli: cliPath, config: configFile }),
       )
       for (const args of [['daemon-reload'], ['enable', '--now', SERVICE]]) {
         const r = await ctl(...args)
         if (r.code !== 0) throw new Error(`systemctl ${args.join(' ')} failed: ${r.stderr.trim()}`)
       }
       await ensureLinger(exec, user, opts.print)
-      return { target: 'systemd', port: opts.port, version: opts.version, cliPath }
+      return { target: 'systemd', port: opts.port, version: opts.version, cliPath, configFile }
     },
-    async readSecrets(): Promise<Secrets> {
-      const c = readConfigFile(configFile)
+    async readSecrets(rec): Promise<Secrets> {
+      const c = readConfigFile(fileOf(rec))
       return {
         ...(c.botToken === undefined ? {} : { token: c.botToken }),
         ...(c.ownerId === undefined ? {} : { ownerId: c.ownerId }),
       }
     },
-    async remove(_rec, purge) {
+    async remove(rec, purge) {
       await ctl('disable', '--now', SERVICE)
       rmSync(paths.systemdUnit, { force: true })
       await ctl('daemon-reload')
       if (purge) {
-        rmSync(configFile, { force: true })
-        console.log(`The npm package was left in place; remove it with: npm rm -g ${PKG}`)
+        rmSync(fileOf(rec), { force: true })
+        const prefix =
+          rec.cliPath !== undefined && isUnder(rec.cliPath, fallbackRoot)
+            ? `--prefix ${paths.userNpmPrefix} `
+            : ''
+        console.log(`The npm package was left in place; remove it with: npm rm -g ${prefix}${PKG}`)
       }
     },
     async restart() {
-      await ctl('restart', SERVICE)
+      const r = await ctl('restart', SERVICE)
+      if (r.code !== 0) throw new Error(`systemctl restart failed (exit ${r.code})`)
     },
-    async clearOwner() {
-      updateConfigFile(configFile, { ownerId: null })
+    async clearOwner(rec) {
+      updateConfigFile(fileOf(rec), { ownerId: null })
     },
     async isRunning() {
       return (await ctl('is-active', '--quiet', SERVICE)).code === 0

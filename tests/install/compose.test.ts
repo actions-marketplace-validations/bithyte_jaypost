@@ -81,6 +81,7 @@ test('install writes files and runs up -d --build', async () => {
   expect(statSync(envPath).mode & 0o777).toBe(0o600)
   expect(readFileSync(envPath, 'utf8')).toContain('BOT_TOKEN=t')
   expect(readFileSync(envPath, 'utf8')).toContain('OWNER_ID=9')
+  expect(readFileSync(join(paths.composeDir, '.dockerignore'), 'utf8')).toBe('.env\n')
   expect(calls.at(-1)).toEqual([
     'docker',
     ['compose', '-f', join(paths.composeDir, 'compose.yaml'), 'up', '-d', '--build'],
@@ -176,4 +177,10 @@ test('install skips copying a tarball already in the build dir', async () => {
   writeFileSync(tar, 'x')
   await t.install({ ...base, tarball: tar })
   expect(readFileSync(tar, 'utf8')).toBe('x')
+})
+
+test('restart throws on a non-zero exit', async () => {
+  const { t } = make()
+  fail = (_c, a) => a.includes('--force-recreate')
+  await expect(t.restart(rec)).rejects.toThrow('docker compose up failed (exit 1)')
 })

@@ -1,12 +1,14 @@
-import { existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { readConfigFile } from '../config.ts'
 import { composeTarget } from './compose.ts'
+import { readEnvFile } from './envfile.ts'
 import type { InstallPaths } from './paths.ts'
 import { quadletTarget } from './quadlet.ts'
 import { readInstall } from './state.ts'
 import type { InstallRecord, TargetName } from './state.ts'
-import { systemdTarget } from './systemd.ts'
-import type { Target, TargetDeps } from './target.ts'
+import { defaultConfigFile, systemdTarget, unitConfigFile } from './systemd.ts'
+import type { Secrets, Target, TargetDeps } from './target.ts'
 
 export const TARGET_ORDER: TargetName[] = ['quadlet', 'compose', 'systemd']
 
@@ -47,8 +49,14 @@ export function findExisting(
 ): { rec: InstallRecord; legacy: boolean } | undefined {
   const rec = readInstall(paths.installFile)
   if (rec) return { rec, legacy: false }
-  if (!existsSync(paths.systemdUnit)) return undefined
-  const configFile = env.APPROVAL_BOT_CONFIG || paths.configFile
+  let unit: string
+  try {
+    unit = readFileSync(paths.systemdUnit, 'utf8')
+  } catch {
+    return undefined
+  }
+  // The legacy unit may pin its own config path; prefer it over this shell's env.
+  const configFile = unitConfigFile(unit) ?? defaultConfigFile(paths, env)
   let port = DEFAULT_PORT
   try {
     const p = readConfigFile(configFile).port
@@ -56,5 +64,46 @@ export function findExisting(
   } catch {
     // Unreadable config: fall back to the default port.
   }
-  return { rec: { target: 'systemd', port, version: 'legacy' }, legacy: true }
+  return { rec: { target: 'systemd', port, version: 'legacy', configFile }, legacy: true }
+}
+
+function envSecrets(path: string): Secrets {
+  const e = readEnvFile(path)
+  const out: Secrets = {}
+  if (e.BOT_TOKEN) out.token = e.BOT_TOKEN
+  if (e.OWNER_ID && /^-?\d+$/.test(e.OWNER_ID)) out.ownerId = Number(e.OWNER_ID)
+  return out
+}
+
+function configSecrets(path: string): Secrets {
+  try {
+    const c = readConfigFile(path)
+    const out: Secrets = {}
+    if (typeof c.botToken === 'string' && c.botToken !== '') out.token = c.botToken
+    if (typeof c.ownerId === 'number' && Number.isSafeInteger(c.ownerId)) out.ownerId = c.ownerId
+    return out
+  } catch {
+    // Corrupt config: treat as nothing left over.
+    return {}
+  }
+}
+
+/**
+ * Token and owner left behind by an uninstall that kept them (no install.json any more).
+ * Only reads files; never runs a container. First source with a token wins.
+ */
+export function findLeftoverSecrets(
+  paths: InstallPaths,
+  env: NodeJS.ProcessEnv = process.env,
+): Secrets {
+  const sources = [
+    () => envSecrets(join(paths.quadletDir, '.env')),
+    () => envSecrets(join(paths.composeDir, '.env')),
+    () => configSecrets(defaultConfigFile(paths, env)),
+  ]
+  for (const read of sources) {
+    const s = read()
+    if (s.token !== undefined) return s
+  }
+  return {}
 }

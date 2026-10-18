@@ -8,6 +8,8 @@ export interface InstallRecord {
   port: number
   version: string
   cliPath?: string
+  /** Absolute config.json path the systemd unit was installed with. */
+  configFile?: string
 }
 
 const TARGETS: readonly string[] = ['systemd', 'compose', 'quadlet']
@@ -24,11 +26,13 @@ export function readInstall(file: string): InstallRecord | undefined {
   if (typeof r.target !== 'string' || !TARGETS.includes(r.target)) return undefined
   if (typeof r.port !== 'number' || typeof r.version !== 'string') return undefined
   if (r.cliPath !== undefined && typeof r.cliPath !== 'string') return undefined
+  if (r.configFile !== undefined && typeof r.configFile !== 'string') return undefined
   return {
     target: r.target as TargetName,
     port: r.port,
     version: r.version,
     ...(r.cliPath === undefined ? {} : { cliPath: r.cliPath }),
+    ...(r.configFile === undefined ? {} : { configFile: r.configFile }),
   }
 }
 

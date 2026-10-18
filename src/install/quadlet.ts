@@ -4,7 +4,7 @@ import { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
 import type { InstallRecord } from './state.ts'
 import { ensureLinger } from './system.ts'
 import type { Secrets, Target, TargetDeps } from './target.ts'
-import { dockerfile, envFile, quadletContainer } from './templates.ts'
+import { DOCKERIGNORE, dockerfile, envFile, quadletContainer } from './templates.ts'
 
 const SERVICE = 'telegram-approval-bot'
 const NOT_FOUND = /no such|not found|does not exist/i
@@ -40,6 +40,8 @@ export function quadletTarget(deps: TargetDeps): Target {
         const dest = join(paths.quadletDir, basename(opts.tarball))
         if (resolve(opts.tarball) !== resolve(dest)) copyFileSync(opts.tarball, dest)
       }
+      // Keep the token out of the build context.
+      writeFileSync(join(paths.quadletDir, '.dockerignore'), DOCKERIGNORE)
       writeFileSync(
         join(paths.quadletDir, 'Dockerfile'),
         dockerfile({ version: opts.version, ...(opts.tarball ? { tarball: opts.tarball } : {}) }),
@@ -113,7 +115,8 @@ export function quadletTarget(deps: TargetDeps): Target {
       if (failures.length > 0) throw new Error(`Purge incomplete; ${failures.join('; ')}`)
     },
     async restart() {
-      await ctl('restart', SERVICE)
+      const r = await ctl('restart', SERVICE)
+      if (r.code !== 0) throw new Error(`systemctl restart failed (exit ${r.code})`)
     },
     async clearOwner(rec) {
       removeEnvKey(envPath, 'OWNER_ID')

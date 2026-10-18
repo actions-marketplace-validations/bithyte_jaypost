@@ -36,11 +36,16 @@ test('systemd unit quotes paths with spaces and percent', () => {
   const u = systemdUnit({
     node: '/opt/node 24/bin/node',
     cli: '/x/cli.js',
-    configEnv: '/h/50%/c.json',
+    config: '/h/50%/c.json',
   })
   expect(u).toContain('ExecStart="/opt/node 24/bin/node" "/x/cli.js" start')
   expect(u).toContain('Environment="APPROVAL_BOT_CONFIG=/h/50%%/c.json"')
   expect(u).not.toContain('WorkingDirectory')
+})
+test('systemd unit escapes $ in ExecStart only', () => {
+  const u = systemdUnit({ node: '/n$x/node', cli: '/c$y/cli.js', config: '/h/$z/c.json' })
+  expect(u).toContain('ExecStart="/n$$x/node" "/c$$y/cli.js" start')
+  expect(u).toContain('Environment="APPROVAL_BOT_CONFIG=/h/$z/c.json"')
 })
 test('systemdQuote escapes backslash and quote', () =>
   expect(systemdQuote('a\\b"c%')).toBe('"a\\\\b\\"c%%"'))

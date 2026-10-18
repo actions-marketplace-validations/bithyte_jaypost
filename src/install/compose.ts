@@ -4,7 +4,7 @@ import type { Exec } from './exec.ts'
 import { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
 import type { InstallRecord } from './state.ts'
 import type { Secrets, Target, TargetDeps } from './target.ts'
-import { composeYaml, dockerfile, envFile } from './templates.ts'
+import { composeYaml, DOCKERIGNORE, dockerfile, envFile } from './templates.ts'
 
 const PKG = 'telegram-approval-bot'
 
@@ -40,6 +40,8 @@ export function composeTarget(deps: TargetDeps): Target {
         const dest = join(paths.composeDir, basename(opts.tarball))
         if (resolve(opts.tarball) !== resolve(dest)) copyFileSync(opts.tarball, dest)
       }
+      // Keep the token out of the build context.
+      writeFileSync(join(paths.composeDir, '.dockerignore'), DOCKERIGNORE)
       writeFileSync(
         join(paths.composeDir, 'Dockerfile'),
         dockerfile({ version: opts.version, ...(opts.tarball ? { tarball: opts.tarball } : {}) }),
@@ -76,7 +78,8 @@ export function composeTarget(deps: TargetDeps): Target {
       if (purge) rmSync(paths.composeDir, { recursive: true, force: true })
     },
     async restart() {
-      await dc(['up', '-d', '--force-recreate'])
+      const r = await dc(['up', '-d', '--force-recreate'])
+      if (r.code !== 0) throw new Error(`docker compose up failed (exit ${r.code})`)
     },
     async clearOwner() {
       removeEnvKey(envPath, 'OWNER_ID')

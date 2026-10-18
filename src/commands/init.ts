@@ -1,9 +1,9 @@
 import { PromptAborted } from '../install/prompt.ts'
 import type { InstallPaths } from '../install/paths.ts'
-import { removeInstall, writeInstall } from '../install/state.ts'
+import { writeInstall } from '../install/state.ts'
 import type { InstallRecord, TargetName } from '../install/state.ts'
 import type { Secrets, Target } from '../install/target.ts'
-import { defaultTarget, detect, findExisting } from '../install/targets.ts'
+import { defaultTarget, detect, findExisting, findLeftoverSecrets } from '../install/targets.ts'
 import type { waitForPairing } from '../install/wait.ts'
 
 export interface InitDeps {
@@ -26,6 +26,8 @@ export interface InitDeps {
   /** Releases stdin (restores cooked mode) so Ctrl-C reaches the SIGINT handler while waiting. */
   closePrompts?: () => void
   version: string
+  /** Defaults to process.env; used to find the systemd config file. */
+  env?: NodeJS.ProcessEnv
 }
 
 export interface InitArgs {
@@ -52,21 +54,32 @@ async function safeValidate(deps: InitDeps, token: string): Promise<string | und
 
 class Aborted extends Error {}
 
+function redact(message: string, secrets: readonly string[]): string {
+  let out = message
+  for (const s of secrets) if (s !== '') out = out.replaceAll(s, '***')
+  return out
+}
+
 export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
+  // Every token string init has seen, so error messages can be shown with them masked.
+  const seen: string[] = []
   try {
-    return await runInitInner(args, deps)
+    return await runInitInner(args, deps, seen)
   } catch (err) {
     if (err instanceof Aborted || err instanceof PromptAborted || deps.signal?.aborted) {
       deps.print('')
       return 130
     }
-    deps.print('Install failed; run telegram-approval-bot init again. Check the logs for details.')
+    const message = err instanceof Error ? err.message : String(err)
+    deps.print(`Install failed: ${redact(message, seen)}`)
+    deps.print('Run telegram-approval-bot init again. Check the logs for details.')
     return 1
   }
 }
 
-async function runInitInner(args: InitArgs, deps: InitDeps): Promise<number> {
+async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Promise<number> {
   const { print, prompt } = deps
+  const env = deps.env ?? process.env
 
   const detected = await detect(deps.targets)
   let name: TargetName
@@ -98,7 +111,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps): Promise<number> {
 
   let secrets: Secrets = {}
   let rec: InstallRecord | undefined
-  const existing = findExisting(deps.paths, deps.targets)
+  const existing = findExisting(deps.paths, deps.targets, env)
   if (existing) {
     rec = existing.rec
     print(
@@ -109,9 +122,18 @@ async function runInitInner(args: InitArgs, deps: InitDeps): Promise<number> {
     if (answer === 'n' || answer === 'no') return 0
     const old = deps.targets[rec.target]
     secrets = await old.readSecrets(rec)
-    // Remove first: the old service may hold the port we're about to check.
+    if (secrets.token) seen.push(secrets.token)
+    // Record a legacy install too, so a failed run below can still find its config on retry.
+    if (existing.legacy) writeInstall(deps.paths.installFile, rec)
+    // Remove first: the old service may hold the port we're about to check. install.json stays
+    // until the new install replaces it; remove() keeps the secrets and is safe to repeat.
     await old.remove(rec, false)
-    removeInstall(deps.paths.installFile)
+  } else {
+    secrets = findLeftoverSecrets(deps.paths, env)
+    if (secrets.token) {
+      seen.push(secrets.token)
+      print('Found a bot token kept from an earlier install.')
+    }
   }
 
   let token: string | undefined
@@ -125,6 +147,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps): Promise<number> {
   while (token === undefined) {
     if (deps.signal?.aborted) throw new Aborted()
     const candidate = await prompt.askSecret('Bot token (input hidden): ')
+    seen.push(candidate)
     if (candidate !== '' && (await safeValidate(deps, candidate))) token = candidate
     else print('Telegram rejected that token (or could not be reached). Try again.')
   }

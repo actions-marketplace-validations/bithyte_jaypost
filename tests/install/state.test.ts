@@ -37,3 +37,14 @@ test('removeInstall deletes, tolerates missing', () => {
   expect(existsSync(file)).toBe(false)
   removeInstall(file)
 })
+
+test('configFile roundtrips and is optional', () => {
+  const file = join(dir, 'install.json')
+  const rec = { target: 'systemd', port: 1, version: 'v', configFile: '/abs/c.json' } as const
+  writeInstall(file, rec)
+  expect(readInstall(file)).toEqual(rec)
+  writeFileSync(file, JSON.stringify({ target: 'systemd', port: 1, version: 'v' }))
+  expect(readInstall(file)).toEqual({ target: 'systemd', port: 1, version: 'v' })
+  writeFileSync(file, JSON.stringify({ target: 'systemd', port: 1, version: 'v', configFile: 3 }))
+  expect(readInstall(file)).toBeUndefined()
+})
