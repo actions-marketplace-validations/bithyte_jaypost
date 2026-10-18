@@ -1,6 +1,15 @@
 {
   "name": "telegram-approval-bot",
   "version": "0.1.0",
+  "description": "Local HTTP API that asks you a question on Telegram with inline buttons and returns your answer",
+  "keywords": [
+    "approval",
+    "bot",
+    "human-in-the-loop",
+    "telegram"
+  ],
+  "license": "Apache-2.0",
+  "author": "Cozmin",
   "bin": {
     "telegram-approval-bot": "dist/cli.js"
   },
