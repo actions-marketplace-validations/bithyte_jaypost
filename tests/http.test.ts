@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { SendError } from '../src/approvals.ts'
 import { createApiServer } from '../src/http.ts'
+import type { StatusInfo } from '../src/http.ts'
 import type { ApprovalRequest, Outcome } from '../src/types.ts'
 
 type RequestFn = (req: ApprovalRequest, signal?: AbortSignal) => Promise<Outcome | null>
@@ -24,9 +25,12 @@ afterEach(async () => {
   await s.close()
 })
 
-async function start(request: RequestFn): Promise<string> {
+async function start(
+  request: RequestFn,
+  status: () => StatusInfo = () => ({ paired: true, bot: 'b' }),
+): Promise<string> {
   const stub = { request: vi.fn(request) }
-  server = createApiServer(stub)
+  server = createApiServer(stub, status)
   await server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = server.server.address() as AddressInfo
   return `http://127.0.0.1:${port}`
@@ -191,4 +195,38 @@ test('malformed request target gets 404 and the server keeps serving', async () 
   expect(raw).toContain('application/json')
   const after = await fetch(`${url}/other`)
   expect(after.status).toBe(404)
+})
+
+test('GET /status reports pairing', async () => {
+  const url = await start(
+    async () => null,
+    () => ({ paired: false, code: 'K7QM-4XPD', bot: 'b' }),
+  )
+  const res = await fetch(`${url}/status`)
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ paired: false, code: 'K7QM-4XPD', bot: 'b' })
+})
+
+test('GET /status when paired', async () => {
+  const url = await start(async () => null)
+  const res = await fetch(`${url}/status`)
+  expect(await res.json()).toEqual({ paired: true, bot: 'b' })
+})
+
+test('POST /request is 503 while unpaired, service not called', async () => {
+  const request = vi.fn<RequestFn>()
+  const url = await start(request, () => ({ paired: false, code: 'X', bot: 'b' }))
+  const res = await post(url, JSON.stringify(valid))
+  expect(res.status).toBe(503)
+  expect(await res.json()).toEqual({ error: 'not paired' })
+  const bad = await post(url, '{not json')
+  expect(bad.status).toBe(503)
+  expect(request).not.toHaveBeenCalled()
+})
+
+test('POST /status is 405 with Allow: GET', async () => {
+  const url = await start(async () => null)
+  const res = await fetch(`${url}/status`, { method: 'POST', body: '{}' })
+  expect(res.status).toBe(405)
+  expect(res.headers.get('allow')).toBe('GET')
 })

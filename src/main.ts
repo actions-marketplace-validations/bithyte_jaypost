@@ -22,6 +22,7 @@ if (ownerId === undefined) {
   process.exit(1)
 }
 
+let botUsername = 'bot'
 const owner: Owner = { id: ownerId }
 const bot = new Bot(config.botToken)
 const service = new ApprovalService(createTelegramMessenger(bot, owner))
@@ -32,7 +33,10 @@ bot.catch((err) => {
   console.error('bot error:', err.error instanceof Error ? err.error.message : err.error)
 })
 
-const server = createApiServer(service)
+const server = createApiServer(service, () => ({
+  paired: true,
+  bot: botUsername,
+}))
 server.listen({ port: config.port, host: config.host }).then(
   () => console.log(`listening on ${config.host}:${config.port}`),
   (e: unknown) => {
@@ -58,6 +62,7 @@ process.on('SIGINT', shutdown)
 bot
   .start({
     onStart: (me) => {
+      botUsername = me.username
       console.log(`bot @${me.username} polling`)
     },
   })

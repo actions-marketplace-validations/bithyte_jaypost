@@ -6,7 +6,14 @@ import { parseApprovalRequest } from './validate.ts'
 
 const MAX_BODY_BYTES = 65536
 
-export function createApiServer(service: Pick<ApprovalService, 'request'>): FastifyInstance {
+export type StatusInfo =
+  | { paired: true; bot: string }
+  | { paired: false; code: string; bot: string }
+
+export function createApiServer(
+  service: Pick<ApprovalService, 'request'>,
+  status: () => StatusInfo,
+): FastifyInstance {
   // Pending requests can hang for minutes; close() shouldn't wait for them.
   const app = Fastify({ bodyLimit: MAX_BODY_BYTES, forceCloseConnections: true })
 
@@ -16,8 +23,12 @@ export function createApiServer(service: Pick<ApprovalService, 'request'>): Fast
 
   app.setNotFoundHandler((request, reply) => {
     // Not new URL(): it throws on targets like '//'.
-    if (request.url.split('?')[0] === '/request') {
+    const path = request.url.split('?')[0]
+    if (path === '/request') {
       return reply.code(405).header('Allow', 'POST').send({ error: 'method not allowed' })
+    }
+    if (path === '/status') {
+      return reply.code(405).header('Allow', 'GET').send({ error: 'method not allowed' })
     }
     return reply.code(404).send({ error: 'not found' })
   })
@@ -38,7 +49,12 @@ export function createApiServer(service: Pick<ApprovalService, 'request'>): Fast
     return reply.code(500).send({ error: 'internal server error' })
   })
 
+  app.get('/status', async () => status())
+
   app.post<{ Body: string | undefined }>('/request', async (request, reply) => {
+    if (!status().paired) {
+      return reply.code(503).send({ error: 'not paired' })
+    }
     let json: unknown
     try {
       json = JSON.parse(request.body ?? '')
