@@ -1,12 +1,8 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { statusInfoSchema } from '../server/index.ts'
 import type { StatusInfo } from '../server/index.ts'
-import {
-  CODE_DASH_PATTERN,
-  DEFAULT_START_TIMEOUT_MS,
-  POLL_INTERVAL_MS,
-  STATUS_TIMEOUT_MS,
-} from './constants.ts'
+import { DEFAULT_START_TIMEOUT_MS, POLL_INTERVAL_MS, STATUS_TIMEOUT_MS } from './constants.ts'
+import { formatPairingText } from './pairing-text.ts'
 import type { WaitOptions, WaitResult } from './types.ts'
 
 /**
@@ -60,10 +56,7 @@ export async function waitForPairing(options: WaitOptions): Promise<WaitResult> 
       }
       if (!shown) {
         shown = true
-        const rawCode = status.code.replace(CODE_DASH_PATTERN, '')
-        print(
-          `Pairing code: ${status.code}\nSend "/start ${status.code}" to @${status.bot}, or open https://t.me/${status.bot}?start=${rawCode}`,
-        )
+        print(formatPairingText(status))
       }
     } else if (!answered && Date.now() - began >= startTimeoutMs) {
       return 'notStarted'

@@ -12,5 +12,3 @@ export const DEFAULT_START_TIMEOUT_MS = 60_000
 export const POLL_INTERVAL_MS = 1000
 /** Per-request timeout for one /status call. */
 export const STATUS_TIMEOUT_MS = 2000
-/** Strips the dash from a displayed pairing code to build the t.me deep link. */
-export const CODE_DASH_PATTERN = /-/g

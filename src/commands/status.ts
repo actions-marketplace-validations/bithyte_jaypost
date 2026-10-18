@@ -1,5 +1,5 @@
 import { findExistingInstall } from '../install/index.ts'
-import { CODE_DASH_PATTERN } from './constants.ts'
+import { formatPairingText } from './pairing-text.ts'
 import type { StatusDeps } from './types.ts'
 
 /**
@@ -34,10 +34,8 @@ export async function runStatus(deps: StatusDeps): Promise<number> {
   } else if (status.paired) {
     print('Pairing: paired')
   } else {
-    const rawCode = status.code.replace(CODE_DASH_PATTERN, '')
-    print(
-      `Pairing: not paired\nPairing code: ${status.code}\nSend "/start ${status.code}" to @${status.bot}, or open https://t.me/${status.bot}?start=${rawCode}`,
-    )
+    print(`Pairing: not paired
+${formatPairingText(status)}`)
   }
   return 0
 }

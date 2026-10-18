@@ -1,6 +1,8 @@
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { expect, test, vi } from 'vite-plus/test'
 import type { StatusInfo } from '../../src/server/index.ts'
-import { waitForPairing } from '../../src/commands/index.ts'
+import { defaultFetchStatus, waitForPairing } from '../../src/commands/index.ts'
 
 const base = { port: 1, isRunning: async () => true, logsHint: 'L', sleep: async () => {} }
 
@@ -86,4 +88,46 @@ test('never answers returns not-started', async () => {
     print: () => {},
   })
   expect(r).toBe('notStarted')
+})
+
+async function pairViaHttp(
+  bodies: readonly string[],
+): Promise<{ result: string; printed: string }> {
+  const queue = [...bodies]
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json')
+    response.end(queue.shift() ?? bodies[bodies.length - 1])
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  const print = vi.fn()
+  try {
+    const result = await waitForPairing({
+      ...base,
+      port,
+      fetchStatus: defaultFetchStatus,
+      print,
+    })
+    return { result, printed: print.mock.calls.flat().join('\n') }
+  } finally {
+    server.close()
+  }
+}
+
+test('waitForPairing accepts the old status shape', async () => {
+  const { result, printed } = await pairViaHttp([
+    '{"paired":false,"code":"K7QM-4XPD","bot":"b"}',
+    '{"paired":true,"bot":"b"}',
+  ])
+  expect(result).toBe('paired')
+  expect(printed).toContain('https://t.me/b?start=K7QM4XPD')
+})
+
+test('waitForPairing accepts the new status shape', async () => {
+  const { result, printed } = await pairViaHttp([
+    '{"paired":false,"provider":"fake","displayName":"fake","code":"K7QM-4XPD","instructions":"Say K7QM4XPD to fake"}',
+    '{"paired":true,"provider":"fake","displayName":"fake"}',
+  ])
+  expect(result).toBe('paired')
+  expect(printed).toBe('Pairing code: K7QM-4XPD\nSay K7QM4XPD to fake')
 })

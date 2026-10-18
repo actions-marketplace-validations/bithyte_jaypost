@@ -92,6 +92,34 @@ test('status running, unpaired shows pairing line', async () => {
   expect(out.join('\n')).toContain('/start ABCD-EFGH')
 })
 
+test('status prints old-shape pairing text', async () => {
+  seed()
+  const fetchStatus = vi.fn(async () => ({
+    paired: false as const,
+    code: 'ABCD-EFGH',
+    bot: 'mybot',
+  }))
+  expect(await runStatus({ ...base(), fetchStatus })).toBe(0)
+  expect(out.join('\n')).toContain(
+    'Pairing: not paired\nPairing code: ABCD-EFGH\nSend "/start ABCD-EFGH" to @mybot, or open https://t.me/mybot?start=ABCDEFGH',
+  )
+})
+
+test('status prints provider instructions as is', async () => {
+  seed()
+  const fetchStatus = vi.fn(async () => ({
+    paired: false as const,
+    provider: 'fake',
+    displayName: 'fake',
+    code: 'ABCD-EFGH',
+    instructions: 'Say ABCDEFGH to fake',
+  }))
+  expect(await runStatus({ ...base(), fetchStatus })).toBe(0)
+  expect(out.join('\n')).toContain(
+    'Pairing: not paired\nPairing code: ABCD-EFGH\nSay ABCDEFGH to fake',
+  )
+})
+
 test('status not running -> 1', async () => {
   seed()
   const t = targets({ systemd: fake('systemd', false) })
