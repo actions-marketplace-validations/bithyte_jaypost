@@ -20,7 +20,8 @@ import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
 import { runService } from './daemon/index.ts'
 import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
 import type { InstallPaths, Target, TargetName } from './install/index.ts'
-import { isPortFree, realExec, validateToken } from './system/index.ts'
+import { isPortFree, realExec } from './system/index.ts'
+import { validateToken } from './telegram/index.ts'
 
 const PORT_PATTERN = /^\d+$/
 

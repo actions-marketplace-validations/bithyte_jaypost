@@ -1,6 +1,5 @@
-import { Api } from 'grammy'
 import net from 'node:net'
-import { LINGER_OFF_PATTERN, LINGER_ON_PATTERN, TOKEN_CHECK_TIMEOUT_SECONDS } from './constants.ts'
+import { LINGER_OFF_PATTERN, LINGER_ON_PATTERN } from './constants.ts'
 import type { Exec } from './types.ts'
 
 /** True when 127.0.0.1:`port` can be bound; any bind error counts as in use. */
@@ -37,19 +36,5 @@ export async function ensureLinger(
     }
   } catch {
     printFallback()
-  }
-}
-
-/** Returns the bot username, or undefined on any failure. Never exposes the token or error text. */
-export async function validateToken(token: string, apiRoot?: string): Promise<string | undefined> {
-  try {
-    // No global fetch here: Node's fetch rejects grammY's polyfilled AbortSignal on every call.
-    const botUser = await new Api(token, {
-      timeoutSeconds: TOKEN_CHECK_TIMEOUT_SECONDS,
-      ...(apiRoot === undefined ? {} : { apiRoot }),
-    }).getMe()
-    return botUser.username || undefined
-  } catch {
-    return undefined
   }
 }

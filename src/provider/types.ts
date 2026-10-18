@@ -1,0 +1,81 @@
+import type { MessageReference, Settlement } from '../approval/index.ts'
+import type { PairResult } from '../pairing/index.ts'
+
+export type SettingValue = string | number
+
+/** Provider settings by config key; only valid values, absent when unknown. */
+export type SettingValues = Readonly<Record<string, SettingValue>>
+
+export type ProviderSetting = {
+  readonly configKey: string
+  readonly envVar: string
+  /** Lowercase noun for errors: `missing bot token`. */
+  readonly description: string
+  readonly secret: boolean
+  /** Set by pairing, cleared by reset-owner. At most one per provider. */
+  readonly owner: boolean
+  readonly required: boolean
+  /** Prompt label at init; settings without one are never asked for. */
+  readonly prompt?: string
+  /** Converts an env string or config value; undefined when invalid. Never throws. */
+  readonly parse: (raw: unknown) => SettingValue | undefined
+}
+
+export type CredentialCheck =
+  | { readonly ok: true; readonly displayName: string }
+  | { readonly ok: false; readonly reason: string }
+
+export type SetupText = {
+  readonly leftoverFound: string
+  readonly reusing: (displayName: string) => string
+  readonly rejected: string
+  /** Present iff the provider has an owner setting. */
+  readonly resetOwnerWarning?: string
+}
+
+export type ProviderSetup = {
+  /** Never puts secret values in `reason`. */
+  readonly checkCredentials: (settings: SettingValues) => Promise<CredentialCheck>
+  readonly text: SetupText
+}
+
+export type RuntimeHandlers = {
+  readonly answer: (id: string, optionIndex: number) => 'accepted' | 'expired'
+  readonly dismiss: (id: string) => boolean
+  /** Present only while pairing. */
+  readonly pair?: (senderId: string, text: string) => PairResult
+  /** The provider can't continue; the daemon logs `message` and exits 1. */
+  readonly fatal: (message: string) => void
+}
+
+export type ProviderRuntime = {
+  readonly checkCredentials: () => Promise<CredentialCheck>
+  readonly sendRequest: (
+    id: string,
+    text: string,
+    options: readonly string[],
+  ) => Promise<MessageReference>
+  /** Request ended; called once per settled request. Absent means skipped. */
+  readonly finalize?: (
+    reference: MessageReference,
+    text: string,
+    settlement: Settlement,
+  ) => Promise<void>
+  readonly sendNotification?: (id: string, text: string) => Promise<MessageReference>
+  readonly deleteMessage?: (reference: MessageReference) => Promise<void>
+  /** Present iff the provider pairs; `code` is raw (no dash). */
+  readonly pairingInstructions?: (code: string) => string
+  /** Extra /status fields kept for old CLIs (Telegram: `bot`). */
+  readonly statusFields?: () => Readonly<Record<string, string>>
+  readonly start: (handlers: RuntimeHandlers) => void
+  readonly stop: () => Promise<void>
+}
+
+export type Provider = {
+  readonly name: string
+  readonly label: string
+  readonly maxTextLength: number
+  readonly settings: readonly ProviderSetting[]
+  readonly setup: ProviderSetup
+  readonly createRuntime: (settings: SettingValues, log: (line: string) => void) => ProviderRuntime
+}
