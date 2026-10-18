@@ -154,7 +154,9 @@ test('invalid token reprompts without echoing Telegram errors', async () => {
   expect(text).toContain('Telegram rejected that token (or could not be reached). Try again.')
   expect(text).not.toContain('SECRET-ERR')
   expect(text).not.toContain('ECONNREFUSED')
-  for (const t of ['bad-token-1', 'bad-token-2', 'good-token']) expect(text).not.toContain(t)
+  for (const t of ['bad-token-1', 'bad-token-2', 'good-token']) {
+    expect(text).not.toContain(t)
+  }
 })
 
 test('stored token invalid falls back to prompt', async () => {
@@ -256,7 +258,9 @@ test('EOF in token loop terminates', async () => {
   const d = deps({ validateToken: vi.fn(async () => undefined) })
   let n = 0
   vi.mocked(d.prompt.password).mockImplementation(async () => {
-    if (++n > 1) throw new PromptAborted()
+    if (++n > 1) {
+      throw new PromptAborted()
+    }
     return 'bad'
   })
   expect(await runInit({}, d)).toBe(130)

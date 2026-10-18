@@ -180,7 +180,9 @@ export async function main(argv: readonly string[]): Promise<number> {
   try {
     await program.parseAsync(argv.length === 0 ? ['--help'] : argv, { from: 'user' })
   } catch (error) {
-    if (!(error instanceof CommanderError)) throw error
+    if (!(error instanceof CommanderError)) {
+      throw error
+    }
     // Help and version exit 0; usage errors (already printed) exit 2.
     return error.exitCode === 0 ? 0 : 2
   }
@@ -190,5 +192,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 if (import.meta.main) {
   const code = await main(process.argv.slice(2))
   // `start` keeps the process alive via the server and bot; only exit for other commands.
-  if (process.argv[2] !== 'start') process.exit(code)
+  if (process.argv[2] !== 'start') {
+    process.exit(code)
+  }
 }

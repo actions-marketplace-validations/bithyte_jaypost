@@ -18,7 +18,9 @@ test('timeout clamped', () =>
 test.each([0, -5, '30', null, Number.NaN, Infinity])('bad timeout %s', (t) => {
   const r = parseApprovalRequest({ ...base, timeout: t })
   expect(r.ok).toBe(false)
-  if (!r.ok) expect(r.error).toContain('timeout')
+  if (!r.ok) {
+    expect(r.error).toContain('timeout')
+  }
 })
 test.each([
   ['not object', 'hi'],
@@ -39,7 +41,9 @@ test.each([
 ])('%s rejected', (_n, body) => {
   const r = parseApprovalRequest(body)
   expect(r.ok).toBe(false)
-  if (!r.ok) expect(r.error.length).toBeGreaterThan(0)
+  if (!r.ok) {
+    expect(r.error.length).toBeGreaterThan(0)
+  }
 })
 
 test('64-char option label accepted', () => {

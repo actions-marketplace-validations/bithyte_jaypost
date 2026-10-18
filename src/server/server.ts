@@ -64,10 +64,14 @@ export function createApiServer(
 
     const controller = new AbortController()
     reply.raw.on('close', () => {
-      if (!reply.raw.writableEnded) controller.abort()
+      if (!reply.raw.writableEnded) {
+        controller.abort()
+      }
     })
     // The client may have gone while the body was being read, before 'close' was observed.
-    if (reply.raw.destroyed) controller.abort()
+    if (reply.raw.destroyed) {
+      controller.abort()
+    }
 
     const result = await service.request(parsed.value, controller.signal)
     if (result.kind === 'cancelled') {

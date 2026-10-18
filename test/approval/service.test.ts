@@ -23,14 +23,18 @@ class FakeMessenger implements Messenger {
     text: string,
     options: readonly string[],
   ): Promise<MessageReference> {
-    if (this.sendError) throw this.sendError
+    if (this.sendError) {
+      throw this.sendError
+    }
     this.sent.push({ id, text, options })
     return this.ref
   }
 
   async finalize(ref: MessageReference, text: string): Promise<void> {
     this.finalized.push({ ref, text })
-    if (this.finalizeError) throw this.finalizeError
+    if (this.finalizeError) {
+      throw this.finalizeError
+    }
   }
 }
 

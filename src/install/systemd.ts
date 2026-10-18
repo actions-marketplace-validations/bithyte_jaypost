@@ -42,7 +42,9 @@ export function resolveDefaultConfigFile(paths: InstallPaths, env: NodeJS.Proces
 export function findUnitConfigFile(unit: string): string | undefined {
   for (const line of unit.split('\n')) {
     const rawValue = ENVIRONMENT_LINE_PATTERN.exec(line)?.[1]
-    if (rawValue === undefined) continue
+    if (rawValue === undefined) {
+      continue
+    }
     const trimmed = rawValue.trim()
     const unquoted =
       trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
@@ -92,7 +94,9 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       installRoot = fallbackRoot
     }
     const result = await exec('npm', args)
-    if (result.code !== 0) throw new Error(`npm install failed: ${result.stderr.trim()}`)
+    if (result.code !== 0) {
+      throw new Error(`npm install failed: ${result.stderr.trim()}`)
+    }
     return join(installRoot, PACKAGE_NAME, 'dist', 'cli.js')
   }
 
@@ -156,7 +160,9 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
     },
     async restart() {
       const result = await systemctl('restart', SERVICE_NAME)
-      if (result.code !== 0) throw new Error(`systemctl restart failed (exit ${result.code})`)
+      if (result.code !== 0) {
+        throw new Error(`systemctl restart failed (exit ${result.code})`)
+      }
     },
     async clearOwner(record) {
       updateConfigFile(resolveConfigFile(record), { ownerId: null })

@@ -71,7 +71,9 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
 
   let stopping = false
   function shutdown(): void {
-    if (stopping) return
+    if (stopping) {
+      return
+    }
     stopping = true
     setTimeout(() => process.exit(0), 5000).unref()
     server.close().catch(() => {})
@@ -86,7 +88,9 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
   bot
     .start({ onStart: (botUser) => console.log(`bot @${botUser.username} polling`) })
     .catch((error: unknown) => {
-      if (stopping) return
+      if (stopping) {
+        return
+      }
       if (error instanceof GrammyError && error.error_code === 409) {
         console.error('another instance is already polling with this bot token; exiting')
       } else {

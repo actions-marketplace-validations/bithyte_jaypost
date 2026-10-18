@@ -19,7 +19,9 @@ test.each(['/start K7QM-4XPD', '/start k7qm4xpd', 'K7QM 4XPD', '/start@my_bot K7
 
 test('wrong code, then blocked after 5 failures per sender', () => {
   const p = new Pairing('K7QM4XPD')
-  for (let i = 0; i < 5; i++) expect(p.attempt(1, '/start AAAA-AAAA')).toBe('wrong')
+  for (let i = 0; i < 5; i++) {
+    expect(p.attempt(1, '/start AAAA-AAAA')).toBe('wrong')
+  }
   expect(p.attempt(1, '/start K7QM-4XPD')).toBe('blocked')
   expect(p.attempt(2, '/start K7QM-4XPD')).toBe('paired')
 })

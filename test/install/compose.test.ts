@@ -12,9 +12,12 @@ let ownerOut: string
 
 const fakeExec: Exec = async (cmd, args) => {
   calls.push([cmd, args])
-  if (fail(cmd, args)) return { code: 1, stdout: '', stderr: 'x' }
-  if (args.includes('owner') && args.includes('get'))
+  if (fail(cmd, args)) {
+    return { code: 1, stdout: '', stderr: 'x' }
+  }
+  if (args.includes('owner') && args.includes('get')) {
     return { code: 0, stdout: ownerOut, stderr: '' }
+  }
   return { code: 0, stdout: '', stderr: '' }
 }
 

@@ -12,7 +12,9 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
   const { record } = existing
   const target = deps.targets[record.target]
   try {
-    if (!(await deps.confirm('This unlinks your Telegram account. Continue?', false))) return 0
+    if (!(await deps.confirm('This unlinks your Telegram account. Continue?', false))) {
+      return 0
+    }
     await target.clearOwner(record)
     await target.restart(record)
   } catch (error) {
@@ -44,7 +46,9 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
     print('Paired. Try it: telegram-approval-bot test')
     return 0
   }
-  if (result === 'interrupted') return 130
+  if (result === 'interrupted') {
+    return 130
+  }
   print(target.logsHint(record))
   return 1
 }

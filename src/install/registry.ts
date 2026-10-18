@@ -49,7 +49,9 @@ export function findExistingInstall(
   env: NodeJS.ProcessEnv = process.env,
 ): ExistingInstall | undefined {
   const record = readInstall(paths.installFile)
-  if (record) return { record, legacy: false }
+  if (record) {
+    return { record, legacy: false }
+  }
   let unit: string
   try {
     unit = readFileSync(paths.systemdUnit, 'utf8')
@@ -107,7 +109,9 @@ export function findLeftoverSecrets(
   ]
   for (const read of sources) {
     const secrets = read()
-    if (secrets.token !== undefined) return secrets
+    if (secrets.token !== undefined) {
+      return secrets
+    }
   }
   return {}
 }

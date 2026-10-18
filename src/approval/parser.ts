@@ -48,6 +48,8 @@ const approvalRequestSchema = z
 
 export function parseApprovalRequest(body: unknown): ParseResult {
   const result = approvalRequestSchema.safeParse(body)
-  if (result.success) return { ok: true, value: result.data }
+  if (result.success) {
+    return { ok: true, value: result.data }
+  }
   return { ok: false, error: result.error.issues[0]?.message ?? 'invalid request' }
 }

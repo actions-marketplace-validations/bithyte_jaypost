@@ -5,7 +5,9 @@ export function runOwner(args: readonly string[], env: NodeJS.ProcessEnv = proce
   const path = resolveConfigPath(env)
   if (args[0] === 'get') {
     const id = readConfigFile(path).ownerId
-    if (id !== undefined) console.log(String(id))
+    if (id !== undefined) {
+      console.log(String(id))
+    }
     return 0
   }
   if (args[0] === 'clear') {

@@ -19,7 +19,9 @@ const valid = {
 let server: FastifyInstance | undefined
 
 afterEach(async () => {
-  if (!server) return
+  if (!server) {
+    return
+  }
   const s = server
   server = undefined
   await s.close()

@@ -22,8 +22,11 @@ export const realExec: Exec = (command, args, options = {}) =>
     child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
     child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
     child.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') reject(new MissingCommandError(command))
-      else reject(error)
+      if (error.code === 'ENOENT') {
+        reject(new MissingCommandError(command))
+      } else {
+        reject(error)
+      }
     })
     child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
   })

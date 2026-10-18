@@ -35,8 +35,11 @@ export class ApprovalService {
       this.#pending.cancel(id)
     }
     // Checked after open() so an abort during sendRequest is not missed.
-    if (signal?.aborted) onAbort()
-    else signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) {
+      onAbort()
+    } else {
+      signal?.addEventListener('abort', onAbort, { once: true })
+    }
 
     const settlement = await settled
     signal?.removeEventListener('abort', onAbort)
@@ -50,7 +53,9 @@ export class ApprovalService {
       console.error('failed to finalize approval message', error)
     }
 
-    if (settlement.kind === 'cancelled') return CANCELLED_RESULT
+    if (settlement.kind === 'cancelled') {
+      return CANCELLED_RESULT
+    }
     return {
       kind: 'completed',
       outcome: { answer: settlement.answer, timedOut: settlement.kind === 'timedOut' },

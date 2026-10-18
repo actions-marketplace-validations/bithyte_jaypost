@@ -15,16 +15,22 @@ export function routeTap(
   ownerId: number | undefined,
   tap: Tap,
 ): TapRoute {
-  if (ownerId === undefined || fromId !== ownerId) return 'ignored'
+  if (ownerId === undefined || fromId !== ownerId) {
+    return 'ignored'
+  }
   const [, id, rawIndex] = (data === undefined ? null : CALLBACK_DATA_PATTERN.exec(data)) ?? []
-  if (id === undefined || rawIndex === undefined) return 'expired'
+  if (id === undefined || rawIndex === undefined) {
+    return 'expired'
+  }
   return tap(id, Number(rawIndex))
 }
 
 export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger {
   return {
     async sendRequest(id, text, options): Promise<MessageReference> {
-      if (owner.id === undefined) throw new Error('bot is not paired yet')
+      if (owner.id === undefined) {
+        throw new Error('bot is not paired yet')
+      }
       const sent = await bot.api.sendMessage(owner.id, text, {
         reply_markup: {
           inline_keyboard: options.map((label, index) => [
@@ -45,8 +51,11 @@ export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger {
 export function registerTapHandler(bot: Bot, owner: Owner, tap: Tap): void {
   bot.on('callback_query:data', async (context) => {
     const route = routeTap(context.from.id, context.callbackQuery.data, owner.id, tap)
-    if (route === 'expired') await context.answerCallbackQuery({ text: 'Expired' })
-    else await context.answerCallbackQuery()
+    if (route === 'expired') {
+      await context.answerCallbackQuery({ text: 'Expired' })
+    } else {
+      await context.answerCallbackQuery()
+    }
   })
 }
 
@@ -55,7 +64,9 @@ export function handlePairingMessage(
   pairing: Pairing,
   onPaired: (id: number) => void,
 ): string | undefined {
-  if (message.chatType !== 'private') return undefined
+  if (message.chatType !== 'private') {
+    return undefined
+  }
   const result = pairing.attempt(message.fromId, message.text)
   if (result === 'paired') {
     onPaired(message.fromId)
@@ -78,7 +89,9 @@ export function registerPairingHandler(
       pairing,
       onPaired,
     )
-    if (reply !== undefined) await context.reply(reply)
+    if (reply !== undefined) {
+      await context.reply(reply)
+    }
   })
 }
 

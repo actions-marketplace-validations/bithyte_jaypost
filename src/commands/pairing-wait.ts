@@ -15,7 +15,9 @@ export async function defaultFetchStatus(port: number): Promise<StatusInfo | und
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     })
     const body = statusInfoSchema.safeParse(await response.json())
-    if (body.success) return body.data
+    if (body.success) {
+      return body.data
+    }
   } catch {
     // not up yet
   }
@@ -46,7 +48,9 @@ export async function waitForPairing(options: WaitOptions): Promise<WaitResult> 
     const status = await fetchStatus(options.port)
     if (status) {
       answered = true
-      if (status.paired) return 'paired'
+      if (status.paired) {
+        return 'paired'
+      }
       if (!shown) {
         shown = true
         const rawCode = status.code.replace(CODE_DASH_PATTERN, '')

@@ -21,7 +21,9 @@ export class PendingRequests {
   answer(id: string, optionIndex: number): boolean {
     const entry = this.#entries.get(id)
     const answer = entry?.request.options[optionIndex]
-    if (answer === undefined) return false
+    if (answer === undefined) {
+      return false
+    }
     return this.#settle(id, { kind: 'answered', answer })
   }
 
@@ -31,7 +33,9 @@ export class PendingRequests {
 
   #settle(id: string, settlement: Settlement): boolean {
     const entry = this.#entries.get(id)
-    if (!entry) return false
+    if (!entry) {
+      return false
+    }
     clearTimeout(entry.timer)
     this.#entries.delete(id)
     entry.resolve(settlement)

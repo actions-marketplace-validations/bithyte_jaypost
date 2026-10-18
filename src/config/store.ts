@@ -19,7 +19,9 @@ function findEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
 
 export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = findEnvValue(env, 'APPROVAL_BOT_CONFIG')
-  if (explicit) return explicit
+  if (explicit) {
+    return explicit
+  }
   const xdgConfigHome = findEnvValue(env, 'XDG_CONFIG_HOME')
   const base = xdgConfigHome ?? join(findEnvValue(env, 'HOME') ?? homedir(), '.config')
   return join(base, 'telegram-approval-bot', 'config.json')
@@ -35,7 +37,9 @@ export function readConfigFile(path: string): FileConfig {
   try {
     text = readFileSync(path, 'utf8')
   } catch (error) {
-    if (isMissingFileError(error)) return {}
+    if (isMissingFileError(error)) {
+      return {}
+    }
     throw error
   }
   let parsed: unknown
@@ -56,8 +60,12 @@ export function readConfigFile(path: string): FileConfig {
 }
 
 function toInteger(value: unknown): number | undefined {
-  if (typeof value === 'number') return Number.isInteger(value) ? value : undefined
-  if (typeof value === 'string' && INTEGER_PATTERN.test(value.trim())) return Number(value.trim())
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? value : undefined
+  }
+  if (typeof value === 'string' && INTEGER_PATTERN.test(value.trim())) {
+    return Number(value.trim())
+  }
   return undefined
 }
 
@@ -84,8 +92,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 export function updateConfigFile(path: string, patch: ConfigPatch): void {
   const next: Record<string, unknown> = { ...readConfigFile(path) }
   for (const [key, value] of Object.entries(patch)) {
-    if (value === null) delete next[key]
-    else if (value !== undefined) next[key] = value
+    if (value === null) {
+      delete next[key]
+    } else if (value !== undefined) {
+      next[key] = value
+    }
   }
   writeFileAtomic(path, `${JSON.stringify(next, null, 2)}\n`, SECRET_FILE_MODE)
 }

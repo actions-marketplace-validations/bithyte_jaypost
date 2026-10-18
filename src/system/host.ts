@@ -20,10 +20,16 @@ export async function ensureLinger(
     print(`Run "loginctl enable-linger ${user}" so it keeps running after logout.`)
   try {
     const show = await exec('loginctl', ['show-user', user, '-p', 'Linger'])
-    if (show.code === 0 && LINGER_ON_PATTERN.test(show.stdout)) return
-    if (show.code === 0 && !LINGER_OFF_PATTERN.test(show.stdout)) return
+    if (show.code === 0 && LINGER_ON_PATTERN.test(show.stdout)) {
+      return
+    }
+    if (show.code === 0 && !LINGER_OFF_PATTERN.test(show.stdout)) {
+      return
+    }
     const result = await exec('loginctl', ['enable-linger', user])
-    if (result.code !== 0) printFallback()
+    if (result.code !== 0) {
+      printFallback()
+    }
   } catch {
     printFallback()
   }

@@ -30,13 +30,17 @@ export function createQuadletTarget(deps: TargetDeps): Target {
       let output: string
       try {
         const result = await exec('podman', ['--version'])
-        if (result.code !== 0) return { ok: false, reason: 'podman not installed' }
+        if (result.code !== 0) {
+          return { ok: false, reason: 'podman not installed' }
+        }
         output = result.stdout
       } catch {
         return { ok: false, reason: 'podman not installed' }
       }
       const match = PODMAN_VERSION_PATTERN.exec(output)
-      if (!match) return { ok: false, reason: `can't parse podman version: ${output.trim()}` }
+      if (!match) {
+        return { ok: false, reason: `can't parse podman version: ${output.trim()}` }
+      }
       const major = Number(match[1])
       const minor = Number(match[2])
       if (major > MIN_PODMAN_MAJOR || (major === MIN_PODMAN_MAJOR && minor >= MIN_PODMAN_MINOR)) {
@@ -74,7 +78,9 @@ export function createQuadletTarget(deps: TargetDeps): Target {
         ['build', '-t', formatImageTag(options.version), paths.quadletDirectory],
         { inherit: true },
       )
-      if (build.code !== 0) throw new Error(`podman build failed (exit ${build.code})`)
+      if (build.code !== 0) {
+        throw new Error(`podman build failed (exit ${build.code})`)
+      }
       mkdirSync(dirname(paths.quadletUnit), { recursive: true })
       writeFileSync(
         paths.quadletUnit,
@@ -115,12 +121,16 @@ export function createQuadletTarget(deps: TargetDeps): Target {
       await systemctl('stop', SERVICE_NAME)
       rmSync(paths.quadletUnit, { force: true })
       await systemctl('daemon-reload')
-      if (!purge) return
+      if (!purge) {
+        return
+      }
       const failures: string[] = []
       const step = async (label: string, args: readonly string[]): Promise<boolean> => {
         try {
           const result = await exec('podman', args)
-          if (result.code === 0 || NOT_FOUND_PATTERN.test(result.stderr)) return true
+          if (result.code === 0 || NOT_FOUND_PATTERN.test(result.stderr)) {
+            return true
+          }
           failures.push(`${label}: ${result.stderr.trim() || `exit ${result.code}`}`)
         } catch (error) {
           failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`)
@@ -129,18 +139,26 @@ export function createQuadletTarget(deps: TargetDeps): Target {
       }
       const isVolumeRemoved = await step('podman volume rm', ['volume', 'rm', VOLUME_NAME])
       await step('podman rmi', ['rmi', formatImageTag(record.version)])
-      if (isVolumeRemoved) rmSync(paths.quadletDirectory, { recursive: true, force: true })
-      if (failures.length > 0) throw new Error(`purge incomplete: ${failures.join('; ')}`)
+      if (isVolumeRemoved) {
+        rmSync(paths.quadletDirectory, { recursive: true, force: true })
+      }
+      if (failures.length > 0) {
+        throw new Error(`purge incomplete: ${failures.join('; ')}`)
+      }
     },
     async restart() {
       const result = await systemctl('restart', SERVICE_NAME)
-      if (result.code !== 0) throw new Error(`systemctl restart failed (exit ${result.code})`)
+      if (result.code !== 0) {
+        throw new Error(`systemctl restart failed (exit ${result.code})`)
+      }
     },
     async clearOwner(record) {
       removeEnvKey(envPath, 'OWNER_ID')
       try {
         const result = await exec('podman', ['exec', SERVICE_NAME, SERVICE_NAME, 'owner', 'clear'])
-        if (result.code === 0) return
+        if (result.code === 0) {
+          return
+        }
       } catch {
         // fall through to the one-off container
       }
@@ -154,8 +172,9 @@ export function createQuadletTarget(deps: TargetDeps): Target {
         'owner',
         'clear',
       ])
-      if (result.code !== 0)
+      if (result.code !== 0) {
         throw new Error(`couldn't clear the owner in the container: ${result.stderr.trim()}`)
+      }
     },
     async isRunning() {
       return (await systemctl('is-active', '--quiet', SERVICE_NAME)).code === 0

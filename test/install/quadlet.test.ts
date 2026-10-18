@@ -15,15 +15,25 @@ let failCtl: (args: readonly string[]) => boolean
 
 const fakeExec: Exec = async (cmd, args) => {
   calls.push([cmd, args])
-  if (cmd === 'podman' && args[0] === '--version')
+  if (cmd === 'podman' && args[0] === '--version') {
     return { code: 0, stdout: `podman version ${podmanVersion}\n`, stderr: '' }
-  if (cmd === 'systemctl' && failCtl(args)) return { code: 1, stdout: '', stderr: 'boom' }
+  }
+  if (cmd === 'systemctl' && failCtl(args)) {
+    return { code: 1, stdout: '', stderr: 'boom' }
+  }
   const f = cmd === 'podman' ? failArgs(args) : undefined
-  if (f !== undefined) return { code: 1, stdout: '', stderr: f }
-  if (cmd === 'podman' && args[0] === 'build' && failBuild)
+  if (f !== undefined) {
+    return { code: 1, stdout: '', stderr: f }
+  }
+  if (cmd === 'podman' && args[0] === 'build' && failBuild) {
     return { code: 1, stdout: '', stderr: 'bad' }
-  if (cmd === 'podman' && args[0] === 'run') return { code: 0, stdout: ownerOut, stderr: '' }
-  if (cmd === 'loginctl') return { code: 0, stdout: 'Linger=yes\n', stderr: '' }
+  }
+  if (cmd === 'podman' && args[0] === 'run') {
+    return { code: 0, stdout: ownerOut, stderr: '' }
+  }
+  if (cmd === 'loginctl') {
+    return { code: 0, stdout: 'Linger=yes\n', stderr: '' }
+  }
   return { code: 0, stdout: '', stderr: '' }
 }
 

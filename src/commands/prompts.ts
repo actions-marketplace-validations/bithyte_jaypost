@@ -10,11 +10,15 @@ export class PromptAborted extends Error {
 
 // Clack never settles on a closed or piped stdin, so refuse up front.
 function requireTty(): void {
-  if (!process.stdin.isTTY) throw new PromptAborted()
+  if (!process.stdin.isTTY) {
+    throw new PromptAborted()
+  }
 }
 
 function requireAnswer<T>(value: T): Exclude<T, symbol> {
-  if (isCancel(value)) throw new PromptAborted()
+  if (isCancel(value)) {
+    throw new PromptAborted()
+  }
   return value as Exclude<T, symbol>
 }
 

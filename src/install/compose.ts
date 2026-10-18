@@ -25,11 +25,16 @@ export function createComposeTarget(deps: TargetDeps): Target {
     name: 'compose',
     async available() {
       const version = await tryExec(exec, 'docker', ['compose', 'version'])
-      if (version === undefined) return { ok: false, reason: 'docker not installed' }
-      if (version.code !== 0) return { ok: false, reason: 'docker compose v2 not available' }
+      if (version === undefined) {
+        return { ok: false, reason: 'docker not installed' }
+      }
+      if (version.code !== 0) {
+        return { ok: false, reason: 'docker compose v2 not available' }
+      }
       const info = await tryExec(exec, 'docker', ['info'])
-      if (info === undefined || info.code !== 0)
+      if (info === undefined || info.code !== 0) {
         return { ok: false, reason: "can't talk to docker (not in the docker group?)" }
+      }
       return { ok: true }
     },
     async install(options): Promise<InstallRecord> {
@@ -59,7 +64,9 @@ export function createComposeTarget(deps: TargetDeps): Target {
         }),
       )
       const result = await compose(['up', '-d', '--build'], { inherit: true })
-      if (result.code !== 0) throw new Error(`docker compose up failed (exit ${result.code})`)
+      if (result.code !== 0) {
+        throw new Error(`docker compose up failed (exit ${result.code})`)
+      }
       return { target: 'compose', port: options.port, version: options.version }
     },
     async readSecrets(): Promise<Secrets> {
@@ -88,11 +95,15 @@ export function createComposeTarget(deps: TargetDeps): Target {
       if (result.code !== 0) {
         throw new Error(`docker compose down failed: ${result.stderr.trim()}`)
       }
-      if (purge) rmSync(paths.composeDirectory, { recursive: true, force: true })
+      if (purge) {
+        rmSync(paths.composeDirectory, { recursive: true, force: true })
+      }
     },
     async restart() {
       const result = await compose(['up', '-d', '--force-recreate'])
-      if (result.code !== 0) throw new Error(`docker compose up failed (exit ${result.code})`)
+      if (result.code !== 0) {
+        throw new Error(`docker compose up failed (exit ${result.code})`)
+      }
     },
     async clearOwner() {
       removeEnvKey(envPath, 'OWNER_ID')
@@ -105,8 +116,9 @@ export function createComposeTarget(deps: TargetDeps): Target {
         'owner',
         'clear',
       ])
-      if (result.code !== 0)
+      if (result.code !== 0) {
         throw new Error(`couldn't clear the owner in the container: ${result.stderr.trim()}`)
+      }
     },
     async isRunning() {
       const result = await compose(['ps', '--status', 'running', '-q', 'bot'])

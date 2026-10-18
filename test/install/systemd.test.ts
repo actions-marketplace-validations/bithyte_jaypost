@@ -18,12 +18,18 @@ let failRestart: boolean
 
 const fakeExec: Exec = async (cmd, args) => {
   calls.push([cmd, args])
-  if (cmd === 'npm' && args[0] === 'prefix')
+  if (cmd === 'npm' && args[0] === 'prefix') {
     return { code: 0, stdout: prefixOut + '\n', stderr: '' }
-  if (cmd === 'npm' && args[0] === 'root') return { code: 0, stdout: rootOut + '\n', stderr: '' }
-  if (cmd === 'systemctl' && args[1] === 'restart' && failRestart)
+  }
+  if (cmd === 'npm' && args[0] === 'root') {
+    return { code: 0, stdout: rootOut + '\n', stderr: '' }
+  }
+  if (cmd === 'systemctl' && args[1] === 'restart' && failRestart) {
     return { code: 1, stdout: '', stderr: 'boom' }
-  if (cmd === 'loginctl') return { code: 0, stdout: 'Linger=yes\n', stderr: '' }
+  }
+  if (cmd === 'loginctl') {
+    return { code: 0, stdout: 'Linger=yes\n', stderr: '' }
+  }
   return { code: 0, stdout: '', stderr: '' }
 }
 
