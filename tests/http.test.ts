@@ -1,6 +1,6 @@
 import net from 'node:net'
 import type { AddressInfo } from 'node:net'
-import type { Server } from 'node:http'
+import type { FastifyInstance } from 'fastify'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { SendError } from '../src/approvals.ts'
 import { createApiServer } from '../src/http.ts'
@@ -15,21 +15,20 @@ const valid = {
   timeout: 30,
 }
 
-let server: Server | undefined
+let server: FastifyInstance | undefined
 
 afterEach(async () => {
   if (!server) return
   const s = server
   server = undefined
-  s.closeAllConnections()
-  await new Promise<void>((resolve) => s.close(() => resolve()))
+  await s.close()
 })
 
 async function start(request: RequestFn): Promise<string> {
   const stub = { request: vi.fn(request) }
   server = createApiServer(stub)
-  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
-  const { port } = server.address() as AddressInfo
+  await server.listen({ port: 0, host: '127.0.0.1' })
+  const { port } = server.server.address() as AddressInfo
   return `http://127.0.0.1:${port}`
 }
 

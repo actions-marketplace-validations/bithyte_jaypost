@@ -23,21 +23,20 @@ bot.catch((err) => {
 })
 
 const server = createApiServer(service)
-server.on('error', (e) => {
-  console.error('http server error:', e.message)
-  process.exit(1)
-})
-server.listen(config.port, config.host, () => {
-  console.log(`listening on ${config.host}:${config.port}`)
-})
+server.listen({ port: config.port, host: config.host }).then(
+  () => console.log(`listening on ${config.host}:${config.port}`),
+  (e: unknown) => {
+    console.error('http server error:', e instanceof Error ? e.message : String(e))
+    process.exit(1)
+  },
+)
 
 let stopping = false
 function shutdown(): void {
   if (stopping) return
   stopping = true
   setTimeout(() => process.exit(0), 5000).unref()
-  server.close()
-  server.closeAllConnections()
+  server.close().catch(() => {})
   bot
     .stop()
     .catch(() => {})

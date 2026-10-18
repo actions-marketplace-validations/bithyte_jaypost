@@ -1,130 +1,70 @@
-import http from 'node:http'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import Fastify from 'fastify'
+import type { FastifyError, FastifyInstance } from 'fastify'
 import { SendError } from './approvals.ts'
 import type { ApprovalService } from './approvals.ts'
 import { parseApprovalRequest } from './validate.ts'
 
 const MAX_BODY_BYTES = 65536
 
-class BodyTooLarge extends Error {}
+export function createApiServer(service: Pick<ApprovalService, 'request'>): FastifyInstance {
+  // Pending requests can hang for minutes; close() shouldn't wait for them.
+  const app = Fastify({ bodyLimit: MAX_BODY_BYTES, forceCloseConnections: true })
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  if (res.destroyed || res.writableEnded) return
-  const payload = JSON.stringify(body)
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(payload),
+  // Take the body as text whatever the content type, so bad JSON gets our own 400.
+  app.removeAllContentTypeParsers()
+  app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => done(null, body))
+
+  app.setNotFoundHandler((request, reply) => {
+    // Not new URL(): it throws on targets like '//'.
+    if (request.url.split('?')[0] === '/request') {
+      return reply.code(405).header('Allow', 'POST').send({ error: 'method not allowed' })
+    }
+    return reply.code(404).send({ error: 'not found' })
   })
-  res.end(payload)
-}
 
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    let size = 0
-    const cleanup = () => {
-      req.off('data', onData)
-      req.off('end', onEnd)
-      req.off('error', onError)
+  app.setErrorHandler((err: FastifyError, request, reply) => {
+    if (err instanceof SendError) {
+      return reply.code(502).send({ error: 'failed to send Telegram message' })
     }
-    const onData = (chunk: Buffer) => {
-      size += chunk.length
-      if (size > MAX_BODY_BYTES) {
-        cleanup()
-        req.pause()
-        reject(new BodyTooLarge())
-        return
-      }
-      chunks.push(chunk)
-    }
-    const onEnd = () => {
-      cleanup()
-      resolve(Buffer.concat(chunks).toString('utf8'))
-    }
-    const onError = (err: Error) => {
-      cleanup()
-      reject(err)
-    }
-    req.on('data', onData)
-    req.on('end', onEnd)
-    req.on('error', onError)
-  })
-}
-
-async function handleRequest(
-  service: Pick<ApprovalService, 'request'>,
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  let raw: string
-  try {
-    raw = await readBody(req)
-  } catch (err) {
-    if (err instanceof BodyTooLarge) {
-      res.setHeader('Connection', 'close')
-      sendJson(res, 413, { error: 'request body too large' })
+    if (err.statusCode === 413) {
       // Drop the rest of the upload once the response is flushed.
-      res.once('finish', () => req.destroy())
-      return
+      reply.raw.once('finish', () => request.raw.destroy())
+      return reply.code(413).header('Connection', 'close').send({ error: 'request body too large' })
     }
-    throw err
-  }
-
-  let json: unknown
-  try {
-    json = JSON.parse(raw)
-  } catch {
-    sendJson(res, 400, { error: 'body must be valid JSON' })
-    return
-  }
-
-  const parsed = parseApprovalRequest(json)
-  if (!parsed.ok) {
-    sendJson(res, 400, { error: parsed.error })
-    return
-  }
-
-  const controller = new AbortController()
-  res.on('close', () => {
-    if (!res.writableEnded) controller.abort()
+    if (err.statusCode !== undefined && err.statusCode < 500) {
+      return reply.code(err.statusCode).send({ error: err.message })
+    }
+    console.error('unexpected error handling /request', err)
+    return reply.code(500).send({ error: 'internal server error' })
   })
-  // The client may have gone while the body was being read, before 'close' was observed.
-  if (res.destroyed) controller.abort()
 
-  try {
+  app.post<{ Body: string | undefined }>('/request', async (request, reply) => {
+    let json: unknown
+    try {
+      json = JSON.parse(request.body ?? '')
+    } catch {
+      return reply.code(400).send({ error: 'body must be valid JSON' })
+    }
+
+    const parsed = parseApprovalRequest(json)
+    if (!parsed.ok) {
+      return reply.code(400).send({ error: parsed.error })
+    }
+
+    const controller = new AbortController()
+    reply.raw.on('close', () => {
+      if (!reply.raw.writableEnded) controller.abort()
+    })
+    // The client may have gone while the body was being read, before 'close' was observed.
+    if (reply.raw.destroyed) controller.abort()
+
     const outcome = await service.request(parsed.value, controller.signal)
     if (outcome === null) {
       // Cancelled; normally because the client is gone, so this write is a no-op.
-      sendJson(res, 500, { error: 'request was cancelled' })
-      return
+      return reply.code(500).send({ error: 'request was cancelled' })
     }
-    sendJson(res, 200, outcome)
-  } catch (err) {
-    if (err instanceof SendError) {
-      sendJson(res, 502, { error: 'failed to send Telegram message' })
-      return
-    }
-    console.error('unexpected error handling /request', err)
-    sendJson(res, 500, { error: 'internal server error' })
-  }
-}
-
-export function createApiServer(service: Pick<ApprovalService, 'request'>): http.Server {
-  return http.createServer((req, res) => {
-    // Not new URL(): it throws on targets like '//' and would crash the handler.
-    const path = (req.url ?? '/').split('?')[0]
-    if (path !== '/request') {
-      sendJson(res, 404, { error: 'not found' })
-      return
-    }
-    if (req.method !== 'POST') {
-      res.setHeader('Allow', 'POST')
-      sendJson(res, 405, { error: 'method not allowed' })
-      return
-    }
-    handleRequest(service, req, res).catch((err) => {
-      console.error('unexpected error handling /request', err)
-      sendJson(res, 500, { error: 'internal server error' })
-    })
+    return outcome
   })
+
+  return app
 }
