@@ -1,0 +1,24 @@
+{
+  "name": "telegram-approval-bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.ts",
+    "onboard": "node scripts/onboard.ts",
+    "test-request": "node scripts/test-request.ts",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "grammy": "^1.46.0",
+    "vite-plus": "1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
