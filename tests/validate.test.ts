@@ -26,11 +26,13 @@ test.each([
   ['array', []],
   ['missing text', { ...base, text: undefined }],
   ['empty text', { ...base, text: '' }],
+  ['whitespace-only text', { ...base, text: '  \n\t ' }],
   ['text too long', { ...base, text: 'x'.repeat(3901) }],
   ['options not array', { ...base, options: 'Approve' }],
   ['empty options', { ...base, options: [], timeoutOption: 'x' }],
   ['non-string option', { ...base, options: ['Approve', 1] }],
   ['empty option label', { ...base, options: ['Approve', ''] }],
+  ['65-char option label', { ...base, options: ['Approve', 'x'.repeat(65)] }],
   ['duplicate options', { ...base, options: ['Approve', 'Approve'], timeoutOption: 'Approve' }],
   ['missing timeoutOption', { ...base, timeoutOption: undefined }],
   ['timeoutOption not in options', { ...base, timeoutOption: 'Maybe' }],
@@ -38,4 +40,11 @@ test.each([
   const r = parseApprovalRequest(body)
   expect(r.ok).toBe(false)
   if (!r.ok) expect(r.error.length).toBeGreaterThan(0)
+})
+
+test('64-char option label accepted', () => {
+  const long = 'x'.repeat(64)
+  expect(
+    parseApprovalRequest({ ...base, options: ['Approve', long], timeoutOption: long }).ok,
+  ).toBe(true)
 })

@@ -1,6 +1,7 @@
 import type { ApprovalRequest } from './types.ts'
 
 export const MAX_TIMEOUT_SECONDS = 300
+export const MAX_OPTION_LENGTH = 64
 export const MAX_TEXT_LENGTH = 3900 // leaves room for the appended result line under Telegram's 4096
 
 export type ParseResult = { ok: true; value: ApprovalRequest } | { ok: false; error: string }
@@ -13,7 +14,8 @@ export function parseApprovalRequest(body: unknown): ParseResult {
   }
   const { text, options, timeoutOption, timeout } = body as Record<string, unknown>
 
-  if (typeof text !== 'string' || text.length === 0) return fail('text must be a non-empty string')
+  if (typeof text !== 'string' || text.trim().length === 0)
+    return fail('text must be a non-empty string')
   if (text.length > MAX_TEXT_LENGTH) {
     return fail(`text must be at most ${MAX_TEXT_LENGTH} characters`)
   }
@@ -21,8 +23,14 @@ export function parseApprovalRequest(body: unknown): ParseResult {
   if (!Array.isArray(options) || options.length === 0) {
     return fail('options must be a non-empty array')
   }
-  if (!options.every((o): o is string => typeof o === 'string' && o.length > 0)) {
-    return fail('options must contain only non-empty strings')
+  if (
+    !options.every(
+      (o): o is string => typeof o === 'string' && o.length > 0 && o.length <= MAX_OPTION_LENGTH,
+    )
+  ) {
+    return fail(
+      `options must contain only non-empty strings of at most ${MAX_OPTION_LENGTH} characters`,
+    )
   }
   if (new Set(options).size !== options.length) return fail('options must be unique')
 

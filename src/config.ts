@@ -31,10 +31,9 @@ function readFile(path: string): Record<string, unknown> {
   let parsed: unknown
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (e) {
-    throw new Error(
-      `Could not read config file ${path}: ${e instanceof Error ? e.message : String(e)}; ${ONBOARD_HINT}`,
-    )
+  } catch {
+    // Don't include the parser's message: V8 can quote part of the file, which may hold the bot token.
+    throw new Error(`Config file ${path} contains invalid JSON; ${ONBOARD_HINT}`)
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error(`Config file ${path} must contain a JSON object; ${ONBOARD_HINT}`)

@@ -35,6 +35,7 @@ let stopping = false
 function shutdown(): void {
   if (stopping) return
   stopping = true
+  setTimeout(() => process.exit(0), 5000).unref()
   server.close()
   server.closeAllConnections()
   bot

@@ -100,6 +100,8 @@ test.each(['0', '65536', '-1', 'abc', '80.5'])('invalid port %s throws', (p) => 
 
 test('malformed config file gives readable error with path', () => {
   const bad = join(dir, 'bad.json')
-  writeFileSync(bad, '{not json')
+  writeFileSync(bad, '{"botToken": "SECRET123" oops')
   expect(() => loadConfig({ APPROVAL_BOT_CONFIG: bad })).toThrow(bad)
+  expect(() => loadConfig({ APPROVAL_BOT_CONFIG: bad })).toThrow(/invalid JSON/)
+  expect(() => loadConfig({ APPROVAL_BOT_CONFIG: bad })).not.toThrow(/SECRET123/)
 })
