@@ -1,4 +1,6 @@
 import { basename } from 'node:path'
+import type { Provider, SettingValues } from '../provider/index.ts'
+import { LINE_BREAK_PATTERN } from './constants.ts'
 
 /** Wraps in double quotes, escaping backslash and `"`, and doubling `%` (systemd specifier). */
 export function quoteSystemdValue(value: string): string {
@@ -49,16 +51,31 @@ volumes:
 `
 }
 
-/** KEY=VALUE lines for the container; `OWNER_ID` is included only when known. */
+/**
+ * KEY=VALUE lines for the container: `PROVIDER`, then each known setting in declaration order with
+ * `PORT` after the first. Throws a RangeError for a value with a line break, which would inject lines.
+ */
 export function formatEnvFile(options: {
-  readonly token: string
+  readonly provider: Provider
   readonly port: number
-  readonly ownerId?: number
+  readonly settings: SettingValues
 }): string {
+  const settingLines = options.provider.settings.flatMap((setting) => {
+    const value = options.settings[setting.configKey]
+    if (value === undefined) {
+      return []
+    }
+    const text = String(value)
+    if (LINE_BREAK_PATTERN.test(text)) {
+      throw new RangeError(`setting ${JSON.stringify(setting.configKey)} contains a line break`)
+    }
+    return [`${setting.envVar}=${text}`]
+  })
   const lines = [
-    `BOT_TOKEN=${options.token}`,
+    `PROVIDER=${options.provider.name}`,
+    ...settingLines.slice(0, 1),
     `PORT=${options.port}`,
-    ...(options.ownerId === undefined ? [] : [`OWNER_ID=${options.ownerId}`]),
+    ...settingLines.slice(1),
   ]
   return lines.join('\n') + '\n'
 }

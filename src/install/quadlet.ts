@@ -3,7 +3,6 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { ensureLinger } from '../system/index.ts'
 import {
   DOCKERIGNORE,
-  INTEGER_PATTERN,
   MIN_PODMAN_MAJOR,
   MIN_PODMAN_MINOR,
   NOT_FOUND_PATTERN,
@@ -11,7 +10,8 @@ import {
   SERVICE_NAME,
   VOLUME_NAME,
 } from './constants.ts'
-import { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
+import { readContainerSecrets, removeEnvKey, writeEnvFile } from './envfile.ts'
+import { requireRecordOwner } from './state.ts'
 import { formatDockerfile, formatEnvFile, formatQuadletContainer } from './templates.ts'
 import type { InstallRecord, Secrets, Target, TargetDeps } from './types.ts'
 
@@ -24,7 +24,7 @@ function formatImageTag(version: string): string {
  * unit.
  */
 export function createQuadletTarget(deps: TargetDeps): Target {
-  const { exec, paths, user } = deps
+  const { exec, paths, user, providers } = deps
   const envPath = join(paths.quadletDirectory, '.env')
   const systemctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
   return {
@@ -59,7 +59,7 @@ export function createQuadletTarget(deps: TargetDeps): Target {
           copyFileSync(options.tarball, destination)
         }
       }
-      // Keep the token out of the build context.
+      // Keep the credentials out of the build context.
       writeFileSync(join(paths.quadletDirectory, '.dockerignore'), DOCKERIGNORE)
       writeFileSync(
         join(paths.quadletDirectory, 'Dockerfile'),
@@ -71,9 +71,9 @@ export function createQuadletTarget(deps: TargetDeps): Target {
       writeEnvFile(
         envPath,
         formatEnvFile({
-          token: options.token,
+          provider: options.provider,
           port: options.port,
-          ...(options.ownerId === undefined ? {} : { ownerId: options.ownerId }),
+          settings: options.settings,
         }),
       )
       const build = await exec(
@@ -96,29 +96,26 @@ export function createQuadletTarget(deps: TargetDeps): Target {
         }
       }
       await ensureLinger(exec, user, options.print)
-      return { target: 'quadlet', port: options.port, version: options.version }
+      return {
+        target: 'quadlet',
+        provider: options.provider.name,
+        port: options.port,
+        version: options.version,
+      }
     },
     async readSecrets(record): Promise<Secrets> {
-      const values = readEnvFile(envPath)
-      const tokenSecrets = values.BOT_TOKEN ? { token: values.BOT_TOKEN } : {}
-      if (values.OWNER_ID && INTEGER_PATTERN.test(values.OWNER_ID)) {
-        return { ...tokenSecrets, ownerId: Number(values.OWNER_ID) }
-      }
-      const result = await exec('podman', [
-        'run',
-        '--rm',
-        '-v',
-        `${VOLUME_NAME}:/data`,
-        formatImageTag(record.version),
-        SERVICE_NAME,
-        'owner',
-        'get',
-      ])
-      const output = result.stdout.trim()
-      if (result.code === 0 && INTEGER_PATTERN.test(output)) {
-        return { ...tokenSecrets, ownerId: Number(output) }
-      }
-      return tokenSecrets
+      return readContainerSecrets(envPath, providers, () =>
+        exec('podman', [
+          'run',
+          '--rm',
+          '-v',
+          `${VOLUME_NAME}:/data`,
+          formatImageTag(record.version),
+          SERVICE_NAME,
+          'owner',
+          'get',
+        ]),
+      )
     },
     async remove(record, purge) {
       await systemctl('stop', SERVICE_NAME)
@@ -156,7 +153,7 @@ export function createQuadletTarget(deps: TargetDeps): Target {
       }
     },
     async clearOwner(record) {
-      removeEnvKey(envPath, 'OWNER_ID')
+      removeEnvKey(envPath, requireRecordOwner(providers, record).envVar)
       try {
         const result = await exec('podman', ['exec', SERVICE_NAME, SERVICE_NAME, 'owner', 'clear'])
         if (result.code === 0) {

@@ -8,14 +8,14 @@ export const SERVICE_NAME = 'telegram-ask'
 export const PACKAGE_NAME = 'telegram-ask'
 /** Podman volume holding /data (the config file). */
 export const VOLUME_NAME = 'telegram-ask-data'
-/** Keeps the .env file with the bot token out of the image build context. */
+/** Keeps the .env file with the credentials out of the image build context. */
 export const DOCKERIGNORE = '.env\n'
 /** Quadlet needs podman 4.4 or newer (major part). */
 export const MIN_PODMAN_MAJOR = 4
 /** Quadlet needs podman 4.4 or newer (minor part). */
 export const MIN_PODMAN_MINOR = 4
-/** Whole numbers in env files and command output. */
-export const INTEGER_PATTERN = /^-?\d+$/
+/** A carriage return or newline, which an env file value must not contain. */
+export const LINE_BREAK_PATTERN = /[\r\n]/
 /** podman stderr meaning the thing is already gone, which purge treats as success. */
 export const NOT_FOUND_PATTERN = /no such|not found|does not exist/i
 /** Captures major, minor and optional patch from `podman --version`. */
@@ -26,5 +26,5 @@ export const ENVIRONMENT_LINE_PATTERN = /^\s*Environment=(.*)$/
 export const ESCAPED_CHAR_PATTERN = /\\(.)/g
 /** Variable the unit sets to pin the config file path. */
 export const CONFIG_ENV_PREFIX = 'TELEGRAM_ASK_CONFIG='
-/** Owner read/write only, for files that hold the bot token. */
+/** Owner read/write only, for files that hold credentials. */
 export const SECRET_FILE_MODE = 0o600

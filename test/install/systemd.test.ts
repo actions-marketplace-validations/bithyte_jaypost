@@ -9,6 +9,8 @@ import {
   findUnitConfigFile,
 } from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
+import { telegramProvider } from '../../src/telegram/index.ts'
+import { createFakeProvider } from '../provider/fake.ts'
 
 let tmp: string
 let calls: [string, readonly string[]][]
@@ -37,13 +39,25 @@ function make(env: NodeJS.ProcessEnv = {}, selfPath = '/src/dist/cli.js') {
   const e = { HOME: tmp, ...env }
   const paths = resolveInstallPaths(e)
   const t = createSystemdTarget(
-    { exec: fakeExec, paths, env: e, user: 'me' },
+    {
+      exec: fakeExec,
+      paths,
+      env: e,
+      user: 'me',
+      providers: [telegramProvider, createFakeProvider()],
+    },
     { selfPath, nodePath: '/usr/bin/node' },
   )
   return { t, paths }
 }
 
-const base = { version: '0.1.0', port: 8787, token: 't', print: () => {} }
+const base = {
+  version: '0.1.0',
+  port: 8787,
+  provider: telegramProvider,
+  settings: { botToken: 't' },
+  print: () => {},
+}
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'sd-'))
@@ -80,13 +94,18 @@ test('install writes unit, config 0600, enables', async () => {
   expect(calls).toContainEqual(['systemctl', ['--user', 'daemon-reload']])
   expect(calls).toContainEqual(['systemctl', ['--user', 'enable', '--now', 'telegram-ask']])
   expect(calls.some(([c]) => c === 'sudo')).toBe(false)
-  expect(readConfigFile(paths.configFile)).toEqual({ botToken: 't', port: 8787 })
+  expect(readConfigFile(paths.configFile)).toEqual({
+    provider: 'telegram',
+    botToken: 't',
+    port: 8787,
+  })
   expect(statSync(paths.configFile).mode & 0o777).toBe(0o600)
   const unit = readFileSync(paths.systemdUnit, 'utf8')
   expect(unit).toContain(`ExecStart="/usr/bin/node" "${rec.cliPath}" start`)
   expect(unit).toContain(`Environment="TELEGRAM_ASK_CONFIG=${paths.configFile}"`)
   expect(rec).toMatchObject({
     target: 'systemd',
+    provider: 'telegram',
     port: 8787,
     version: '0.1.0',
     configFile: paths.configFile,
@@ -107,9 +126,17 @@ test('unit stays quoted with spaces in paths and config env', async () => {
 
 test('install keeps a reused owner id', async () => {
   const { t, paths } = make()
-  await t.install({ ...base, ownerId: 42 })
-  expect(readConfigFile(paths.configFile)).toEqual({ botToken: 't', port: 8787, ownerId: 42 })
-  expect(await t.readSecrets({} as never)).toEqual({ token: 't', ownerId: 42 })
+  await t.install({ ...base, settings: { botToken: 't', ownerId: 42 } })
+  expect(readConfigFile(paths.configFile)).toEqual({
+    provider: 'telegram',
+    botToken: 't',
+    port: 8787,
+    ownerId: 42,
+  })
+  expect(await t.readSecrets({} as never)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 't', ownerId: 42 },
+  })
   await t.clearOwner({} as never)
   expect(readConfigFile(paths.configFile).ownerId).toBeUndefined()
 })
@@ -170,7 +197,10 @@ test('readSecrets, clearOwner and purge use the recorded configFile, not the env
   writeFileSync(recorded, JSON.stringify({ botToken: 'rt', ownerId: 5 }))
   const { t, paths } = make({ TELEGRAM_ASK_CONFIG: join(tmp, 'other.json') })
   const rec = { target: 'systemd' as const, port: 1, version: 'v', configFile: recorded }
-  expect(await t.readSecrets(rec)).toEqual({ token: 'rt', ownerId: 5 })
+  expect(await t.readSecrets(rec)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 'rt', ownerId: 5 },
+  })
   await t.clearOwner(rec)
   expect(readConfigFile(recorded)).toEqual({ botToken: 'rt' })
   vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -184,7 +214,42 @@ test('install without ownerId keeps a stored owner', async () => {
   mkdirSync(dirname(paths.configFile), { recursive: true })
   writeFileSync(paths.configFile, JSON.stringify({ botToken: 'old', ownerId: 42 }))
   await t.install(base)
-  expect(readConfigFile(paths.configFile)).toEqual({ botToken: 't', port: 8787, ownerId: 42 })
+  expect(readConfigFile(paths.configFile)).toEqual({
+    provider: 'telegram',
+    botToken: 't',
+    port: 8787,
+    ownerId: 42,
+  })
+})
+
+test("install drops another provider's keys", async () => {
+  const { t, paths } = make()
+  mkdirSync(dirname(paths.configFile), { recursive: true })
+  writeFileSync(paths.configFile, JSON.stringify({ provider: 'fake', fakeKey: 'k', extra: 1 }))
+  await t.install(base)
+  expect(readConfigFile(paths.configFile)).toEqual({
+    provider: 'telegram',
+    botToken: 't',
+    port: 8787,
+    extra: 1,
+  })
+})
+
+test('readSecrets on an old config without provider reads as telegram', async () => {
+  const { t, paths } = make()
+  mkdirSync(dirname(paths.configFile), { recursive: true })
+  writeFileSync(paths.configFile, JSON.stringify({ botToken: 'old', port: 1, ownerId: 42 }))
+  expect(await t.readSecrets({} as never)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 'old', ownerId: 42 },
+  })
+})
+
+test('readSecrets reads the provider named in the config', async () => {
+  const { t, paths } = make()
+  mkdirSync(dirname(paths.configFile), { recursive: true })
+  writeFileSync(paths.configFile, JSON.stringify({ provider: 'fake', fakeKey: 'k', botToken: 'x' }))
+  expect(await t.readSecrets({} as never)).toEqual({ provider: 'fake', settings: { fakeKey: 'k' } })
 })
 
 test('purge hint names the user prefix when the fallback was used', async () => {

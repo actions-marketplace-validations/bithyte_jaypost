@@ -12,6 +12,8 @@ import {
   writeInstall,
 } from '../../src/install/index.ts'
 import type { Target, TargetName } from '../../src/install/index.ts'
+import { telegramProvider } from '../../src/telegram/index.ts'
+import { createFakeProvider } from '../provider/fake.ts'
 
 let tmp: string
 
@@ -134,23 +136,32 @@ test('legacy unit Environment=TELEGRAM_ASK_CONFIG wins over the env', () => {
 })
 
 test('leftover secrets: none', () => {
-  expect(findLeftoverSecrets(resolveInstallPaths({ HOME: tmp }), { HOME: tmp })).toEqual({})
+  expect(findLeftoverSecrets(resolveInstallPaths({ HOME: tmp }), { HOME: tmp })).toBeUndefined()
 })
 
 test('leftover secrets from config.json (honoring TELEGRAM_ASK_CONFIG)', () => {
   const env = { HOME: tmp, TELEGRAM_ASK_CONFIG: join(tmp, 'c.json') }
   writeFileSync(env.TELEGRAM_ASK_CONFIG, JSON.stringify({ botToken: 'ct', ownerId: 3 }))
-  expect(findLeftoverSecrets(resolveInstallPaths(env), env)).toEqual({ token: 'ct', ownerId: 3 })
+  expect(findLeftoverSecrets(resolveInstallPaths(env), env)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 'ct', ownerId: 3 },
+  })
 })
 
 test('leftover secrets from a container .env', () => {
   const paths = resolveInstallPaths({ HOME: tmp })
   mkdirSync(paths.composeDirectory, { recursive: true })
   writeFileSync(join(paths.composeDirectory, '.env'), 'BOT_TOKEN=et\nPORT=1\nOWNER_ID=8\n')
-  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({ token: 'et', ownerId: 8 })
+  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 'et', ownerId: 8 },
+  })
   mkdirSync(paths.quadletDirectory, { recursive: true })
-  writeFileSync(join(paths.quadletDirectory, '.env'), 'BOT_TOKEN=qt\nPORT=1\n')
-  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({ token: 'qt' })
+  writeFileSync(join(paths.quadletDirectory, '.env'), 'PROVIDER=telegram\nBOT_TOKEN=qt\nPORT=1\n')
+  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 'qt' },
+  })
 })
 
 test('leftover secrets ignore corrupt config and token-less files', () => {
@@ -159,5 +170,30 @@ test('leftover secrets ignore corrupt config and token-less files', () => {
   writeFileSync(paths.configFile, '{oops')
   mkdirSync(paths.quadletDirectory, { recursive: true })
   writeFileSync(join(paths.quadletDirectory, '.env'), 'PORT=1\nOWNER_ID=2\n')
-  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({})
+  expect(findLeftoverSecrets(paths, { HOME: tmp })).toBeUndefined()
+})
+
+test('leftover with an unknown provider is skipped', () => {
+  const paths = resolveInstallPaths({ HOME: tmp })
+  mkdirSync(paths.quadletDirectory, { recursive: true })
+  writeFileSync(join(paths.quadletDirectory, '.env'), 'PROVIDER=nope\nBOT_TOKEN=qt\n')
+  mkdirSync(paths.composeDirectory, { recursive: true })
+  writeFileSync(join(paths.composeDirectory, '.env'), 'BOT_TOKEN=et\n')
+  expect(findLeftoverSecrets(paths, { HOME: tmp })).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 'et' },
+  })
+})
+
+test('leftover needs every required secret', () => {
+  const paths = resolveInstallPaths({ HOME: tmp })
+  const providers = [telegramProvider, createFakeProvider()]
+  mkdirSync(paths.composeDirectory, { recursive: true })
+  writeFileSync(join(paths.composeDirectory, '.env'), 'PROVIDER=fake\nBOT_TOKEN=x\n')
+  mkdirSync(paths.configDirectory, { recursive: true })
+  writeFileSync(paths.configFile, JSON.stringify({ provider: 'fake', fakeKey: 'k' }))
+  expect(findLeftoverSecrets(paths, { HOME: tmp }, providers)).toEqual({
+    provider: 'fake',
+    settings: { fakeKey: 'k' },
+  })
 })

@@ -7,13 +7,19 @@ import {
   writeInstall,
 } from '../install/index.ts'
 import type { InstallRecord, Secrets, TargetName } from '../install/index.ts'
+import { listSecretValues } from '../provider/index.ts'
+import type { Provider, SettingValues } from '../provider/index.ts'
 import { TARGET_LABELS } from './constants.ts'
 import { PromptAborted } from './prompts.ts'
 import type { InitArgs, InitDeps } from './types.ts'
 
-async function findBotUsername(deps: InitDeps, token: string): Promise<string | undefined> {
+async function findDisplayName(
+  provider: Provider,
+  settings: SettingValues,
+): Promise<string | undefined> {
   try {
-    return await deps.validateToken(token)
+    const check = await provider.setup.checkCredentials(settings)
+    return check.ok ? check.displayName : undefined
   } catch {
     return undefined
   }
@@ -86,7 +92,14 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     )
   }
   const target = deps.targets[name]
-  let secrets: Secrets = {}
+  const provider = deps.providers[0]
+  // Task 7 makes init generic; until then it asks for the one prompted setting (the token).
+  const tokenSetting = provider?.settings.find((setting) => setting.prompt !== undefined)
+  if (provider === undefined || tokenSetting?.prompt === undefined) {
+    throw new Error('no provider with a prompted setting is registered')
+  }
+  const { text } = provider.setup
+  let secrets: Secrets | undefined
   let record: InstallRecord | undefined
   const existing = findExistingInstall(deps.paths, deps.targets, env)
   if (existing) {
@@ -100,9 +113,6 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     }
     const old = deps.targets[record.target]
     secrets = await old.readSecrets(record)
-    if (secrets.token) {
-      seen.push(secrets.token)
-    }
     // Record a legacy install too, so a failed run below can still find its config on retry.
     if (existing.legacy) {
       writeInstall(deps.paths.installFile, record)
@@ -111,30 +121,35 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     // until the new install replaces it; remove() keeps the secrets and is safe to repeat.
     await old.remove(record, false)
   } else {
-    secrets = findLeftoverSecrets(deps.paths, env)
-    if (secrets.token) {
-      seen.push(secrets.token)
-      print('Found a bot token kept from an earlier install.')
+    secrets = findLeftoverSecrets(deps.paths, env, deps.providers)
+    if (secrets?.provider === provider.name) {
+      print(text.leftoverFound)
     }
   }
+  const saved = secrets?.provider === provider.name ? secrets.settings : {}
+  seen.push(...listSecretValues(provider, saved))
   let token: string | undefined
-  if (secrets.token) {
-    const bot = await findBotUsername(deps, secrets.token)
-    if (bot) {
-      token = secrets.token
-      print(`Reusing the saved bot token (@${bot}).`)
+  const savedToken = saved[tokenSetting.configKey]
+  if (savedToken !== undefined) {
+    const displayName = await findDisplayName(provider, saved)
+    if (displayName) {
+      token = String(savedToken)
+      print(text.reusing(displayName))
     }
   }
   while (token === undefined) {
     if (deps.signal?.aborted) {
       throw new Aborted()
     }
-    const candidate = await prompt.password('Bot token')
+    const candidate = await prompt.password(tokenSetting.prompt)
     seen.push(candidate)
-    if (candidate !== '' && (await findBotUsername(deps, candidate))) {
+    if (
+      candidate !== '' &&
+      (await findDisplayName(provider, { ...saved, [tokenSetting.configKey]: candidate }))
+    ) {
       token = candidate
     } else {
-      print('Telegram rejected that token (or could not be reached). Try again.')
+      print(text.rejected)
     }
   }
   const port = args.port ?? record?.port ?? DEFAULT_PORT
@@ -145,8 +160,8 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
   const installed = await target.install({
     version: deps.version,
     port,
-    token,
-    ...(secrets.ownerId === undefined ? {} : { ownerId: secrets.ownerId }),
+    provider,
+    settings: { ...saved, [tokenSetting.configKey]: token },
     ...(args.tarball === undefined ? {} : { tarball: args.tarball }),
     print,
   })

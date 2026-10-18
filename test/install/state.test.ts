@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, statSync, writeFileSync, existsSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vite-plus/test'
-import { readInstall, removeInstall, writeInstall } from '../../src/install/index.ts'
+import {
+  readInstall,
+  removeInstall,
+  resolveRecordProvider,
+  writeInstall,
+} from '../../src/install/index.ts'
 
 let dir: string
 beforeEach(() => {
@@ -47,4 +52,20 @@ test('configFile roundtrips and is optional', () => {
   expect(readInstall(file)).toEqual({ target: 'systemd', port: 1, version: 'v' })
   writeFileSync(file, JSON.stringify({ target: 'systemd', port: 1, version: 'v', configFile: 3 }))
   expect(readInstall(file)).toBeUndefined()
+})
+
+test('provider roundtrips', () => {
+  const file = join(dir, 'install.json')
+  const rec = { target: 'compose', provider: 'fake', port: 1, version: 'v' } as const
+  writeInstall(file, rec)
+  expect(readInstall(file)).toEqual(rec)
+  expect(resolveRecordProvider(rec)).toBe('fake')
+})
+
+test('old install.json without provider resolves to telegram', () => {
+  const file = join(dir, 'install.json')
+  writeFileSync(file, JSON.stringify({ target: 'compose', port: 1, version: '0.1.0' }))
+  const record = readInstall(file)
+  expect(record).toBeDefined()
+  expect(resolveRecordProvider(record!)).toBe('telegram')
 })

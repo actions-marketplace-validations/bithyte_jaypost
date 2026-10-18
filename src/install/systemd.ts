@@ -1,6 +1,8 @@
 import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { readConfigFile, updateConfigFile } from '../config/index.ts'
+import { collectSettings, DEFAULT_PROVIDER, findProvider } from '../provider/index.ts'
+import type { Provider } from '../provider/index.ts'
 import { ensureLinger } from '../system/index.ts'
 import {
   CONFIG_ENV_PREFIX,
@@ -9,6 +11,7 @@ import {
   PACKAGE_NAME,
   SERVICE_NAME,
 } from './constants.ts'
+import { requireRecordOwner } from './state.ts'
 import { formatSystemdUnit } from './templates.ts'
 import type {
   CliLocation,
@@ -59,10 +62,40 @@ export function findUnitConfigFile(unit: string): string | undefined {
 }
 
 /**
+ * Provider named in the config file (Telegram when absent) and its settings; settings are empty for
+ * an unknown provider. Throws on a corrupt config file.
+ */
+export function readConfigSecrets(path: string, providers: readonly Provider[]): Secrets {
+  const config = readConfigFile(path)
+  const name = config.provider ?? DEFAULT_PROVIDER
+  const provider = findProvider(providers, name)
+  if (provider === undefined) {
+    return { provider: name, settings: {} }
+  }
+  return {
+    provider: name,
+    settings: collectSettings(provider, (setting) => config[setting.configKey]),
+  }
+}
+
+/** `null` for every config key other providers use, so switching providers drops the old settings. */
+function formatOtherProviderKeys(
+  providers: readonly Provider[],
+  current: Provider,
+): Readonly<Record<string, null>> {
+  const ownKeys = new Set(current.settings.map((setting) => setting.configKey))
+  const keys = providers
+    .filter((provider) => provider.name !== current.name)
+    .flatMap((provider) => provider.settings.map((setting) => setting.configKey))
+    .filter((key) => !ownKeys.has(key))
+  return Object.fromEntries(keys.map((key) => [key, null]))
+}
+
+/**
  * systemd user service target running the npm-installed CLI; keeps its settings in the config file.
  */
 export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target {
-  const { exec, paths, env, user } = deps
+  const { exec, paths, env, user, providers } = deps
   const systemctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
   // The unit always pins TELEGRAM_ASK_CONFIG to this absolute path, and install.json records it,
   // so later commands don't depend on the environment they happen to run in.
@@ -111,11 +144,12 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
     },
     async install(options): Promise<InstallRecord> {
       const cliPath = await resolveCli(options)
-      // Only touch ownerId when we have one; clearOwner is the explicit way to drop it.
+      // Only touch the owner when we have one; clearOwner is the explicit way to drop it.
       updateConfigFile(configFile, {
-        botToken: options.token,
+        ...formatOtherProviderKeys(providers, options.provider),
+        provider: options.provider.name,
         port: options.port,
-        ...(options.ownerId === undefined ? {} : { ownerId: options.ownerId }),
+        ...options.settings,
       })
       mkdirSync(dirname(paths.systemdUnit), { recursive: true })
       writeFileSync(
@@ -131,6 +165,7 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       await ensureLinger(exec, user, options.print)
       return {
         target: 'systemd',
+        provider: options.provider.name,
         port: options.port,
         version: options.version,
         cliPath,
@@ -138,12 +173,7 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       }
     },
     async readSecrets(record): Promise<Secrets> {
-      const config = readConfigFile(resolveConfigFile(record))
-      const { botToken, ownerId } = config
-      return {
-        ...(typeof botToken === 'string' ? { token: botToken } : {}),
-        ...(typeof ownerId === 'number' ? { ownerId } : {}),
-      }
+      return readConfigSecrets(resolveConfigFile(record), providers)
     },
     async remove(record, purge) {
       await systemctl('disable', '--now', SERVICE_NAME)
@@ -167,7 +197,9 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       }
     },
     async clearOwner(record) {
-      updateConfigFile(resolveConfigFile(record), { ownerId: null })
+      updateConfigFile(resolveConfigFile(record), {
+        [requireRecordOwner(providers, record).configKey]: null,
+      })
     },
     async isRunning() {
       return (await systemctl('is-active', '--quiet', SERVICE_NAME)).code === 0

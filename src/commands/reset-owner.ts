@@ -1,10 +1,13 @@
-import { findExistingInstall } from '../install/index.ts'
+import { findExistingInstall, resolveRecordProvider } from '../install/index.ts'
+import { findOwnerSetting, requireProvider } from '../provider/index.ts'
+import type { Provider } from '../provider/index.ts'
 import { PromptAborted } from './prompts.ts'
 import type { ResetOwnerDeps, WaitResult } from './types.ts'
 
 /**
  * Unlinks the paired owner, restarts the service and waits for a new pairing. Returns 0 on success
- * or if the user declines, 1 on failure or not installed, 130 on interrupt.
+ * or if the user declines, 1 on failure, not installed or a provider that doesn't pair, 130 on
+ * interrupt.
  */
 export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
   const { print } = deps
@@ -15,8 +18,20 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
   }
   const { record } = existing
   const target = deps.targets[record.target]
+  let provider: Provider
   try {
-    if (!(await deps.confirm('This unlinks your Telegram account. Continue?', false))) {
+    provider = requireProvider(deps.providers, resolveRecordProvider(record))
+  } catch (error) {
+    print(error instanceof Error ? error.message : String(error))
+    return 1
+  }
+  const warning = provider.setup.text.resetOwnerWarning
+  if (findOwnerSetting(provider) === undefined || warning === undefined) {
+    print(`${provider.label} doesn't support re-pairing.`)
+    return 1
+  }
+  try {
+    if (!(await deps.confirm(`${warning} Continue?`, false))) {
       return 0
     }
     await target.clearOwner(record)

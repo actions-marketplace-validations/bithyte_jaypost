@@ -1,8 +1,9 @@
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import type { Exec } from '../system/index.ts'
-import { DOCKERIGNORE, INTEGER_PATTERN, PACKAGE_NAME } from './constants.ts'
-import { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
+import { DOCKERIGNORE, PACKAGE_NAME } from './constants.ts'
+import { readContainerSecrets, removeEnvKey, writeEnvFile } from './envfile.ts'
+import { requireRecordOwner } from './state.ts'
 import { formatComposeYaml, formatDockerfile, formatEnvFile } from './templates.ts'
 import type { InstallRecord, Secrets, Target, TargetDeps } from './types.ts'
 
@@ -18,7 +19,7 @@ async function tryExec(exec: Exec, command: string, args: readonly string[]) {
  * Docker Compose target; writes its files under the compose directory and drives `docker compose`.
  */
 export function createComposeTarget(deps: TargetDeps): Target {
-  const { exec, paths } = deps
+  const { exec, paths, providers } = deps
   const file = join(paths.composeDirectory, 'compose.yaml')
   const envPath = join(paths.composeDirectory, '.env')
   const compose = (args: readonly string[], options?: { readonly inherit?: boolean }) =>
@@ -47,7 +48,7 @@ export function createComposeTarget(deps: TargetDeps): Target {
           copyFileSync(options.tarball, destination)
         }
       }
-      // Keep the token out of the build context.
+      // Keep the credentials out of the build context.
       writeFileSync(join(paths.composeDirectory, '.dockerignore'), DOCKERIGNORE)
       writeFileSync(
         join(paths.composeDirectory, 'Dockerfile'),
@@ -60,37 +61,26 @@ export function createComposeTarget(deps: TargetDeps): Target {
       writeEnvFile(
         envPath,
         formatEnvFile({
-          token: options.token,
+          provider: options.provider,
           port: options.port,
-          ...(options.ownerId === undefined ? {} : { ownerId: options.ownerId }),
+          settings: options.settings,
         }),
       )
       const result = await compose(['up', '-d', '--build'], { inherit: true })
       if (result.code !== 0) {
         throw new Error(`docker compose up failed (exit ${result.code})`)
       }
-      return { target: 'compose', port: options.port, version: options.version }
+      return {
+        target: 'compose',
+        provider: options.provider.name,
+        port: options.port,
+        version: options.version,
+      }
     },
     async readSecrets(): Promise<Secrets> {
-      const values = readEnvFile(envPath)
-      const tokenSecrets = values.BOT_TOKEN ? { token: values.BOT_TOKEN } : {}
-      if (values.OWNER_ID && INTEGER_PATTERN.test(values.OWNER_ID)) {
-        return { ...tokenSecrets, ownerId: Number(values.OWNER_ID) }
-      }
-      const result = await compose([
-        'run',
-        '--rm',
-        '--no-deps',
-        'bot',
-        PACKAGE_NAME,
-        'owner',
-        'get',
-      ])
-      const output = result.stdout.trim()
-      if (result.code === 0 && INTEGER_PATTERN.test(output)) {
-        return { ...tokenSecrets, ownerId: Number(output) }
-      }
-      return tokenSecrets
+      return readContainerSecrets(envPath, providers, () =>
+        compose(['run', '--rm', '--no-deps', 'bot', PACKAGE_NAME, 'owner', 'get']),
+      )
     },
     async remove(_record, purge) {
       const result = await compose(purge ? ['down', '-v'] : ['down'])
@@ -107,8 +97,8 @@ export function createComposeTarget(deps: TargetDeps): Target {
         throw new Error(`docker compose up failed (exit ${result.code})`)
       }
     },
-    async clearOwner() {
-      removeEnvKey(envPath, 'OWNER_ID')
+    async clearOwner(record) {
+      removeEnvKey(envPath, requireRecordOwner(providers, record).envVar)
       const result = await compose([
         'run',
         '--rm',

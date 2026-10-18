@@ -1,12 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEFAULT_PORT, readConfigFile } from '../config/index.ts'
+import { findProvider, hasRequiredSecrets, PROVIDERS } from '../provider/index.ts'
+import type { Provider } from '../provider/index.ts'
 import { createComposeTarget } from './compose.ts'
-import { INTEGER_PATTERN, TARGET_ORDER } from './constants.ts'
-import { readEnvFile } from './envfile.ts'
+import { TARGET_ORDER } from './constants.ts'
+import { readEnvSecrets } from './envfile.ts'
 import { createQuadletTarget } from './quadlet.ts'
 import { readInstall } from './state.ts'
-import { createSystemdTarget, findUnitConfigFile, resolveDefaultConfigFile } from './systemd.ts'
+import {
+  createSystemdTarget,
+  findUnitConfigFile,
+  readConfigSecrets,
+  resolveDefaultConfigFile,
+} from './systemd.ts'
 import type {
   CliLocation,
   DetectedTarget,
@@ -76,48 +83,43 @@ export function findExistingInstall(
   return { record: { target: 'systemd', port, version: 'legacy', configFile }, legacy: true }
 }
 
-function readEnvSecrets(path: string): Secrets {
-  const values = readEnvFile(path)
-  return {
-    ...(values.BOT_TOKEN ? { token: values.BOT_TOKEN } : {}),
-    ...(values.OWNER_ID && INTEGER_PATTERN.test(values.OWNER_ID)
-      ? { ownerId: Number(values.OWNER_ID) }
-      : {}),
-  }
-}
-
-function readConfigSecrets(path: string): Secrets {
-  try {
-    const config = readConfigFile(path)
-    const { botToken, ownerId } = config
-    return {
-      ...(typeof botToken === 'string' && botToken !== '' ? { token: botToken } : {}),
-      ...(typeof ownerId === 'number' && Number.isSafeInteger(ownerId) ? { ownerId } : {}),
-    }
-  } catch {
-    // Corrupt config: treat as nothing left over.
-    return {}
-  }
-}
-
 /**
- * Token and owner left behind by an uninstall that kept them (no install.json any more).
- * Only reads files; never runs a container. First source with a token wins.
+ * Credentials and owner left behind by an uninstall that kept them (no install.json any more).
+ * Only reads files; never runs a container. The first source naming a known provider with every
+ * required secret wins; undefined when none does.
  */
 export function findLeftoverSecrets(
   paths: InstallPaths,
   env: NodeJS.ProcessEnv = process.env,
-): Secrets {
+  providers: readonly Provider[] = PROVIDERS,
+): Secrets | undefined {
   const sources = [
-    () => readEnvSecrets(join(paths.quadletDirectory, '.env')),
-    () => readEnvSecrets(join(paths.composeDirectory, '.env')),
-    () => readConfigSecrets(resolveDefaultConfigFile(paths, env)),
+    () => readEnvSecrets(join(paths.quadletDirectory, '.env'), providers),
+    () => readEnvSecrets(join(paths.composeDirectory, '.env'), providers),
+    () => readLeftoverConfigSecrets(resolveDefaultConfigFile(paths, env), providers),
   ]
   for (const read of sources) {
     const secrets = read()
-    if (secrets.token !== undefined) {
+    const provider = secrets === undefined ? undefined : findProvider(providers, secrets.provider)
+    if (
+      secrets !== undefined &&
+      provider !== undefined &&
+      hasRequiredSecrets(provider, secrets.settings)
+    ) {
       return secrets
     }
   }
-  return {}
+  return undefined
+}
+
+function readLeftoverConfigSecrets(
+  path: string,
+  providers: readonly Provider[],
+): Secrets | undefined {
+  try {
+    return readConfigSecrets(path, providers)
+  } catch {
+    // Corrupt config: treat as nothing left over.
+    return undefined
+  }
 }

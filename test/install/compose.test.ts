@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
 import { createComposeTarget, resolveInstallPaths } from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
+import { telegramProvider } from '../../src/telegram/index.ts'
+import { createFakeProvider, createPairingFakeProvider } from '../provider/fake.ts'
 
 let tmp: string
 let calls: [string, readonly string[]][]
@@ -24,9 +26,21 @@ const fakeExec: Exec = async (cmd, args) => {
 function make() {
   const env = { HOME: tmp }
   const paths = resolveInstallPaths(env)
-  return { t: createComposeTarget({ exec: fakeExec, paths, env, user: 'me' }), paths }
+  return {
+    t: createComposeTarget({ exec: fakeExec, paths, env, user: 'me', providers: PROVIDERS }),
+    paths,
+  }
 }
-const base = { version: '0.1.0', port: 8787, token: 't', print: () => {} }
+const PAIRING_FAKE = createPairingFakeProvider()
+const PROVIDERS = [telegramProvider, PAIRING_FAKE]
+const base = {
+  version: '0.1.0',
+  port: 8787,
+  provider: telegramProvider,
+  settings: { botToken: 't' },
+  print: () => {},
+}
+const withOwner = { ...base, settings: { botToken: 't', ownerId: 9 } }
 const rec = { target: 'compose' as const, port: 8787, version: '0.1.0' }
 
 beforeEach(() => {
@@ -52,6 +66,7 @@ test('unavailable when docker missing entirely (throws)', async () => {
     paths,
     env,
     user: 'me',
+    providers: PROVIDERS,
   })
   expect(await t.available()).toEqual({ ok: false, reason: 'docker not installed' })
 })
@@ -74,8 +89,8 @@ test('install writes files and runs up -d --build', async () => {
   const { t, paths } = make()
   const tar = join(tmp, 'pkg-1.tgz')
   writeFileSync(tar, 'x')
-  const r = await t.install({ ...base, ownerId: 9, tarball: tar })
-  expect(r).toEqual({ target: 'compose', port: 8787, version: '0.1.0' })
+  const r = await t.install({ ...withOwner, tarball: tar })
+  expect(r).toEqual({ target: 'compose', provider: 'telegram', port: 8787, version: '0.1.0' })
   expect(readFileSync(join(paths.composeDirectory, 'Dockerfile'), 'utf8')).toContain(
     'COPY pkg-1.tgz',
   )
@@ -83,8 +98,9 @@ test('install writes files and runs up -d --build', async () => {
   expect(existsSync(join(paths.composeDirectory, 'compose.yaml'))).toBe(true)
   const envPath = join(paths.composeDirectory, '.env')
   expect(statSync(envPath).mode & 0o777).toBe(0o600)
-  expect(readFileSync(envPath, 'utf8')).toContain('BOT_TOKEN=t')
-  expect(readFileSync(envPath, 'utf8')).toContain('OWNER_ID=9')
+  expect(readFileSync(envPath, 'utf8')).toBe(
+    'PROVIDER=telegram\nBOT_TOKEN=t\nPORT=8787\nOWNER_ID=9\n',
+  )
   expect(readFileSync(join(paths.composeDirectory, '.dockerignore'), 'utf8')).toBe('.env\n')
   expect(calls.at(-1)).toEqual([
     'docker',
@@ -100,22 +116,76 @@ test('install throws when up fails', async () => {
 
 test('readSecrets prefers OWNER_ID in .env, falls back to owner get', async () => {
   const { t } = make()
-  await t.install({ ...base, ownerId: 9 })
-  expect(await t.readSecrets(rec)).toEqual({ token: 't', ownerId: 9 })
+  await t.install(withOwner)
+  expect(await t.readSecrets(rec)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 't', ownerId: 9 },
+  })
   await t.clearOwner(rec)
   ownerOut = '77\n'
   calls = []
-  expect(await t.readSecrets(rec)).toEqual({ token: 't', ownerId: 77 })
+  expect(await t.readSecrets(rec)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 't', ownerId: 77 },
+  })
   expect(calls[0]![1]).toEqual(
     expect.arrayContaining(['run', '--rm', '--no-deps', 'bot', 'telegram-ask', 'owner', 'get']),
   )
   ownerOut = ''
-  expect((await t.readSecrets(rec)).ownerId).toBeUndefined()
+  expect(await t.readSecrets(rec)).toEqual({ provider: 'telegram', settings: { botToken: 't' } })
+})
+
+test('readSecrets on an old env file reads as telegram', async () => {
+  const { t, paths } = make()
+  mkdirSync(paths.composeDirectory, { recursive: true })
+  writeFileSync(join(paths.composeDirectory, '.env'), 'BOT_TOKEN=t\nPORT=1\nOWNER_ID=8\n')
+  expect(await t.readSecrets(rec)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 't', ownerId: 8 },
+  })
+  expect(calls).toEqual([])
+})
+
+test('readSecrets of an unknown provider has no settings', async () => {
+  const { t, paths } = make()
+  mkdirSync(paths.composeDirectory, { recursive: true })
+  writeFileSync(join(paths.composeDirectory, '.env'), 'PROVIDER=nope\nBOT_TOKEN=t\n')
+  expect(await t.readSecrets(rec)).toEqual({ provider: 'nope', settings: {} })
+})
+
+test("clearOwner removes the owner env var of the record's provider", async () => {
+  const { t, paths } = make()
+  const record = await t.install({
+    ...base,
+    provider: PAIRING_FAKE,
+    settings: { fakeKey: 'k', fakeOwner: 'o' },
+  })
+  expect(record.provider).toBe('fakepair')
+  const envPath = join(paths.composeDirectory, '.env')
+  expect(readFileSync(envPath, 'utf8')).toBe(
+    'PROVIDER=fakepair\nFAKE_KEY=k\nPORT=8787\nFAKE_OWNER=o\n',
+  )
+  await t.clearOwner(record)
+  expect(readFileSync(envPath, 'utf8')).toBe('PROVIDER=fakepair\nFAKE_KEY=k\nPORT=8787\n')
+})
+
+test('clearOwner throws when the provider has no owner setting', async () => {
+  const { paths } = make()
+  const t = createComposeTarget({
+    exec: fakeExec,
+    paths,
+    env: { HOME: tmp },
+    user: 'me',
+    providers: [createFakeProvider()],
+  })
+  await expect(t.clearOwner({ ...rec, provider: 'fake' })).rejects.toThrow(
+    'provider "fake" has no owner setting',
+  )
 })
 
 test('clearOwner removes env key and runs owner clear', async () => {
   const { t, paths } = make()
-  await t.install({ ...base, ownerId: 9 })
+  await t.install(withOwner)
   calls = []
   await t.clearOwner(rec)
   expect(readFileSync(join(paths.composeDirectory, '.env'), 'utf8')).not.toContain('OWNER_ID')

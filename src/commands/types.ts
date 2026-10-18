@@ -1,4 +1,5 @@
 import type { InstallPaths, Target, TargetName } from '../install/index.ts'
+import type { Provider } from '../provider/index.ts'
 import type { StatusInfo } from '../server/index.ts'
 
 /** One entry in a select prompt; a `disabled` reason shows it as unavailable. */
@@ -48,7 +49,8 @@ export type InitDeps = {
   readonly targets: Readonly<Record<TargetName, Target>>
   readonly paths: InstallPaths
   readonly prompt: Prompts
-  readonly validateToken: (token: string) => Promise<string | undefined>
+  /** Registered providers; init uses the first one for now. */
+  readonly providers: readonly Provider[]
   readonly isPortFree: (port: number) => Promise<boolean>
   readonly wait: WaitForPairing
   readonly print: (text: string) => void
@@ -69,6 +71,7 @@ export type InitArgs = {
 export type ResetOwnerDeps = {
   readonly targets: Readonly<Record<TargetName, Target>>
   readonly paths: InstallPaths
+  readonly providers: readonly Provider[]
   readonly confirm: Prompts['confirm']
   readonly wait: WaitForPairing
   readonly print: (text: string) => void

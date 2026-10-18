@@ -5,7 +5,9 @@ import { beforeEach, expect, test, vi } from 'vite-plus/test'
 import { PromptAborted, runInit } from '../../src/commands/index.ts'
 import type { InitDeps } from '../../src/commands/index.ts'
 import { resolveInstallPaths, readInstall, writeInstall } from '../../src/install/index.ts'
-import type { InstallPaths, Target, TargetName } from '../../src/install/index.ts'
+import type { InstallPaths, Secrets, Target, TargetName } from '../../src/install/index.ts'
+import type { CredentialCheck, Provider, SettingValues } from '../../src/provider/index.ts'
+import { telegramProvider } from '../../src/telegram/index.ts'
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
@@ -21,7 +23,27 @@ beforeEach(() => {
   out = []
 })
 
-function fake(name: TargetName, ok = true, secrets = {}): Mutable<Target> {
+const ACCEPTED: CredentialCheck = { ok: true, displayName: '@mybot' }
+const REJECTED: CredentialCheck = { ok: false, reason: 'rejected' }
+const NO_SECRETS: Secrets = { provider: 'telegram', settings: {} }
+
+function telegram(
+  checkCredentials: (settings: SettingValues) => Promise<CredentialCheck> = vi.fn(
+    async () => ACCEPTED,
+  ),
+): Provider {
+  return { ...telegramProvider, setup: { ...telegramProvider.setup, checkCredentials } }
+}
+
+function checkOf(d: InitDeps) {
+  return d.providers[0]!.setup.checkCredentials
+}
+
+function saved(settings: SettingValues): Secrets {
+  return { provider: 'telegram', settings }
+}
+
+function fake(name: TargetName, ok = true, secrets: Secrets = NO_SECRETS): Mutable<Target> {
   return {
     name,
     available: vi.fn(async () =>
@@ -51,7 +73,7 @@ function deps(over: Partial<InitDeps> & { targets?: Record<TargetName, Target> }
       password: vi.fn(async () => 'good-token'),
       select: vi.fn(async (_q, _o, initialValue) => initialValue),
     },
-    validateToken: vi.fn(async () => 'mybot'),
+    providers: [telegram()],
     isPortFree: vi.fn(async () => {
       order.push('port')
       return true
@@ -73,7 +95,7 @@ test('fresh install: default target, default port, writes install record', async
   expect(await runInit({}, d)).toBe(0)
   expect(d.prompt.select).toHaveBeenCalled()
   expect(d.targets.quadlet.install).toHaveBeenCalledWith(
-    expect.objectContaining({ port: 8787, token: 'good-token', version: '1.2.3' }),
+    expect.objectContaining({ port: 8787, settings: { botToken: 'good-token' }, version: '1.2.3' }),
   )
   expect(readInstall(paths.installFile)?.target).toBe('quadlet')
   expect(out.join('\n')).toContain('Done. Try it: telegram-ask test')
@@ -81,7 +103,7 @@ test('fresh install: default target, default port, writes install record', async
 
 test('replace: reads secrets, removes old without purge, checks port after removal, reuses token and owner', async () => {
   seed('compose')
-  const old = fake('compose', true, { token: 't', ownerId: 42 })
+  const old = fake('compose', true, saved({ botToken: 't', ownerId: 42 }))
   const d = deps({
     targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
   })
@@ -89,15 +111,15 @@ test('replace: reads secrets, removes old without purge, checks port after remov
   expect(order).toEqual(['remove', 'port', 'install:quadlet'])
   expect(old.remove).toHaveBeenCalledWith(expect.objectContaining({ target: 'compose' }), false)
   expect(d.targets.quadlet.install).toHaveBeenCalledWith(
-    expect.objectContaining({ token: 't', ownerId: 42, port: 9000 }),
+    expect.objectContaining({ settings: { botToken: 't', ownerId: 42 }, port: 9000 }),
   )
   expect(d.prompt.password).not.toHaveBeenCalled()
-  expect(d.validateToken).toHaveBeenCalledWith('t')
+  expect(checkOf(d)).toHaveBeenCalledWith({ botToken: 't', ownerId: 42 })
 })
 
 test('declining replace changes nothing', async () => {
   seed('compose')
-  const old = fake('compose', true, { token: 't' })
+  const old = fake('compose', true, saved({ botToken: 't' }))
   const d = deps({
     targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
   })
@@ -138,16 +160,16 @@ test('invalid token reprompts without echoing Telegram errors', async () => {
   const validate = vi
     .fn()
     .mockRejectedValueOnce(new Error('ECONNREFUSED api.telegram.org SECRET-ERR'))
-    .mockResolvedValueOnce(undefined)
-    .mockResolvedValueOnce('mybot')
+    .mockResolvedValueOnce(REJECTED)
+    .mockResolvedValueOnce(ACCEPTED)
   const secret = vi
     .fn()
     .mockResolvedValueOnce('bad-token-1')
     .mockResolvedValueOnce('bad-token-2')
     .mockResolvedValueOnce('good-token')
-  const d = deps({ validateToken: validate })
+  const d = deps({ providers: [telegram(validate)] })
   vi.mocked(d.prompt.password).mockImplementation(secret)
-  // first call rejects: validateToken is documented to never throw, but be safe
+  // first call rejects: checkCredentials is documented to never throw, but be safe
   expect(await runInit({}, d)).toBe(0)
   expect(secret).toHaveBeenCalledTimes(3)
   const text = out.join('\n')
@@ -161,11 +183,13 @@ test('invalid token reprompts without echoing Telegram errors', async () => {
 
 test('stored token invalid falls back to prompt', async () => {
   seed('compose')
-  const old = fake('compose', true, { token: 'stale' })
-  const validate = vi.fn(async (t: string) => (t === 'stale' ? undefined : 'mybot'))
+  const old = fake('compose', true, saved({ botToken: 'stale' }))
+  const validate = vi.fn(async (settings: SettingValues) =>
+    settings.botToken === 'stale' ? REJECTED : ACCEPTED,
+  )
   const d = deps({
     targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
-    validateToken: validate,
+    providers: [telegram(validate)],
   })
   expect(await runInit({}, d)).toBe(0)
   expect(d.prompt.password).toHaveBeenCalledTimes(1)
@@ -201,7 +225,7 @@ test('legacy systemd unit is replaced and its config reused', async () => {
   writeFileSync(paths.systemdUnit, '[Service]\n')
   mkdirSync(dirname(paths.configFile), { recursive: true })
   writeFileSync(paths.configFile, JSON.stringify({ port: 9123 }))
-  const old = fake('systemd', true, { token: 'lt', ownerId: 7 })
+  const old = fake('systemd', true, saved({ botToken: 'lt', ownerId: 7 }))
   const d = deps({
     targets: { quadlet: fake('quadlet'), compose: fake('compose'), systemd: old },
   })
@@ -209,7 +233,7 @@ test('legacy systemd unit is replaced and its config reused', async () => {
   expect(out.join('\n').toLowerCase()).toContain('legacy')
   expect(order).toEqual(['remove', 'port', 'install:systemd'])
   expect(old.install).toHaveBeenCalledWith(
-    expect.objectContaining({ token: 'lt', ownerId: 7, port: 9123 }),
+    expect.objectContaining({ settings: { botToken: 'lt', ownerId: 7 }, port: 9123 }),
   )
   expect(existsSync(paths.installFile)).toBe(true)
 })
@@ -235,7 +259,7 @@ test('Ctrl-C at target select returns 130, nothing installed', async () => {
 
 test('Ctrl-C at Replace prompt returns 130 before any remove', async () => {
   seed('compose')
-  const old = fake('compose', true, { token: 't' })
+  const old = fake('compose', true, saved({ botToken: 't' }))
   const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
   vi.mocked(d.prompt.confirm).mockImplementation(async () => {
     throw new PromptAborted()
@@ -255,7 +279,7 @@ test('Ctrl-C at token prompt returns 130, no install', async () => {
 })
 
 test('EOF in token loop terminates', async () => {
-  const d = deps({ validateToken: vi.fn(async () => undefined) })
+  const d = deps({ providers: [telegram(vi.fn(async () => REJECTED))] })
   let n = 0
   vi.mocked(d.prompt.password).mockImplementation(async () => {
     if (++n > 1) {
@@ -289,7 +313,7 @@ test('install throwing returns 1 with generic message, no secrets', async () => 
 
 test('old remove throwing returns 1, no install', async () => {
   seed('compose')
-  const old = fake('compose', true, { token: 't' })
+  const old = fake('compose', true, saved({ botToken: 't' }))
   old.remove = vi.fn(async () => {
     throw new Error('nope')
   })
@@ -300,7 +324,7 @@ test('old remove throwing returns 1, no install', async () => {
 
 test('target error message is shown with a reused token redacted', async () => {
   seed('compose')
-  const old = fake('compose', true, { token: '123:SECRET' })
+  const old = fake('compose', true, saved({ botToken: '123:SECRET' }))
   const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
   vi.mocked(d.targets.quadlet.install).mockImplementation(async () => {
     throw new Error('npm install failed: bad url https://x/bot123:SECRET/getMe')
@@ -313,7 +337,7 @@ test('target error message is shown with a reused token redacted', async () => {
 
 test('failure after removing the old target keeps install.json so a re-run reuses secrets', async () => {
   seed('compose')
-  const old = fake('compose', true, { token: 'TOK1', ownerId: 42 })
+  const old = fake('compose', true, saved({ botToken: 'TOK1', ownerId: 42 }))
   const targets = { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') }
   const d1 = deps({ targets, isPortFree: vi.fn(async () => false) })
   expect(await runInit({ target: 'quadlet' }, d1)).toBe(1)
@@ -336,7 +360,7 @@ test('failure after removing the old target keeps install.json so a re-run reuse
   expect(await runInit({ target: 'quadlet' }, d3)).toBe(0)
   expect(old.remove).toHaveBeenCalledTimes(3)
   expect(targets.quadlet.install).toHaveBeenCalledWith(
-    expect.objectContaining({ token: 'TOK1', ownerId: 42 }),
+    expect.objectContaining({ settings: { botToken: 'TOK1', ownerId: 42 } }),
   )
   expect(d3.prompt.password).not.toHaveBeenCalled()
   expect(readInstall(paths.installFile)?.target).toBe('quadlet')
@@ -362,9 +386,9 @@ test('no install record: reuses a token and owner kept by uninstall, no replace 
   expect(await runInit({ target: 'compose' }, d)).toBe(0)
   expect(d.prompt.confirm).not.toHaveBeenCalled()
   expect(d.prompt.password).not.toHaveBeenCalled()
-  expect(d.validateToken).toHaveBeenCalledWith('KTOK')
+  expect(checkOf(d)).toHaveBeenCalledWith({ botToken: 'KTOK', ownerId: 11 })
   expect(d.targets.compose.install).toHaveBeenCalledWith(
-    expect.objectContaining({ token: 'KTOK', ownerId: 11 }),
+    expect.objectContaining({ settings: { botToken: 'KTOK', ownerId: 11 } }),
   )
   expect(out.join('\n')).toContain('Reusing the saved bot token (@mybot).')
   expect(out.join('\n')).not.toContain('KTOK')
@@ -373,11 +397,13 @@ test('no install record: reuses a token and owner kept by uninstall, no replace 
 test('no install record: leftover token from a container .env, rejected token prompts', async () => {
   mkdirSync(paths.quadletDirectory, { recursive: true })
   writeFileSync(join(paths.quadletDirectory, '.env'), 'BOT_TOKEN=stale\nPORT=1\nOWNER_ID=4\n')
-  const validate = vi.fn(async (t: string) => (t === 'stale' ? undefined : 'mybot'))
-  const d = deps({ validateToken: validate })
+  const validate = vi.fn(async (settings: SettingValues) =>
+    settings.botToken === 'stale' ? REJECTED : ACCEPTED,
+  )
+  const d = deps({ providers: [telegram(validate)] })
   expect(await runInit({}, d)).toBe(0)
   expect(d.prompt.password).toHaveBeenCalledTimes(1)
   expect(d.targets.quadlet.install).toHaveBeenCalledWith(
-    expect.objectContaining({ token: 'good-token', ownerId: 4 }),
+    expect.objectContaining({ settings: { botToken: 'good-token', ownerId: 4 } }),
   )
 })

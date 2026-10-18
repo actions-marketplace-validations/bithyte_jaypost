@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import type { Provider, SettingValues } from '../provider/index.ts'
 import type { Exec } from '../system/index.ts'
 import type { installRecordSchema } from './schema.ts'
 
@@ -20,10 +21,10 @@ export type InstallPaths = {
   readonly userNpmPrefix: string
 }
 
-/** Token and owner found in an existing install; a field is absent when not found. */
+/** Provider name and its settings found in an existing install; a setting is absent when not found. */
 export type Secrets = {
-  readonly token?: string
-  readonly ownerId?: number
+  readonly provider: string
+  readonly settings: SettingValues
 }
 
 /**
@@ -33,8 +34,9 @@ export type Secrets = {
 export type InstallOptions = {
   readonly version: string
   readonly port: number
-  readonly token: string
-  readonly ownerId?: number
+  readonly provider: Provider
+  /** The current provider's settings; the owner setting is left alone when absent. */
+  readonly settings: SettingValues
   readonly tarball?: string
   readonly print: (text: string) => void
 }
@@ -49,7 +51,7 @@ export type Target = {
   /** Writes files, builds if needed, starts. */
   readonly install: (options: InstallOptions) => Promise<InstallRecord>
   readonly readSecrets: (record: InstallRecord) => Promise<Secrets>
-  /** Stop and delete files; purge also deletes token/owner storage. */
+  /** Stop and delete files; purge also deletes credential and owner storage. */
   readonly remove: (record: InstallRecord, purge: boolean) => Promise<void>
   readonly restart: (record: InstallRecord) => Promise<void>
   readonly clearOwner: (record: InstallRecord) => Promise<void>
@@ -63,6 +65,8 @@ export type TargetDeps = {
   readonly paths: InstallPaths
   readonly env: NodeJS.ProcessEnv
   readonly user: string
+  /** Registered providers, for reading secrets back and clearing the owner. */
+  readonly providers: readonly Provider[]
 }
 
 /** Paths of the running CLI script and the node binary, for the systemd unit to exec. */

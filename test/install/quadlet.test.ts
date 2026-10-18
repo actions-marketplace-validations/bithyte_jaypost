@@ -1,9 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
 import { resolveInstallPaths, createQuadletTarget } from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
+import { telegramProvider } from '../../src/telegram/index.ts'
+import { createPairingFakeProvider } from '../provider/fake.ts'
 
 let tmp: string
 let calls: [string, readonly string[]][]
@@ -40,9 +42,21 @@ const fakeExec: Exec = async (cmd, args) => {
 function make() {
   const env = { HOME: tmp }
   const paths = resolveInstallPaths(env)
-  return { t: createQuadletTarget({ exec: fakeExec, paths, env, user: 'me' }), paths }
+  return {
+    t: createQuadletTarget({ exec: fakeExec, paths, env, user: 'me', providers: PROVIDERS }),
+    paths,
+  }
 }
-const base = { version: '0.1.0', port: 8787, token: 't', print: () => {} }
+const PAIRING_FAKE = createPairingFakeProvider()
+const PROVIDERS = [telegramProvider, PAIRING_FAKE]
+const base = {
+  version: '0.1.0',
+  port: 8787,
+  provider: telegramProvider,
+  settings: { botToken: 't' },
+  print: () => {},
+}
+const withOwner = { ...base, settings: { botToken: 't', ownerId: 9 } }
 const rec = { target: 'quadlet' as const, port: 8787, version: '0.1.0' }
 const TAG = 'localhost/telegram-ask:0.1.0'
 
@@ -79,6 +93,7 @@ test('quadlet unavailable when podman missing', async () => {
     paths,
     env: {},
     user: 'me',
+    providers: PROVIDERS,
   })
   expect((await t.available()).ok).toBe(false)
 })
@@ -88,7 +103,7 @@ test('quadlet install builds tagged image then starts', async () => {
   const tar = join(tmp, 'pkg-1.tgz')
   writeFileSync(tar, 'x')
   const r = await t.install({ ...base, tarball: tar })
-  expect(r).toEqual({ target: 'quadlet', port: 8787, version: '0.1.0' })
+  expect(r).toEqual({ target: 'quadlet', provider: 'telegram', port: 8787, version: '0.1.0' })
   expect(calls.filter(([c]) => c !== 'loginctl')).toEqual([
     ['podman', ['build', '-t', TAG, paths.quadletDirectory]],
     ['systemctl', ['--user', 'daemon-reload']],
@@ -96,7 +111,7 @@ test('quadlet install builds tagged image then starts', async () => {
   ])
   const envPath = join(paths.quadletDirectory, '.env')
   expect(statSync(envPath).mode & 0o777).toBe(0o600)
-  expect(readFileSync(envPath, 'utf8')).toContain('BOT_TOKEN=t')
+  expect(readFileSync(envPath, 'utf8')).toBe('PROVIDER=telegram\nBOT_TOKEN=t\nPORT=8787\n')
   expect(existsSync(join(paths.quadletDirectory, 'pkg-1.tgz'))).toBe(true)
   expect(readFileSync(paths.quadletUnit, 'utf8')).toContain(`Image=${TAG}`)
   expect(readFileSync(join(paths.quadletDirectory, '.dockerignore'), 'utf8')).toBe('.env\n')
@@ -111,21 +126,52 @@ test('install throws when build fails and does not start', async () => {
 
 test('readSecrets prefers .env, falls back to owner get in container', async () => {
   const { t } = make()
-  await t.install({ ...base, ownerId: 9 })
-  expect(await t.readSecrets(rec)).toEqual({ token: 't', ownerId: 9 })
+  await t.install(withOwner)
+  expect(await t.readSecrets(rec)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 't', ownerId: 9 },
+  })
   await t.clearOwner(rec)
   ownerOut = '77\n'
   calls = []
-  expect(await t.readSecrets(rec)).toEqual({ token: 't', ownerId: 77 })
+  expect(await t.readSecrets(rec)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 't', ownerId: 77 },
+  })
   expect(calls[0]).toEqual([
     'podman',
     ['run', '--rm', '-v', 'telegram-ask-data:/data', TAG, 'telegram-ask', 'owner', 'get'],
   ])
 })
 
+test('readSecrets on an old env file reads as telegram', async () => {
+  const { t, paths } = make()
+  mkdirSync(paths.quadletDirectory, { recursive: true })
+  writeFileSync(join(paths.quadletDirectory, '.env'), 'BOT_TOKEN=t\nPORT=1\nOWNER_ID=8\n')
+  expect(await t.readSecrets(rec)).toEqual({
+    provider: 'telegram',
+    settings: { botToken: 't', ownerId: 8 },
+  })
+  expect(calls).toEqual([])
+})
+
+test("clearOwner removes the owner env var of the record's provider", async () => {
+  const { t, paths } = make()
+  const record = await t.install({
+    ...base,
+    provider: PAIRING_FAKE,
+    settings: { fakeKey: 'k', fakeOwner: 'o' },
+  })
+  expect(record.provider).toBe('fakepair')
+  await t.clearOwner(record)
+  expect(readFileSync(join(paths.quadletDirectory, '.env'), 'utf8')).toBe(
+    'PROVIDER=fakepair\nFAKE_KEY=k\nPORT=8787\n',
+  )
+})
+
 test('clearOwner uses podman exec', async () => {
   const { t } = make()
-  await t.install({ ...base, ownerId: 9 })
+  await t.install(withOwner)
   calls = []
   await t.clearOwner(rec)
   expect(calls).toContainEqual([
@@ -165,7 +211,7 @@ test('restart, isRunning, logsHint', async () => {
 
 test('clearOwner falls back to a one-off container when exec fails', async () => {
   const { t } = make()
-  await t.install({ ...base, ownerId: 9 })
+  await t.install(withOwner)
   failArgs = (a) => (a[0] === 'exec' ? 'not running' : undefined)
   calls = []
   await t.clearOwner(rec)

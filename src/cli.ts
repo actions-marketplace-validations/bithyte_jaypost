@@ -20,8 +20,8 @@ import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
 import { runService } from './daemon/index.ts'
 import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
 import type { InstallPaths, Target, TargetName } from './install/index.ts'
+import { PROVIDERS } from './provider/index.ts'
 import { isPortFree, realExec } from './system/index.ts'
-import { validateToken } from './telegram/index.ts'
 
 const PORT_PATTERN = /^\d+$/
 
@@ -50,7 +50,7 @@ function runInitCommand(args: InitArgs): Promise<number> {
       targets,
       paths,
       prompt: createClackPrompts(controller.signal),
-      validateToken,
+      providers: PROVIDERS,
       isPortFree,
       wait: waitForPairing,
       print: (text) => console.log(text),
@@ -62,7 +62,13 @@ function runInitCommand(args: InitArgs): Promise<number> {
 
 function createRealTargets(paths: InstallPaths): Readonly<Record<TargetName, Target>> {
   return createTargets(
-    { exec: realExec, paths, env: process.env, user: os.userInfo().username },
+    {
+      exec: realExec,
+      paths,
+      env: process.env,
+      user: os.userInfo().username,
+      providers: PROVIDERS,
+    },
     { selfPath: realpathSync(fileURLToPath(import.meta.url)), nodePath: process.execPath },
   )
 }
@@ -97,6 +103,7 @@ function runResetOwnerCommand(): Promise<number> {
     runResetOwner({
       targets,
       paths,
+      providers: PROVIDERS,
       confirm: createClackPrompts(controller.signal).confirm,
       wait: waitForPairing,
       print: (text) => console.log(text),

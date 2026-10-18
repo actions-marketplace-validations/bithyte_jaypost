@@ -5,6 +5,8 @@ import { beforeEach, expect, test, vi } from 'vite-plus/test'
 import { runResetOwner, runStatus, runUninstall } from '../../src/commands/index.ts'
 import { resolveInstallPaths, writeInstall } from '../../src/install/index.ts'
 import type { InstallPaths, Target, TargetName } from '../../src/install/index.ts'
+import { telegramProvider } from '../../src/telegram/index.ts'
+import { createFakeProvider, createPairingFakeProvider } from '../provider/fake.ts'
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
@@ -57,6 +59,7 @@ function base(over = {}) {
   return {
     targets: targets(),
     paths,
+    providers: [telegramProvider, createFakeProvider()],
     print: (s: string) => out.push(s),
     confirm: vi.fn(async () => true),
     ...over,
@@ -153,6 +156,38 @@ test('reset-owner yes: clearOwner, restart, wait', async () => {
   expect(order).toEqual(['clearOwner', 'restart', 'wait'])
 })
 
+test('reset-owner confirm text comes from the provider', async () => {
+  writeInstall(paths.installFile, {
+    target: 'systemd',
+    provider: 'fakepair',
+    port: 9000,
+    version: '1',
+  })
+  const d = {
+    ...base({ confirm: vi.fn(async () => false), providers: [createPairingFakeProvider()] }),
+    wait: vi.fn(),
+  }
+  expect(await runResetOwner(d)).toBe(0)
+  expect(d.confirm).toHaveBeenCalledWith('This unlinks your Fake account. Continue?', false)
+})
+
+test('reset-owner without an owner setting returns 1 before prompting', async () => {
+  writeInstall(paths.installFile, { target: 'systemd', provider: 'fake', port: 9000, version: '1' })
+  const d = { ...base(), wait: vi.fn() }
+  expect(await runResetOwner(d)).toBe(1)
+  expect(out).toEqual(["Fake doesn't support re-pairing."])
+  expect(d.confirm).not.toHaveBeenCalled()
+  expect(d.targets.systemd.clearOwner).not.toHaveBeenCalled()
+})
+
+test('reset-owner with an unknown provider returns 1 before prompting', async () => {
+  writeInstall(paths.installFile, { target: 'systemd', provider: 'nope', port: 9000, version: '1' })
+  const d = { ...base(), wait: vi.fn() }
+  expect(await runResetOwner(d)).toBe(1)
+  expect(out).toEqual(['unknown provider "nope"; run `telegram-ask init`'])
+  expect(d.confirm).not.toHaveBeenCalled()
+})
+
 test('reset-owner wait exit codes', async () => {
   seed()
   for (const [r, code] of [
@@ -203,7 +238,10 @@ test('uninstall passes purge answer through and removes install.json', async () 
     seed('compose')
     const d = base({ confirm: vi.fn(async () => ans) })
     expect(await runUninstall(d)).toBe(0)
-    expect(d.confirm).toHaveBeenCalledWith('Also delete the bot token and paired owner?', false)
+    expect(d.confirm).toHaveBeenCalledWith(
+      'Also delete the saved credentials and paired owner?',
+      false,
+    )
     expect(d.targets.compose.remove).toHaveBeenCalledWith(
       { target: 'compose', port: 9000, version: '1.0.0' },
       purge,

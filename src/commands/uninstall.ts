@@ -3,7 +3,7 @@ import { PromptAborted } from './prompts.ts'
 import type { UninstallDeps } from './types.ts'
 
 /**
- * Removes the service after asking whether to purge the token and owner. Returns 0 on success or
+ * Removes the service after asking whether to purge the credentials and owner. Returns 0 on success or
  * when nothing is installed, 1 on failure, 130 on interrupt.
  */
 export async function runUninstall(deps: UninstallDeps): Promise<number> {
@@ -15,7 +15,7 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
   }
   const { record } = existing
   try {
-    const purge = await deps.confirm('Also delete the bot token and paired owner?', false)
+    const purge = await deps.confirm('Also delete the saved credentials and paired owner?', false)
     await deps.targets[record.target].remove(record, purge)
     removeInstall(deps.paths.installFile)
   } catch (error) {
