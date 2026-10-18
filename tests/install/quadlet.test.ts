@@ -11,11 +11,14 @@ let calls: [string, string[]][]
 let podmanVersion: string
 let ownerOut: string
 let failBuild: boolean
+let failArgs: (args: string[]) => string | undefined
 
 const fakeExec: Exec = async (cmd, args) => {
   calls.push([cmd, args])
   if (cmd === 'podman' && args[0] === '--version')
     return { code: 0, stdout: `podman version ${podmanVersion}\n`, stderr: '' }
+  const f = cmd === 'podman' ? failArgs(args) : undefined
+  if (f !== undefined) return { code: 1, stdout: '', stderr: f }
   if (cmd === 'podman' && args[0] === 'build' && failBuild)
     return { code: 1, stdout: '', stderr: 'bad' }
   if (cmd === 'podman' && args[0] === 'run') return { code: 0, stdout: ownerOut, stderr: '' }
@@ -38,6 +41,7 @@ beforeEach(() => {
   podmanVersion = '5.0.0'
   ownerOut = ''
   failBuild = false
+  failArgs = () => undefined
 })
 
 test('quadlet unavailable on podman 4.3', async () => {
@@ -153,4 +157,59 @@ test('restart, isRunning, logsHint', async () => {
   expect(calls[0]).toEqual(['systemctl', ['--user', 'restart', 'telegram-approval-bot']])
   expect(await t.isRunning(rec)).toBe(true)
   expect(t.logsHint(rec)).toBe('journalctl --user -u telegram-approval-bot -f')
+})
+
+test('clearOwner falls back to a one-off container when exec fails', async () => {
+  const { t } = make()
+  await t.install({ ...base, ownerId: 9 })
+  failArgs = (a) => (a[0] === 'exec' ? 'not running' : undefined)
+  calls = []
+  await t.clearOwner(rec)
+  expect(calls).toContainEqual([
+    'podman',
+    [
+      'run',
+      '--rm',
+      '-v',
+      'telegram-approval-bot-data:/data',
+      TAG,
+      'telegram-approval-bot',
+      'owner',
+      'clear',
+    ],
+  ])
+})
+
+test('clearOwner throws when exec and fallback both fail', async () => {
+  const { t } = make()
+  await t.install(base)
+  failArgs = (a) => (a.includes('clear') ? 'boom' : undefined)
+  await expect(t.clearOwner(rec)).rejects.toThrow(/clear the owner/)
+})
+
+test('purge tolerates not-found errors', async () => {
+  const { t, paths } = make()
+  await t.install(base)
+  failArgs = (a) => (a[0] === 'volume' || a[0] === 'rmi' ? 'Error: no such volume' : undefined)
+  await t.remove(rec, true)
+  expect(existsSync(paths.quadletDir)).toBe(false)
+})
+
+test('purge runs all steps, throws, and keeps dir when volume rm fails', async () => {
+  const { t, paths } = make()
+  await t.install(base)
+  failArgs = (a) =>
+    a[0] === 'volume' ? 'volume in use' : a[0] === 'rmi' ? 'image busy' : undefined
+  calls = []
+  await expect(t.remove(rec, true)).rejects.toThrow(/volume in use.*image busy/)
+  expect(calls).toContainEqual(['podman', ['rmi', TAG]])
+  expect(existsSync(paths.quadletDir)).toBe(true)
+})
+
+test('purge rmi failure alone throws but dir is deleted', async () => {
+  const { t, paths } = make()
+  await t.install(base)
+  failArgs = (a) => (a[0] === 'rmi' ? 'image busy' : undefined)
+  await expect(t.remove(rec, true)).rejects.toThrow(/image busy/)
+  expect(existsSync(paths.quadletDir)).toBe(false)
 })

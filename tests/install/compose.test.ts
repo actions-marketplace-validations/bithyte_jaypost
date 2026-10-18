@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
@@ -34,7 +34,7 @@ beforeEach(() => {
   ownerOut = ''
 })
 
-test('unavailable when docker is missing', async () => {
+test('unavailable when compose v2 is missing', async () => {
   const { t } = make()
   fail = (c) => c === 'docker'
   expect(await t.available()).toEqual({ ok: false, reason: 'docker compose v2 not available' })
@@ -149,8 +149,31 @@ test('restart, isRunning, logsHint', async () => {
   await t.restart(rec)
   expect(calls[0]![1]).toEqual(expect.arrayContaining(['up', '-d', '--force-recreate']))
   expect(await t.isRunning(rec)).toBe(false)
-  ownerOut = ''
   expect(t.logsHint(rec)).toBe(
     `docker compose -f ${join(paths.composeDir, 'compose.yaml')} logs -f`,
   )
+})
+
+test('clearOwner throws when the container command fails', async () => {
+  const { t } = make()
+  await t.install(base)
+  fail = (_c, a) => a.includes('clear')
+  await expect(t.clearOwner(rec)).rejects.toThrow(/clear the owner/)
+})
+
+test('failing down leaves files in place', async () => {
+  const { t, paths } = make()
+  await t.install(base)
+  fail = (_c, a) => a.includes('down')
+  await expect(t.remove(rec, true)).rejects.toThrow(/down failed/)
+  expect(existsSync(join(paths.composeDir, '.env'))).toBe(true)
+})
+
+test('install skips copying a tarball already in the build dir', async () => {
+  const { t, paths } = make()
+  mkdirSync(paths.composeDir, { recursive: true })
+  const tar = join(paths.composeDir, 'pkg-2.tgz')
+  writeFileSync(tar, 'x')
+  await t.install({ ...base, tarball: tar })
+  expect(readFileSync(tar, 'utf8')).toBe('x')
 })

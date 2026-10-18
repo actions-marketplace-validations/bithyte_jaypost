@@ -1,5 +1,5 @@
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import type { Exec } from './exec.ts'
 import { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
 import type { InstallRecord } from './state.ts'
@@ -36,8 +36,10 @@ export function composeTarget(deps: TargetDeps): Target {
     },
     async install(opts): Promise<InstallRecord> {
       mkdirSync(paths.composeDir, { recursive: true })
-      if (opts.tarball !== undefined)
-        copyFileSync(opts.tarball, join(paths.composeDir, basename(opts.tarball)))
+      if (opts.tarball !== undefined) {
+        const dest = join(paths.composeDir, basename(opts.tarball))
+        if (resolve(opts.tarball) !== resolve(dest)) copyFileSync(opts.tarball, dest)
+      }
       writeFileSync(
         join(paths.composeDir, 'Dockerfile'),
         dockerfile({ version: opts.version, ...(opts.tarball ? { tarball: opts.tarball } : {}) }),
@@ -69,7 +71,8 @@ export function composeTarget(deps: TargetDeps): Target {
       return out
     },
     async remove(_rec, purge) {
-      await dc(purge ? ['down', '-v'] : ['down'])
+      const r = await dc(purge ? ['down', '-v'] : ['down'])
+      if (r.code !== 0) throw new Error(`docker compose down failed: ${r.stderr.trim()}`)
       if (purge) rmSync(paths.composeDir, { recursive: true, force: true })
     },
     async restart() {
@@ -77,7 +80,9 @@ export function composeTarget(deps: TargetDeps): Target {
     },
     async clearOwner() {
       removeEnvKey(envPath, 'OWNER_ID')
-      await dc(['run', '--rm', '--no-deps', 'bot', PKG, 'owner', 'clear'])
+      const r = await dc(['run', '--rm', '--no-deps', 'bot', PKG, 'owner', 'clear'])
+      if (r.code !== 0)
+        throw new Error(`Couldn't clear the owner in the container: ${r.stderr.trim()}`)
     },
     async isRunning() {
       const r = await dc(['ps', '--status', 'running', '-q', 'bot'])

@@ -1,5 +1,5 @@
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
 import type { InstallRecord } from './state.ts'
 import { ensureLinger } from './system.ts'
@@ -7,6 +7,7 @@ import type { Secrets, Target, TargetDeps } from './target.ts'
 import { dockerfile, envFile, quadletContainer } from './templates.ts'
 
 const SERVICE = 'telegram-approval-bot'
+const NOT_FOUND = /no such|not found|does not exist/i
 const VOLUME = 'telegram-approval-bot-data'
 const tagOf = (version: string) => `localhost/${SERVICE}:${version}`
 
@@ -35,8 +36,10 @@ export function quadletTarget(deps: TargetDeps): Target {
     },
     async install(opts): Promise<InstallRecord> {
       mkdirSync(paths.quadletDir, { recursive: true })
-      if (opts.tarball !== undefined)
-        copyFileSync(opts.tarball, join(paths.quadletDir, basename(opts.tarball)))
+      if (opts.tarball !== undefined) {
+        const dest = join(paths.quadletDir, basename(opts.tarball))
+        if (resolve(opts.tarball) !== resolve(dest)) copyFileSync(opts.tarball, dest)
+      }
       writeFileSync(
         join(paths.quadletDir, 'Dockerfile'),
         dockerfile({ version: opts.version, ...(opts.tarball ? { tarball: opts.tarball } : {}) }),
@@ -91,18 +94,47 @@ export function quadletTarget(deps: TargetDeps): Target {
       await ctl('stop', SERVICE)
       rmSync(paths.quadletUnit, { force: true })
       await ctl('daemon-reload')
-      if (purge) {
-        await exec('podman', ['volume', 'rm', VOLUME])
-        await exec('podman', ['rmi', tagOf(rec.version)])
-        rmSync(paths.quadletDir, { recursive: true, force: true })
+      if (!purge) return
+      const failures: string[] = []
+      let volumeFailed = false
+      const step = async (label: string, args: string[]): Promise<boolean> => {
+        try {
+          const r = await exec('podman', args)
+          if (r.code === 0 || NOT_FOUND.test(r.stderr)) return true
+          failures.push(`${label}: ${r.stderr.trim() || `exit ${r.code}`}`)
+        } catch (e) {
+          failures.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+        return false
       }
+      volumeFailed = !(await step('podman volume rm', ['volume', 'rm', VOLUME]))
+      await step('podman rmi', ['rmi', tagOf(rec.version)])
+      if (!volumeFailed) rmSync(paths.quadletDir, { recursive: true, force: true })
+      if (failures.length > 0) throw new Error(`Purge incomplete; ${failures.join('; ')}`)
     },
     async restart() {
       await ctl('restart', SERVICE)
     },
-    async clearOwner() {
+    async clearOwner(rec) {
       removeEnvKey(envPath, 'OWNER_ID')
-      await exec('podman', ['exec', SERVICE, SERVICE, 'owner', 'clear'])
+      try {
+        const r = await exec('podman', ['exec', SERVICE, SERVICE, 'owner', 'clear'])
+        if (r.code === 0) return
+      } catch {
+        // fall through to the one-off container
+      }
+      const r = await exec('podman', [
+        'run',
+        '--rm',
+        '-v',
+        `${VOLUME}:/data`,
+        tagOf(rec.version),
+        SERVICE,
+        'owner',
+        'clear',
+      ])
+      if (r.code !== 0)
+        throw new Error(`Couldn't clear the owner in the container: ${r.stderr.trim()}`)
     },
     async isRunning() {
       return (await ctl('is-active', '--quiet', SERVICE)).code === 0
