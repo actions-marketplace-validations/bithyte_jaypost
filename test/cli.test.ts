@@ -19,3 +19,9 @@ test('init rejects bad port and unknown target with 2', async () => {
   expect(await main(['init', '--port', '70000'])).toBe(2)
   expect(await main(['init', 'nope'])).toBe(2)
 })
+
+test('init --help lists --provider', async () => {
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  expect(await main(['init', '--help'])).toBe(0)
+  expect(write.mock.calls.map((call) => String(call[0])).join('')).toContain('--provider <name>')
+})

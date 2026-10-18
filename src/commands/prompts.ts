@@ -1,4 +1,4 @@
-import { confirm, isCancel, password, select } from '@clack/prompts'
+import { confirm, isCancel, password, select, text } from '@clack/prompts'
 import type { Prompts, SelectOption } from './types.ts'
 
 /**
@@ -39,6 +39,10 @@ export function createClackPrompts(signal?: AbortSignal): Prompts {
     password: async (message) => {
       requireTty()
       return requireAnswer(await password({ message, signal })).trim()
+    },
+    text: async (message) => {
+      requireTty()
+      return requireAnswer(await text({ message, signal })).trim()
     },
     select: async <T extends string>(
       message: string,

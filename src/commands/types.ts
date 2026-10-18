@@ -13,6 +13,7 @@ export type SelectOption<T extends string> = {
 export type Prompts = {
   readonly confirm: (message: string, initialValue: boolean) => Promise<boolean>
   readonly password: (message: string) => Promise<string>
+  readonly text: (message: string) => Promise<string>
   readonly select: <T extends string>(
     message: string,
     options: readonly SelectOption<T>[],
@@ -49,7 +50,7 @@ export type InitDeps = {
   readonly targets: Readonly<Record<TargetName, Target>>
   readonly paths: InstallPaths
   readonly prompt: Prompts
-  /** Registered providers; init uses the first one for now. */
+  /** Registered providers; init asks which one to use when there are several. */
   readonly providers: readonly Provider[]
   readonly isPortFree: (port: number) => Promise<boolean>
   readonly wait: WaitForPairing
@@ -65,6 +66,7 @@ export type InitArgs = {
   readonly target?: TargetName
   readonly port?: number
   readonly tarball?: string
+  readonly provider?: string
 }
 
 /** Everything `runResetOwner` touches outside itself, injected for tests. */

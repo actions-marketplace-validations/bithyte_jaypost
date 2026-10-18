@@ -8,6 +8,7 @@ import { resolveInstallPaths, readInstall, writeInstall } from '../../src/instal
 import type { InstallPaths, Secrets, Target, TargetName } from '../../src/install/index.ts'
 import type { CredentialCheck, Provider, SettingValues } from '../../src/provider/index.ts'
 import { telegramProvider } from '../../src/telegram/index.ts'
+import { createFakeProvider, createPairingFakeProvider } from '../provider/fake.ts'
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
@@ -71,6 +72,7 @@ function deps(over: Partial<InitDeps> & { targets?: Record<TargetName, Target> }
     prompt: {
       confirm: vi.fn(async () => true),
       password: vi.fn(async () => 'good-token'),
+      text: vi.fn(async () => 'text-answer'),
       select: vi.fn(async (_q, _o, initialValue) => initialValue),
     },
     providers: [telegram()],
@@ -419,4 +421,141 @@ test('a reused secret is masked when removing the old install fails', async () =
   const text = out.join('\n')
   expect(text).toContain('Install failed: down failed: ***')
   expect(text).not.toContain('TOK1')
+})
+
+test('single provider: no provider prompt and unchanged output', async () => {
+  const d = deps()
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.prompt.select).toHaveBeenCalledTimes(1)
+  expect(vi.mocked(d.prompt.select).mock.calls[0]?.[0]).toBe('Where should the bot run?')
+  expect(out).toEqual([
+    'Done. Try it: telegram-ask test',
+    'Check state: telegram-ask status',
+    'Logs: logs for quadlet',
+  ])
+})
+
+test('--provider unknown returns 1', async () => {
+  const d = deps()
+  expect(await runInit({ provider: 'nope' }, d)).toBe(1)
+  expect(out).toContain('Unknown provider "nope".')
+  expect(d.targets.quadlet.install).not.toHaveBeenCalled()
+})
+
+test('provider prompt when several are registered', async () => {
+  const other = createFakeProvider()
+  const d = deps({ providers: [telegram(), other] })
+  vi.mocked(d.prompt.select)
+    .mockImplementationOnce(async (_q, _o, initialValue) => initialValue)
+    .mockImplementationOnce(async () => 'fake')
+  vi.mocked(d.prompt.password).mockImplementation(async () => 'fk')
+  expect(await runInit({}, d)).toBe(0)
+  expect(vi.mocked(d.prompt.select).mock.calls[1]).toEqual([
+    'Which chat app should the bot use?',
+    [
+      { value: 'telegram', label: 'Telegram' },
+      { value: 'fake', label: 'Fake' },
+    ],
+    'telegram',
+  ])
+  expect(d.prompt.password).toHaveBeenCalledWith('Fake key')
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ provider: other, settings: { fakeKey: 'fk' } }),
+  )
+})
+
+test('switching provider asks, clears the old owner and drops old settings', async () => {
+  seed('compose')
+  const old = fake('compose', true, saved({ botToken: 't', ownerId: 42 }))
+  const d = deps({
+    targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
+    providers: [telegram(), createPairingFakeProvider()],
+  })
+  expect(await runInit({ target: 'quadlet', provider: 'fakepair' }, d)).toBe(0)
+  expect(vi.mocked(d.prompt.confirm).mock.calls).toEqual([
+    ['Replace it?', true],
+    ['This deletes the saved Telegram settings and paired owner. Continue?', false],
+  ])
+  expect(old.clearOwner).toHaveBeenCalledWith(expect.objectContaining({ target: 'compose' }))
+  expect(old.remove).toHaveBeenCalled()
+  expect(d.prompt.password).toHaveBeenCalledWith('Fake key')
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ settings: { fakeKey: 'good-token' } }),
+  )
+})
+
+test('declining the switch changes nothing', async () => {
+  seed('compose')
+  const old = fake('compose', true, saved({ botToken: 't', ownerId: 42 }))
+  const d = deps({
+    targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
+    providers: [telegram(), createPairingFakeProvider()],
+  })
+  vi.mocked(d.prompt.confirm).mockImplementation(async (message) => message === 'Replace it?')
+  expect(await runInit({ provider: 'fakepair' }, d)).toBe(0)
+  expect(old.clearOwner).not.toHaveBeenCalled()
+  expect(old.remove).not.toHaveBeenCalled()
+  expect(d.targets.quadlet.install).not.toHaveBeenCalled()
+  expect(readInstall(paths.installFile)).toEqual({
+    target: 'compose',
+    port: 9000,
+    version: '1.0.0',
+  })
+})
+
+test('leftover secrets of another provider are not reused', async () => {
+  mkdirSync(paths.quadletDirectory, { recursive: true })
+  writeFileSync(join(paths.quadletDirectory, '.env'), 'BOT_TOKEN=LEFT\nOWNER_ID=4\n')
+  const d = deps({ providers: [telegram(), createFakeProvider()] })
+  expect(await runInit({ provider: 'fake' }, d)).toBe(0)
+  expect(out).not.toContain(telegramProvider.setup.text.leftoverFound)
+  expect(d.prompt.password).toHaveBeenCalledWith('Fake key')
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ settings: { fakeKey: 'good-token' } }),
+  )
+})
+
+test('every secret setting value is masked in errors', async () => {
+  const base = createFakeProvider().settings[0]!
+  const provider = createFakeProvider({
+    settings: [
+      { ...base, configKey: 'first', prompt: 'First' },
+      { ...base, configKey: 'second', prompt: 'Second' },
+    ],
+  })
+  const d = deps({ providers: [provider] })
+  vi.mocked(d.prompt.password)
+    .mockResolvedValueOnce('SECRET-ONE')
+    .mockResolvedValueOnce('SECRET-TWO')
+  vi.mocked(d.targets.quadlet.install).mockImplementation(async () => {
+    throw new Error('boom SECRET-ONE SECRET-TWO')
+  })
+  expect(await runInit({}, d)).toBe(1)
+  expect(out).toContain('Install failed: boom *** ***')
+})
+
+test('non-secret prompted setting uses the text prompt', async () => {
+  const base = createFakeProvider().settings[0]!
+  const provider = createFakeProvider({
+    settings: [base, { ...base, configKey: 'room', secret: false, prompt: 'Room' }],
+  })
+  const d = deps({ providers: [provider] })
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.prompt.text).toHaveBeenCalledWith('Room')
+  expect(d.prompt.password).toHaveBeenCalledTimes(1)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ settings: { fakeKey: 'good-token', room: 'text-answer' } }),
+  )
+})
+
+test('a provider with nothing to prompt and rejected credentials returns 1', async () => {
+  const provider = createFakeProvider({
+    settings: [{ ...createFakeProvider().settings[0]!, prompt: undefined, required: false }],
+    setup: { ...createFakeProvider().setup, checkCredentials: async () => REJECTED },
+  })
+  const d = deps({ providers: [provider] })
+  expect(await runInit({}, d)).toBe(1)
+  expect(out).toEqual([provider.setup.text.rejected])
+  expect(d.prompt.password).not.toHaveBeenCalled()
+  expect(d.targets.quadlet.install).not.toHaveBeenCalled()
 })

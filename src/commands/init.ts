@@ -4,10 +4,11 @@ import {
   findDefaultTarget,
   findExistingInstall,
   findLeftoverSecrets,
+  resolveRecordProvider,
   writeInstall,
 } from '../install/index.ts'
 import type { InstallRecord, Secrets, TargetName } from '../install/index.ts'
-import { findProvider, listSecretValues } from '../provider/index.ts'
+import { findOwnerSetting, findProvider, listSecretValues } from '../provider/index.ts'
 import type { Provider, SettingValues } from '../provider/index.ts'
 import { TARGET_LABELS } from './constants.ts'
 import { PromptAborted } from './prompts.ts'
@@ -36,6 +37,60 @@ function listKnownSecretValues(deps: InitDeps, secrets: Secrets | undefined): re
 
 class Aborted extends Error {}
 
+/**
+ * The provider from `--provider`, the only registered one, or the user's pick (defaulting to the
+ * existing install's). Undefined when `--provider` names an unregistered one.
+ */
+async function chooseProvider(
+  args: InitArgs,
+  deps: InitDeps,
+  record: InstallRecord | undefined,
+): Promise<Provider | undefined> {
+  const { providers } = deps
+  if (args.provider !== undefined) {
+    return findProvider(providers, args.provider)
+  }
+  const [first, second] = providers
+  if (first === undefined) {
+    throw new Error('no provider is registered')
+  }
+  if (second === undefined) {
+    return first
+  }
+  const current =
+    record === undefined ? undefined : findProvider(providers, resolveRecordProvider(record))
+  const chosen = await deps.prompt.select(
+    'Which chat app should the bot use?',
+    providers.map((provider) => ({ value: provider.name, label: provider.label })),
+    current?.name ?? first.name,
+  )
+  return findProvider(providers, chosen)
+}
+
+/** Asks for every prompted setting; empty answers are left out. */
+async function promptSettings(provider: Provider, deps: InitDeps): Promise<SettingValues> {
+  const values: Record<string, string> = {}
+  for (const setting of provider.settings) {
+    if (setting.prompt === undefined) {
+      continue
+    }
+    if (deps.signal?.aborted) {
+      throw new Aborted()
+    }
+    const answer = await (setting.secret ? deps.prompt.password : deps.prompt.text)(setting.prompt)
+    if (answer !== '') {
+      values[setting.configKey] = answer
+    }
+  }
+  return values
+}
+
+function isComplete(provider: Provider, settings: SettingValues): boolean {
+  return provider.settings
+    .filter((setting) => setting.required)
+    .every((setting) => Object.hasOwn(settings, setting.configKey))
+}
+
 function redact(message: string, secrets: readonly string[]): string {
   let redacted = message
   for (const secret of secrets) {
@@ -48,10 +103,10 @@ function redact(message: string, secrets: readonly string[]): string {
 
 /**
  * Installs or replaces the service and waits for pairing. Returns 0 on success or when the user
- * declines, 1 on failure, 130 on interrupt; error text is shown with known tokens masked.
+ * declines, 1 on failure, 130 on interrupt; error text is shown with known secrets masked.
  */
 export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
-  // Every token string init has seen, so error messages can be shown with them masked.
+  // Every secret value init has seen, so error messages can be shown with them masked.
   const seen: string[] = []
   try {
     return await runInitInner(args, deps, seen)
@@ -101,16 +156,15 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     )
   }
   const target = deps.targets[name]
-  const provider = deps.providers[0]
-  // Task 7 makes init generic; until then it asks for the one prompted setting (the token).
-  const tokenSetting = provider?.settings.find((setting) => setting.prompt !== undefined)
-  if (provider === undefined || tokenSetting?.prompt === undefined) {
-    throw new Error('no provider with a prompted setting is registered')
+  const existing = findExistingInstall(deps.paths, deps.targets, env)
+  const provider = await chooseProvider(args, deps, existing?.record)
+  if (provider === undefined) {
+    print(`Unknown provider "${args.provider}".`)
+    return 1
   }
   const { text } = provider.setup
   let secrets: Secrets | undefined
   let record: InstallRecord | undefined
-  const existing = findExistingInstall(deps.paths, deps.targets, env)
   if (existing) {
     record = existing.record
     print(
@@ -121,9 +175,30 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
       return 0
     }
     const old = deps.targets[record.target]
-    secrets = await old.readSecrets(record)
-    // Mask before anything below can fail with a reused credential in its message.
-    seen.push(...listKnownSecretValues(deps, secrets))
+    const oldName = resolveRecordProvider(record)
+    if (oldName === provider.name) {
+      secrets = await old.readSecrets(record)
+      // Mask before anything below can fail with a reused credential in its message.
+      seen.push(...listKnownSecretValues(deps, secrets))
+    } else {
+      const oldProvider = findProvider(deps.providers, oldName)
+      const oldLabel = oldProvider?.label ?? oldName
+      if (
+        !(await prompt.confirm(
+          `This deletes the saved ${oldLabel} settings and paired owner. Continue?`,
+          false,
+        ))
+      ) {
+        return 0
+      }
+      if (oldProvider !== undefined) {
+        // Read only to mask them; the old provider's settings aren't carried over.
+        seen.push(...listKnownSecretValues(deps, await old.readSecrets(record)))
+        if (findOwnerSetting(oldProvider) !== undefined) {
+          await old.clearOwner(record)
+        }
+      }
+    }
     // Record a legacy install too, so a failed run below can still find its config on retry.
     if (existing.legacy) {
       writeInstall(deps.paths.installFile, record)
@@ -132,33 +207,41 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     // until the new install replaces it; remove() keeps the secrets and is safe to repeat.
     await old.remove(record, false)
   } else {
-    secrets = findLeftoverSecrets(deps.paths, env, deps.providers)
-    seen.push(...listKnownSecretValues(deps, secrets))
-    if (secrets?.provider === provider.name) {
+    const leftover = findLeftoverSecrets(deps.paths, env, deps.providers)
+    seen.push(...listKnownSecretValues(deps, leftover))
+    if (leftover?.provider === provider.name) {
+      secrets = leftover
       print(text.leftoverFound)
     }
   }
   const saved = secrets?.provider === provider.name ? secrets.settings : {}
-  let token: string | undefined
-  const savedToken = saved[tokenSetting.configKey]
-  if (savedToken !== undefined) {
+  let settings: SettingValues | undefined
+  // The `some` check stops a provider with no required settings from reusing an empty bag.
+  if (
+    isComplete(provider, saved) &&
+    provider.settings.some((setting) => Object.hasOwn(saved, setting.configKey))
+  ) {
     const displayName = await findDisplayName(provider, saved)
     if (displayName) {
-      token = String(savedToken)
+      settings = saved
       print(text.reusing(displayName))
     }
   }
-  while (token === undefined) {
+  const isPrompted = provider.settings.some((setting) => setting.prompt !== undefined)
+  while (settings === undefined) {
     if (deps.signal?.aborted) {
       throw new Aborted()
     }
-    const candidate = await prompt.password(tokenSetting.prompt)
-    seen.push(candidate)
-    if (
-      candidate !== '' &&
-      (await findDisplayName(provider, { ...saved, [tokenSetting.configKey]: candidate }))
-    ) {
-      token = candidate
+    // Nothing to ask for, so asking again can't change the answer.
+    if (!isPrompted) {
+      print(text.rejected)
+      return 1
+    }
+    const candidate = await promptSettings(provider, deps)
+    seen.push(...listSecretValues(provider, candidate))
+    const merged = { ...saved, ...candidate }
+    if (isComplete(provider, merged) && (await findDisplayName(provider, merged))) {
+      settings = merged
     } else {
       print(text.rejected)
     }
@@ -172,7 +255,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     version: deps.version,
     port,
     provider,
-    settings: { ...saved, [tokenSetting.configKey]: token },
+    settings,
     ...(args.tarball === undefined ? {} : { tarball: args.tarball }),
     print,
   })

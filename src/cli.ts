@@ -135,16 +135,26 @@ export async function main(argv: readonly string[]): Promise<number> {
     .description('set up the bot token and install the service')
     .addArgument(new Argument('[target]').choices(TARGET_ORDER))
     .option('--port <n>', "API port (default 8787, or the existing install's)", parsePort)
+    .addOption(
+      new Option('--provider <name>', 'chat app to use').choices(
+        PROVIDERS.map((provider) => provider.name),
+      ),
+    )
     // Installs an unpublished build; for testing.
     .addOption(new Option('--tarball <path>').hideHelp())
     .action(
       async (
         target: TargetName | undefined,
-        options: { readonly port?: number; readonly tarball?: string },
+        options: {
+          readonly port?: number
+          readonly tarball?: string
+          readonly provider?: string
+        },
       ) => {
         code = await runInitCommand({
           ...(target ? { target } : {}),
           ...(options.port === undefined ? {} : { port: options.port }),
+          ...(options.provider === undefined ? {} : { provider: options.provider }),
           ...(options.tarball === undefined ? {} : { tarball: resolve(options.tarball) }),
         })
       },
