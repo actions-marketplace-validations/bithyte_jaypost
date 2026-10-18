@@ -4,6 +4,7 @@ import { loadConfig } from './config.ts'
 import type { Config } from './config.ts'
 import { createApiServer } from './http.ts'
 import { createTelegramMessenger, registerTapHandler } from './telegram.ts'
+import type { Owner } from './telegram.ts'
 
 let config: Config
 try {
@@ -21,9 +22,10 @@ if (ownerId === undefined) {
   process.exit(1)
 }
 
+const owner: Owner = { id: ownerId }
 const bot = new Bot(config.botToken)
-const service = new ApprovalService(createTelegramMessenger(bot, ownerId))
-registerTapHandler(bot, ownerId, (id, i) => service.tap(id, i))
+const service = new ApprovalService(createTelegramMessenger(bot, owner))
+registerTapHandler(bot, owner, (id, i) => service.tap(id, i))
 
 // Log handler errors instead of crashing; grammY's error text doesn't include the token.
 bot.catch((err) => {
