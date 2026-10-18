@@ -13,3 +13,4 @@ export const PODMAN_VERSION_PATTERN = /(\d+)\.(\d+)(?:\.(\d+))?/
 export const ENVIRONMENT_LINE_PATTERN = /^\s*Environment=(.*)$/
 export const ESCAPED_CHAR_PATTERN = /\\(.)/g
 export const CONFIG_ENV_PREFIX = 'APPROVAL_BOT_CONFIG='
+export const SECRET_FILE_MODE = 0o600

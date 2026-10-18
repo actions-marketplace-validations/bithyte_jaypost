@@ -1,5 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { writeFileAtomic } from '../system/index.ts'
+import { SECRET_FILE_MODE } from './constants.ts'
 
 export function readEnvFile(path: string): Readonly<Record<string, string>> {
   if (!existsSync(path)) return {}
@@ -13,9 +14,7 @@ export function readEnvFile(path: string): Readonly<Record<string, string>> {
 }
 
 export function writeEnvFile(path: string, contents: string): void {
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, contents, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  writeFileAtomic(path, contents, SECRET_FILE_MODE)
 }
 
 export function removeEnvKey(path: string, key: string): void {

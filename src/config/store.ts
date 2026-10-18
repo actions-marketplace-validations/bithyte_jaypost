@@ -1,7 +1,14 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { DEFAULT_HOST, DEFAULT_PORT, INIT_HINT, INTEGER_PATTERN } from './constants.ts'
+import { writeFileAtomic } from '../system/index.ts'
+import {
+  DEFAULT_HOST,
+  DEFAULT_PORT,
+  INIT_HINT,
+  INTEGER_PATTERN,
+  SECRET_FILE_MODE,
+} from './constants.ts'
 import { fileConfigSchema } from './schema.ts'
 import type { Config, ConfigPatch, FileConfig } from './types.ts'
 
@@ -72,7 +79,5 @@ export function updateConfigFile(path: string, patch: ConfigPatch): void {
     if (value === null) delete next[key]
     else if (value !== undefined) next[key] = value
   }
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 })
-  chmodSync(path, 0o600)
+  writeFileAtomic(path, `${JSON.stringify(next, null, 2)}\n`, SECRET_FILE_MODE)
 }

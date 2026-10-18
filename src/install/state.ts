@@ -1,5 +1,6 @@
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { readFileSync, rmSync } from 'node:fs'
+import { writeFileAtomic } from '../system/index.ts'
+import { SECRET_FILE_MODE } from './constants.ts'
 import { installRecordSchema } from './schema.ts'
 import type { InstallRecord } from './types.ts'
 
@@ -15,9 +16,7 @@ export function readInstall(file: string): InstallRecord | undefined {
 }
 
 export function writeInstall(file: string, record: InstallRecord): void {
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 })
-  chmodSync(file, 0o600)
+  writeFileAtomic(file, `${JSON.stringify(record, null, 2)}\n`, SECRET_FILE_MODE)
 }
 
 export function removeInstall(file: string): void {
