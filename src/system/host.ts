@@ -41,12 +41,12 @@ export async function ensureLinger(
 }
 
 /** Returns the bot username, or undefined on any failure. Never exposes the token or error text. */
-export async function validateToken(token: string): Promise<string | undefined> {
+export async function validateToken(token: string, apiRoot?: string): Promise<string | undefined> {
   try {
-    // Global fetch rather than grammY's bundled node-fetch.
+    // No global fetch here: Node's fetch rejects grammY's polyfilled AbortSignal on every call.
     const botUser = await new Api(token, {
-      fetch,
       timeoutSeconds: TOKEN_CHECK_TIMEOUT_SECONDS,
+      ...(apiRoot === undefined ? {} : { apiRoot }),
     }).getMe()
     return botUser.username || undefined
   } catch {
