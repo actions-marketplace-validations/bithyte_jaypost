@@ -88,6 +88,8 @@ async function handleRequest(
   res.on('close', () => {
     if (!res.writableEnded) controller.abort()
   })
+  // The client may have gone while the body was being read, before 'close' was observed.
+  if (res.destroyed) controller.abort()
 
   try {
     const outcome = await service.request(parsed.value, controller.signal)
@@ -109,7 +111,8 @@ async function handleRequest(
 
 export function createApiServer(service: Pick<ApprovalService, 'request'>): http.Server {
   return http.createServer((req, res) => {
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname
+    // Not new URL(): it throws on targets like '//' and would crash the handler.
+    const path = (req.url ?? '/').split('?')[0]
     if (path !== '/request') {
       sendJson(res, 404, { error: 'not found' })
       return

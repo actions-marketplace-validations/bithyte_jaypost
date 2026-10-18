@@ -1,3 +1,4 @@
+import net from 'node:net'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
@@ -174,4 +175,21 @@ test('client gone before service resolves does not crash the server', async () =
   await new Promise((r) => setTimeout(r, 50))
   const again = await fetch(`${url}/other`)
   expect(again.status).toBe(404)
+})
+
+test('malformed request target gets 404 and the server keeps serving', async () => {
+  const url = await start(vi.fn<RequestFn>())
+  const port = Number(new URL(url).port)
+  const raw = await new Promise<string>((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1')
+    let data = ''
+    socket.on('data', (d) => (data += d))
+    socket.on('error', reject)
+    socket.on('close', () => resolve(data))
+    socket.write('GET // HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+  })
+  expect(raw.startsWith('HTTP/1.1 404')).toBe(true)
+  expect(raw).toContain('application/json')
+  const after = await fetch(`${url}/other`)
+  expect(after.status).toBe(404)
 })
