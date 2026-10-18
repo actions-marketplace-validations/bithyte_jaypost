@@ -13,6 +13,10 @@ function readTextIfPresent(path: string): string | undefined {
   }
 }
 
+/**
+ * Parses KEY=VALUE lines, skipping blanks and comments; returns {} when the file is missing. Values
+ * are taken literally (no unquoting).
+ */
 export function readEnvFile(path: string): Readonly<Record<string, string>> {
   const text = readTextIfPresent(path)
   if (text === undefined) {
@@ -31,10 +35,14 @@ export function readEnvFile(path: string): Readonly<Record<string, string>> {
   return values
 }
 
+/** Atomic write with owner-only permissions, since the file holds the bot token. */
 export function writeEnvFile(path: string, contents: string): void {
   writeFileAtomic(path, contents, SECRET_FILE_MODE)
 }
 
+/**
+ * Drops every `key=` line, rewriting the file atomically; does nothing when the file is missing.
+ */
 export function removeEnvKey(path: string, key: string): void {
   const text = readTextIfPresent(path)
   if (text === undefined) {

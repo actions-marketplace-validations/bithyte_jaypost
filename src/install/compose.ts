@@ -14,6 +14,9 @@ async function tryExec(exec: Exec, command: string, args: readonly string[]) {
   }
 }
 
+/**
+ * Docker Compose target; writes its files under the compose directory and drives `docker compose`.
+ */
 export function createComposeTarget(deps: TargetDeps): Target {
   const { exec, paths } = deps
   const file = join(paths.composeDirectory, 'compose.yaml')

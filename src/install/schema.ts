@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+/** Shape of install.json. */
 export const installRecordSchema = z.object({
   target: z.enum(['systemd', 'compose', 'quadlet']),
   port: z.number(),

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import type { Exec } from './types.ts'
 
+/** Thrown by `realExec` when the binary doesn't exist. */
 export class MissingCommandError extends Error {
   readonly command: string
   constructor(command: string) {

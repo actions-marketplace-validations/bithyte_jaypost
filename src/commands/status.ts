@@ -2,6 +2,10 @@ import { findExistingInstall } from '../install/index.ts'
 import { CODE_DASH_PATTERN } from './constants.ts'
 import type { StatusDeps } from './types.ts'
 
+/**
+ * Prints install, running and pairing state. Returns 0 only when installed and running; 1
+ * otherwise.
+ */
 export async function runStatus(deps: StatusDeps): Promise<number> {
   const { print } = deps
   const existing = findExistingInstall(deps.paths, deps.targets)

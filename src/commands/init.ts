@@ -31,6 +31,10 @@ function redact(message: string, secrets: readonly string[]): string {
   return redacted
 }
 
+/**
+ * Installs or replaces the service and waits for pairing. Returns 0 on success or when the user
+ * declines, 1 on failure, 130 on interrupt; error text is shown with known tokens masked.
+ */
 export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
   // Every token string init has seen, so error messages can be shown with them masked.
   const seen: string[] = []

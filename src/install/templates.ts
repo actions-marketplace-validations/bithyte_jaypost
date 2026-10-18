@@ -1,5 +1,6 @@
 import { basename } from 'node:path'
 
+/** Wraps in double quotes, escaping backslash and `"`, and doubling `%` (systemd specifier). */
 export function quoteSystemdValue(value: string): string {
   return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('%', '%%')}"`
 }
@@ -9,6 +10,10 @@ export function quoteExecWord(word: string): string {
   return quoteSystemdValue(word).replaceAll('$', () => '$$')
 }
 
+/**
+ * Image that installs the package from npm, or from a local tarball when given, and runs `start` as
+ * the node user.
+ */
 export function formatDockerfile(options: {
   readonly version: string
   readonly tarball?: string
@@ -27,6 +32,7 @@ CMD ["telegram-approval-bot","start"]
 `
 }
 
+/** Compose file publishing `port` on loopback only, with a named volume for /data. */
 export function formatComposeYaml(port: number): string {
   return `name: telegram-approval-bot
 services:
@@ -43,6 +49,7 @@ volumes:
 `
 }
 
+/** KEY=VALUE lines for the container; `OWNER_ID` is included only when known. */
 export function formatEnvFile(options: {
   readonly token: string
   readonly port: number
@@ -56,6 +63,7 @@ export function formatEnvFile(options: {
   return lines.join('\n') + '\n'
 }
 
+/** Quadlet .container unit; publishes `port` on loopback only and reads the env file. */
 export function formatQuadletContainer(options: {
   readonly version: string
   readonly port: number
@@ -79,6 +87,7 @@ WantedBy=default.target
 `
 }
 
+/** User unit that runs `node cli start` with APPROVAL_BOT_CONFIG pinned to `config`. */
 export function formatSystemdUnit(options: {
   readonly node: string
   readonly cli: string

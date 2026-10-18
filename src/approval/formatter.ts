@@ -6,6 +6,10 @@ function formatTime(at: Date): string {
   return `${hours}:${minutes}`
 }
 
+/**
+ * One-line outcome shown under the request: answer, timeout or cancellation, with the local time as
+ * HH:MM.
+ */
 export function formatResultLine(settlement: Settlement, at: Date): string {
   const time = formatTime(at)
   switch (settlement.kind) {
@@ -18,6 +22,10 @@ export function formatResultLine(settlement: Settlement, at: Date): string {
   }
 }
 
+/**
+ * The original request text, a blank line, then the result line; this replaces the message once
+ * settled.
+ */
 export function formatFinalText(original: string, settlement: Settlement, at: Date): string {
   return `${original}\n\n${formatResultLine(settlement, at)}`
 }

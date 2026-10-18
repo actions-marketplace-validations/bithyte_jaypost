@@ -118,6 +118,7 @@ function runUninstallCommand(): Promise<number> {
   )
 }
 
+/** Takes argv without node and script path; returns the exit code (2 for usage errors). */
 export async function main(argv: readonly string[]): Promise<number> {
   let code = 0
   const program = new Command('telegram-approval-bot')

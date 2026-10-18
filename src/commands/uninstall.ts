@@ -2,6 +2,10 @@ import { findExistingInstall, removeInstall } from '../install/index.ts'
 import { PromptAborted } from './prompts.ts'
 import type { UninstallDeps } from './types.ts'
 
+/**
+ * Removes the service after asking whether to purge the token and owner. Returns 0 on success or
+ * when nothing is installed, 1 on failure, 130 on interrupt.
+ */
 export async function runUninstall(deps: UninstallDeps): Promise<number> {
   const { print } = deps
   const existing = findExistingInstall(deps.paths, deps.targets)

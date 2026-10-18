@@ -19,6 +19,10 @@ function formatImageTag(version: string): string {
   return `localhost/${SERVICE_NAME}:${version}`
 }
 
+/**
+ * Podman Quadlet target (needs podman 4.4+); builds the image locally and runs it as a user systemd
+ * unit.
+ */
 export function createQuadletTarget(deps: TargetDeps): Target {
   const { exec, paths, user } = deps
   const envPath = join(paths.quadletDirectory, '.env')

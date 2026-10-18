@@ -58,6 +58,9 @@ export function findUnitConfigFile(unit: string): string | undefined {
   return undefined
 }
 
+/**
+ * systemd user service target running the npm-installed CLI; keeps its settings in the config file.
+ */
 export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target {
   const { exec, paths, env, user } = deps
   const systemctl = (...args: string[]) => exec('systemctl', ['--user', ...args])

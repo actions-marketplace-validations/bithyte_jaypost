@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 import type { fileConfigSchema } from './schema.ts'
 
+/** Resolved settings; `ownerId` is undefined until someone has paired. */
 export type Config = {
   readonly botToken: string
   readonly ownerId: number | undefined
@@ -8,6 +9,7 @@ export type Config = {
   readonly host: string
 }
 
+/** Shape of config.json; every field is optional and unknown keys are kept. */
 export type FileConfig = Readonly<z.infer<typeof fileConfigSchema>>
 
 /** Keys to merge into the config file; `null` deletes the key. */

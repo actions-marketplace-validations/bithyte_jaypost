@@ -14,6 +14,7 @@ import {
 } from '../telegram/index.ts'
 import type { Owner } from '../telegram/index.ts'
 
+/** Starts the bot and API; exits the process with 1 on bad config, token or port, or a second poller. */
 export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   let config: Config
   try {

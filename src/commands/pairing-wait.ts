@@ -9,6 +9,10 @@ import {
 } from './constants.ts'
 import type { WaitOptions, WaitResult } from './types.ts'
 
+/**
+ * GETs the local /status; undefined on any failure or unexpected body (typically the service isn't
+ * up yet).
+ */
 export async function defaultFetchStatus(port: number): Promise<StatusInfo | undefined> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/status`, {
@@ -29,6 +33,10 @@ function createAbortableSleep(signal?: AbortSignal): (delayMs: number) => Promis
   return (delayMs) => delay(delayMs, undefined, { signal }).catch(() => {})
 }
 
+/**
+ * Polls /status, printing the pairing code once. Start timeout only applies until the service first
+ * answers; ends as paired, interrupted, stopped (not running) or notStarted.
+ */
 export async function waitForPairing(options: WaitOptions): Promise<WaitResult> {
   const print = options.print ?? ((text: string) => console.log(text))
   const fetchStatus = options.fetchStatus ?? defaultFetchStatus

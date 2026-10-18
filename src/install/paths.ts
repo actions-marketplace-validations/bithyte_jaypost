@@ -7,6 +7,7 @@ function toNonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value === '' ? undefined : value
 }
 
+/** Where each target keeps its files, derived from the env; touches no files. */
 export function resolveInstallPaths(env: NodeJS.ProcessEnv = process.env): InstallPaths {
   const home = toNonEmpty(env.HOME) ?? homedir()
   const configDirectory = resolveConfigDirectory(env)

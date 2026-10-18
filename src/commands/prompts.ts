@@ -1,6 +1,10 @@
 import { confirm, isCancel, password, select } from '@clack/prompts'
 import type { Prompts, SelectOption } from './types.ts'
 
+/**
+ * Thrown by the prompts on Ctrl-C, abort, or when stdin isn't a terminal; callers treat it as a
+ * user cancel.
+ */
 export class PromptAborted extends Error {
   constructor() {
     super('prompt aborted')

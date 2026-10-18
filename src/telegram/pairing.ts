@@ -8,6 +8,7 @@ import {
 } from './constants.ts'
 import type { PairResult } from './types.ts'
 
+/** Random pairing code from `PAIRING_ALPHABET`; `random` is injectable for tests. */
 export function generateCode(random: (max: number) => number = randomInt): string {
   let code = ''
   for (let index = 0; index < PAIRING_CODE_LENGTH; index += 1) {
@@ -16,6 +17,7 @@ export function generateCode(random: (max: number) => number = randomInt): strin
   return code
 }
 
+/** Splits a code into two groups of four with a dash, for display. */
 export function formatCode(code: string): string {
   return `${code.slice(0, 4)}-${code.slice(4)}`
 }
@@ -28,6 +30,10 @@ function normalizeCode(text: string): string {
     .replace(CODE_SEPARATOR_PATTERN, '')
 }
 
+/**
+ * One-shot pairing state: the first correct code claims the bot, and each sender gets a limited
+ * number of wrong guesses.
+ */
 export class Pairing {
   #code: string | undefined
   #maxFailures: number
@@ -38,6 +44,7 @@ export class Pairing {
     this.#maxFailures = maxFailures
   }
 
+  /** The code to show, or undefined once paired. */
   get code(): string | undefined {
     return this.#code
   }
@@ -46,6 +53,10 @@ export class Pairing {
     return this.#code === undefined
   }
 
+  /**
+   * Compares `text` (case, dashes and a leading /start ignored) to the code. Wrong guesses are
+   * counted per sender and block at the limit.
+   */
   attempt(fromId: number, text: string): PairResult {
     if (this.#code === undefined) {
       return 'notPairing'

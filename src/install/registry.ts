@@ -18,6 +18,7 @@ import type {
   TargetName,
 } from './types.ts'
 
+/** Builds all three install targets from the same dependencies. */
 export function createTargets(
   deps: TargetDeps,
   cli: CliLocation,
@@ -29,6 +30,7 @@ export function createTargets(
   }
 }
 
+/** Asks each target if it is usable, in `TARGET_ORDER`. */
 export async function detectTargets(
   targets: Readonly<Record<TargetName, Target>>,
 ): Promise<readonly DetectedTarget[]> {
@@ -39,10 +41,15 @@ export async function detectTargets(
   return detected
 }
 
+/** First available target in the given order, or undefined when none is usable. */
 export function findDefaultTarget(detected: readonly DetectedTarget[]): TargetName | undefined {
   return detected.find((candidate) => candidate.ok)?.name
 }
 
+/**
+ * Install recorded in install.json, else a legacy systemd install rebuilt from its unit file
+ * (`legacy: true`); undefined when neither exists.
+ */
 export function findExistingInstall(
   paths: InstallPaths,
   _targets: Readonly<Record<TargetName, Target>>,

@@ -2,6 +2,10 @@ import { findExistingInstall } from '../install/index.ts'
 import { PromptAborted } from './prompts.ts'
 import type { ResetOwnerDeps, WaitResult } from './types.ts'
 
+/**
+ * Unlinks the paired owner, restarts the service and waits for a new pairing. Returns 0 on success
+ * or if the user declines, 1 on failure or not installed, 130 on interrupt.
+ */
 export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
   const { print } = deps
   const existing = findExistingInstall(deps.paths, deps.targets)

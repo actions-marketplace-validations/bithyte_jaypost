@@ -46,6 +46,10 @@ const approvalRequestSchema = z
     timeoutSeconds: Math.min(timeout ?? MAX_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS),
   }))
 
+/**
+ * Validates a request body; never throws. Returns the first problem as `error`, and clamps
+ * `timeout` to the cap (the cap is also the default).
+ */
 export function parseApprovalRequest(body: unknown): ParseResult {
   const result = approvalRequestSchema.safeParse(body)
   if (result.success) {

@@ -3,8 +3,10 @@ import { formatFinalText } from './formatter.ts'
 import { PendingRequests } from './pending.ts'
 import type { ApprovalRequest, Messenger, RequestResult } from './types.ts'
 
+/** The messenger failed to send the request; the original error is in `cause`. */
 export class SendError extends Error {}
 
+/** Sends each request to the owner and waits for a tap, the timeout or an abort. */
 export class ApprovalService {
   #messenger: Messenger
   #now: () => Date
@@ -21,6 +23,10 @@ export class ApprovalService {
     this.#newId = newId
   }
 
+  /**
+   * Resolves once settled. Throws `SendError` if the message can't be sent; a failed final edit is
+   * only logged. An aborted `signal` settles as cancelled.
+   */
   async request(request: ApprovalRequest, signal?: AbortSignal): Promise<RequestResult> {
     const id = this.#newId()
     let reference
@@ -58,6 +64,10 @@ export class ApprovalService {
     }
   }
 
+  /**
+   * Records a button tap; 'expired' when the request is unknown, already settled or the index is
+   * invalid.
+   */
   tap(id: string, optionIndex: number): 'accepted' | 'expired' {
     return this.#pending.answer(id, optionIndex) ? 'accepted' : 'expired'
   }

@@ -5,10 +5,14 @@ import { CALLBACK_DATA_PATTERN } from './constants.ts'
 import type { Pairing } from './pairing.ts'
 import type { Owner, PairingMessage, Tap, TapRoute } from './types.ts'
 
+/** Button payload `<id>:<optionIndex>`; `routeTap` parses it. */
 export function formatCallbackData(id: string, optionIndex: number): string {
   return `${id}:${optionIndex}`
 }
 
+/**
+ * 'ignored' for anyone but the owner, 'expired' for malformed data, else whatever `tap` returns.
+ */
 export function routeTap(
   fromId: number,
   data: string | undefined,
@@ -25,6 +29,10 @@ export function routeTap(
   return tap(id, Number(rawIndex))
 }
 
+/**
+ * Sends requests as inline-keyboard messages to the owner; the final edit removes the buttons.
+ * Sending throws when nobody is paired.
+ */
 export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger {
   return {
     async sendRequest(id, text, options): Promise<MessageReference> {
@@ -48,6 +56,7 @@ export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger {
   }
 }
 
+/** Routes button taps to `tap`; always answers the callback so the button stops spinning. */
 export function registerTapHandler(bot: Bot, owner: Owner, tap: Tap): void {
   bot.on('callback_query:data', async (context) => {
     const route = routeTap(context.from.id, context.callbackQuery.data, owner.id, tap)
@@ -59,6 +68,10 @@ export function registerTapHandler(bot: Bot, owner: Owner, tap: Tap): void {
   })
 }
 
+/**
+ * Reply text for a pairing attempt, or undefined to stay silent (not a private chat, blocked, or
+ * already paired). Calls `onPaired` on success.
+ */
 export function handlePairingMessage(
   message: PairingMessage,
   pairing: Pairing,
@@ -78,6 +91,7 @@ export function handlePairingMessage(
   return undefined
 }
 
+/** Feeds text messages to `handlePairingMessage` and sends any reply. */
 export function registerPairingHandler(
   bot: Bot,
   pairing: Pairing,
@@ -95,6 +109,10 @@ export function registerPairingHandler(
   })
 }
 
+/**
+ * Callback that sets the owner in memory first, then saves it to the config file. A failed save is
+ * logged, not thrown.
+ */
 export function createOnPaired(
   owner: Owner,
   path: string,

@@ -5,6 +5,10 @@ import type { ApprovalService } from '../approval/index.ts'
 import { MAX_BODY_BYTES } from './constants.ts'
 import type { StatusInfo } from './types.ts'
 
+/**
+ * Builds the HTTP API (POST /request, GET /status) without listening. Aborting the connection
+ * cancels the pending request; errors return JSON bodies.
+ */
 export function createApiServer(
   service: Pick<ApprovalService, 'request'>,
   status: () => StatusInfo,

@@ -3,6 +3,7 @@ import net from 'node:net'
 import { LINGER_OFF_PATTERN, LINGER_ON_PATTERN, TOKEN_CHECK_TIMEOUT_SECONDS } from './constants.ts'
 import type { Exec } from './types.ts'
 
+/** True when 127.0.0.1:`port` can be bound; any bind error counts as in use. */
 export function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer()
@@ -11,6 +12,10 @@ export function isPortFree(port: number): Promise<boolean> {
   })
 }
 
+/**
+ * Enables systemd linger for `user` so the service survives logout. Never throws; prints the manual
+ * command if it can't.
+ */
 export async function ensureLinger(
   exec: Exec,
   user: string,

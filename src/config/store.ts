@@ -17,6 +17,7 @@ function findEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
   return value === undefined || value === '' ? undefined : value
 }
 
+/** Path of config.json: $APPROVAL_BOT_CONFIG, else under $XDG_CONFIG_HOME or ~/.config. Empty env values count as unset. */
 export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = findEnvValue(env, 'APPROVAL_BOT_CONFIG')
   if (explicit) {
@@ -27,11 +28,16 @@ export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string 
   return join(base, 'telegram-approval-bot', 'config.json')
 }
 
+/** Default config directory, ignoring $APPROVAL_BOT_CONFIG; install files live here. */
 export function resolveConfigDirectory(env: NodeJS.ProcessEnv = process.env): string {
   const { APPROVAL_BOT_CONFIG: _ignored, ...rest } = env
   return dirname(resolveConfigPath(rest))
 }
 
+/**
+ * Returns {} when the file is missing. Throws on invalid JSON or fields, without quoting the file,
+ * since it may hold the bot token.
+ */
 export function readConfigFile(path: string): FileConfig {
   let text: string
   try {
@@ -69,6 +75,10 @@ function toInteger(value: unknown): number | undefined {
   return undefined
 }
 
+/**
+ * Env vars (BOT_TOKEN, OWNER_ID, PORT, HOST) override the config file. Throws a user-facing error
+ * on a missing token or invalid owner id or port.
+ */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const file = readConfigFile(resolveConfigPath(env))
   const botToken = findEnvValue(env, 'BOT_TOKEN') ?? file.botToken
