@@ -25,10 +25,6 @@ test('removeEnvKey keeps other lines and mode', () => {
   expect(statSync(f).mode & 0o777).toBe(0o600)
 })
 
-test('removeEnvKey on missing file is a no-op', () => {
-  removeEnvKey(join(dir(), 'nope'), 'X')
-})
-
 test('removeEnvKey on a missing file writes nothing', () => {
   const f = join(dir(), 'nope')
   removeEnvKey(f, 'X')

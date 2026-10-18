@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vite-plus/test'
@@ -25,6 +34,18 @@ test('replacing a file gives it a new inode and leaves no temp file behind', () 
   expect(statSync(path).ino).not.toBe(inodeBefore)
   expect(readFileSync(path, 'utf8')).toBe('second')
   expect(readdirSync(root)).toEqual(['secret.json'])
+})
+
+test('writing through a symlink keeps the link and updates its target', () => {
+  const root = createTempDirectory()
+  const target = join(root, 'real.json')
+  const link = join(root, 'link.json')
+  writeFileSync(target, 'old')
+  symlinkSync(target, link)
+  writeFileAtomic(link, 'new', 0o600)
+  expect(lstatSync(link).isSymbolicLink()).toBe(true)
+  expect(readFileSync(target, 'utf8')).toBe('new')
+  expect(readdirSync(root).toSorted()).toEqual(['link.json', 'real.json'])
 })
 
 test('a failed rename throws, keeps the old target and removes the temp file', () => {
