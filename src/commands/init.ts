@@ -1,3 +1,4 @@
+import { PromptAborted } from '../install/prompt.ts'
 import type { InstallPaths } from '../install/paths.ts'
 import { removeInstall, writeInstall } from '../install/state.ts'
 import type { InstallRecord, TargetName } from '../install/state.ts'
@@ -47,7 +48,22 @@ async function safeValidate(deps: InitDeps, token: string): Promise<string | und
   }
 }
 
+class Aborted extends Error {}
+
 export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
+  try {
+    return await runInitInner(args, deps)
+  } catch (err) {
+    if (err instanceof Aborted || err instanceof PromptAborted || deps.signal?.aborted) {
+      deps.print('')
+      return 130
+    }
+    deps.print('Install failed; run telegram-approval-bot init again. Check the logs for details.')
+    return 1
+  }
+}
+
+async function runInitInner(args: InitArgs, deps: InitDeps): Promise<number> {
   const { print, prompt } = deps
 
   const detected = await detect(deps.targets)
@@ -105,12 +121,10 @@ export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
     }
   }
   while (token === undefined) {
+    if (deps.signal?.aborted) throw new Aborted()
     const candidate = await prompt.askSecret('Bot token (input hidden): ')
     if (candidate !== '' && (await safeValidate(deps, candidate))) token = candidate
-    else {
-      print('Telegram rejected that token (or could not be reached). Try again.')
-      if (deps.signal?.aborted) return 130
-    }
+    else print('Telegram rejected that token (or could not be reached). Try again.')
   }
 
   const port = args.port ?? rec?.port ?? DEFAULT_PORT

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
 import { runInit } from '../../src/commands/init.ts'
 import type { InitDeps } from '../../src/commands/init.ts'
+import { PromptAborted } from '../../src/install/prompt.ts'
 import { installPaths } from '../../src/install/paths.ts'
 import type { InstallPaths } from '../../src/install/paths.ts'
 import { readInstall, writeInstall } from '../../src/install/state.ts'
@@ -220,4 +221,75 @@ test('passes tarball and signal through', async () => {
     expect.objectContaining({ tarball: '/x/y.tgz' }),
   )
   expect(d.wait).toHaveBeenCalledWith(expect.objectContaining({ signal: ac.signal, port: 8787 }))
+})
+
+test('Ctrl-C at target choose returns 130, nothing installed', async () => {
+  const d = deps()
+  d.prompt.choose = vi.fn(async () => {
+    throw new PromptAborted()
+  })
+  expect(await runInit({}, d)).toBe(130)
+  expect(order).toEqual([])
+})
+
+test('Ctrl-C at Replace prompt returns 130 before any remove', async () => {
+  seed('compose')
+  const old = fake('compose', true, { token: 't' })
+  const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
+  d.prompt.ask = vi.fn(async () => {
+    throw new PromptAborted()
+  })
+  expect(await runInit({}, d)).toBe(130)
+  expect(old.remove).not.toHaveBeenCalled()
+  expect(d.targets.quadlet.install).not.toHaveBeenCalled()
+})
+
+test('Ctrl-C at token prompt returns 130, no install', async () => {
+  const d = deps()
+  d.prompt.askSecret = vi.fn(async () => {
+    throw new PromptAborted()
+  })
+  expect(await runInit({}, d)).toBe(130)
+  expect(d.targets.quadlet.install).not.toHaveBeenCalled()
+})
+
+test('EOF in token loop terminates', async () => {
+  const d = deps({ validateToken: vi.fn(async () => undefined) })
+  let n = 0
+  d.prompt.askSecret = vi.fn(async () => {
+    if (++n > 1) throw new PromptAborted()
+    return 'bad'
+  })
+  expect(await runInit({}, d)).toBe(130)
+  expect(n).toBe(2)
+})
+
+test('aborted signal stops the token loop before prompting', async () => {
+  const ac = new AbortController()
+  ac.abort()
+  const d = deps({ signal: ac.signal })
+  expect(await runInit({}, d)).toBe(130)
+  expect(d.prompt.askSecret).not.toHaveBeenCalled()
+})
+
+test('install throwing returns 1 with generic message, no secrets', async () => {
+  const d = deps()
+  d.targets.quadlet.install = vi.fn(async () => {
+    throw new Error('boom good-token')
+  })
+  expect(await runInit({}, d)).toBe(1)
+  const text = out.join('\n')
+  expect(text).toContain('run telegram-approval-bot init again')
+  expect(text).not.toContain('good-token')
+})
+
+test('old remove throwing returns 1, no install', async () => {
+  seed('compose')
+  const old = fake('compose', true, { token: 't' })
+  old.remove = vi.fn(async () => {
+    throw new Error('nope')
+  })
+  const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
+  expect(await runInit({}, d)).toBe(1)
+  expect(d.targets.quadlet.install).not.toHaveBeenCalled()
 })

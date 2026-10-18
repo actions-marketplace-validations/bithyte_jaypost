@@ -20,7 +20,8 @@ import { VERSION } from './version.ts'
 const USAGE = `Usage: telegram-approval-bot <command>
 
 Commands:
-  init         set up the bot token and install the service
+  init [systemd|compose|quadlet] [--port N]
+               set up the bot token and install the service
   start        run the service in the foreground
   status       show service and pairing state
   test         send a test approval request
@@ -80,7 +81,11 @@ async function initCommand(argv: string[]): Promise<number> {
     return await runInit(args, {
       targets,
       paths,
-      prompt: { ask, askSecret, choose },
+      prompt: {
+        ask: (q) => ask(q, ac.signal),
+        askSecret: (q) => askSecret(q, ac.signal),
+        choose: (q, o, d) => choose(q, o, d, ac.signal),
+      },
       validateToken,
       portFree,
       wait: waitForPairing,
