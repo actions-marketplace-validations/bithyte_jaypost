@@ -133,10 +133,40 @@ Errors are JSON `{ "error": "..." }`:
 | 413    | Body over 64 KiB.                                                       |
 | 502    | Telegram message couldn't be sent.                                      |
 | 500    | Internal error, or the request was cancelled.                           |
-| 404    | Path isn't `/request`.                                                  |
+| 404    | Path isn't `/request`, `/notify` or `/status`.                          |
 | 405    | Method isn't POST.                                                      |
 
 If the caller disconnects early, the request is dropped and the Telegram message is edited to a "cancelled" line. Pending requests live in memory, so a restart drops them (callers see a connection error).
+
+### Notifications
+
+`POST /notify` sends a message that doesn't need an answer, e.g. from n8n when someone joins a game server. JSON body:
+
+| Field  | Type   | Required | Notes                                                     |
+| ------ | ------ | -------- | --------------------------------------------------------- |
+| `text` | string | yes      | Shown in Telegram. Non-empty, max 3900 chars. Plain text. |
+
+It returns `200 { "ok": true }` as soon as Telegram accepts the message. The message has a Dismiss button that deletes it, and it's deleted automatically after 8 hours.
+
+```
+curl -s -X POST http://127.0.0.1:8787/notify \
+  -H 'content-type: application/json' \
+  -d '{"text":"alice joined the Core Keeper server"}'
+```
+
+Errors are JSON `{ "error": "..." }`:
+
+| Status | Meaning                                                                 |
+| ------ | ----------------------------------------------------------------------- |
+| 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram. |
+| 413    | Body over 64 KiB.                                                       |
+| 501    | Notifications aren't supported.                                         |
+| 502    | Telegram message couldn't be sent.                                      |
+| 503    | Not paired yet.                                                         |
+| 405    | Method isn't POST.                                                      |
+| 500    | Internal error.                                                         |
+
+Known issue: the 8-hour timers live in memory. If the service restarts before a notification's 8 hours are up, that message stays in the chat until you dismiss it (Dismiss still works after a restart).
 
 ## Security
 

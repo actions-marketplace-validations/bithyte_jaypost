@@ -2,6 +2,7 @@ import { Bot, GrammyError } from 'grammy'
 import { ApprovalService } from '../approval/index.ts'
 import { loadConfig, resolveConfigPath } from '../config/index.ts'
 import type { Config } from '../config/index.ts'
+import { NotificationService } from '../notify/index.ts'
 import { createApiServer } from '../server/index.ts'
 import {
   createOnPaired,
@@ -29,12 +30,14 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
   }
   const owner: Owner = { id: config.ownerId }
   const bot = new Bot(config.botToken)
-  const service = new ApprovalService(createTelegramMessenger(bot, owner))
+  const messenger = createTelegramMessenger(bot, owner)
+  const service = new ApprovalService(messenger)
+  const notifications = new NotificationService(messenger)
   registerTapHandler(
     bot,
     owner,
     (id, optionIndex) => service.tap(id, optionIndex),
-    () => false,
+    (id) => notifications.dismiss(id),
   )
   // Log handler errors instead of crashing; grammY's error text doesn't include the token.
   bot.catch((error) => {
@@ -61,10 +64,13 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     )
     registerPairingHandler(bot, pairing, createOnPaired(owner, resolveConfigPath(env)))
   }
-  const server = createApiServer(service, () =>
-    owner.id !== undefined || pairing === undefined || pairing.code === undefined
-      ? { paired: true, bot: botUsername }
-      : { paired: false, code: formatCode(pairing.code), bot: botUsername },
+  const server = createApiServer(
+    service,
+    () =>
+      owner.id !== undefined || pairing === undefined || pairing.code === undefined
+        ? { paired: true, bot: botUsername }
+        : { paired: false, code: formatCode(pairing.code), bot: botUsername },
+    notifications,
   )
   server.listen({ port: config.port, host: config.host }).then(
     () => console.log(`listening on ${config.host}:${config.port}`),

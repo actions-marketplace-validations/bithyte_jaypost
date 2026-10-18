@@ -6,8 +6,10 @@ import { SendError } from '../../src/approval/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
 import type { StatusInfo } from '../../src/server/index.ts'
 import type { ApprovalRequest, RequestResult } from '../../src/approval/index.ts'
+import type { NotifyRequest } from '../../src/notify/index.ts'
 
 type RequestFn = (req: ApprovalRequest, signal?: AbortSignal) => Promise<RequestResult>
+type NotifyFn = (req: NotifyRequest) => Promise<void>
 
 const valid = {
   text: 'Deploy?',
@@ -30,9 +32,10 @@ afterEach(async () => {
 async function start(
   request: RequestFn,
   status: () => StatusInfo = () => ({ paired: true, bot: 'b' }),
+  notify?: NotifyFn,
 ): Promise<string> {
   const stub = { request: vi.fn(request) }
-  server = createApiServer(stub, status)
+  server = createApiServer(stub, status, notify === undefined ? undefined : { notify })
   await server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = server.server.address() as AddressInfo
   return `http://127.0.0.1:${port}`
@@ -40,6 +43,11 @@ async function start(
 
 const post = (url: string, body: string) =>
   fetch(`${url}/request`, { method: 'POST', body, headers: { 'content-type': 'application/json' } })
+
+const postNotify = (url: string, body: string) =>
+  fetch(`${url}/notify`, { method: 'POST', body, headers: { 'content-type': 'application/json' } })
+
+const unpaired = (): StatusInfo => ({ paired: false, code: 'ABCD-EFGH', bot: 'b' })
 
 test('200 with outcome', async () => {
   const request = vi.fn<RequestFn>(async () => ({
@@ -234,4 +242,64 @@ test('POST /status is 405 with Allow: GET', async () => {
   const res = await fetch(`${url}/status`, { method: 'POST', body: '{}' })
   expect(res.status).toBe(405)
   expect(res.headers.get('allow')).toBe('GET')
+})
+
+test('POST /notify returns ok once sent', async () => {
+  const notify = vi.fn<NotifyFn>(async () => {})
+  const url = await start(vi.fn<RequestFn>(), undefined, notify)
+  const res = await postNotify(url, JSON.stringify({ text: 'hi' }))
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ ok: true })
+  expect(notify).toHaveBeenCalledWith({ text: 'hi' })
+})
+
+test('POST /notify 400 on bad JSON and bad text, notify not called', async () => {
+  const notify = vi.fn<NotifyFn>()
+  const url = await start(vi.fn<RequestFn>(), undefined, notify)
+  for (const body of ['{not json', JSON.stringify({ text: '' }), 'null']) {
+    const res = await postNotify(url, body)
+    expect(res.status).toBe(400)
+    const json = (await res.json()) as { error: string }
+    expect(json.error.length).toBeGreaterThan(0)
+  }
+  expect(notify).not.toHaveBeenCalled()
+})
+
+test('POST /notify 502 on SendError', async () => {
+  const url = await start(vi.fn<RequestFn>(), undefined, async () => {
+    throw new SendError('x')
+  })
+  const res = await postNotify(url, JSON.stringify({ text: 'hi' }))
+  expect(res.status).toBe(502)
+})
+
+test('POST /notify 413 on 70 KB body', async () => {
+  const notify = vi.fn<NotifyFn>()
+  const url = await start(vi.fn<RequestFn>(), undefined, notify)
+  const res = await postNotify(url, JSON.stringify({ text: 'x'.repeat(70 * 1024) }))
+  expect(res.status).toBe(413)
+  expect(notify).not.toHaveBeenCalled()
+})
+
+test('POST /notify is 503 while unpaired, before validation', async () => {
+  const notify = vi.fn<NotifyFn>()
+  const url = await start(vi.fn<RequestFn>(), unpaired, notify)
+  const res = await postNotify(url, '{not json')
+  expect(res.status).toBe(503)
+  expect(await res.json()).toEqual({ error: 'not paired' })
+  expect(notify).not.toHaveBeenCalled()
+})
+
+test('POST /notify is 501 without notifications, before pairing check', async () => {
+  const url = await start(vi.fn<RequestFn>(), unpaired)
+  const res = await postNotify(url, JSON.stringify({ text: 'hi' }))
+  expect(res.status).toBe(501)
+  expect(await res.json()).toEqual({ error: 'notifications not supported' })
+})
+
+test('GET /notify is 405 with Allow: POST', async () => {
+  const url = await start(vi.fn<RequestFn>(), undefined, vi.fn<NotifyFn>())
+  const res = await fetch(`${url}/notify`)
+  expect(res.status).toBe(405)
+  expect(res.headers.get('allow')).toBe('POST')
 })
