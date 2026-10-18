@@ -1,6 +1,12 @@
 {
   "name": "telegram-approval-bot",
   "version": "0.1.0",
+  "bin": {
+    "telegram-approval-bot": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "scripts": {
     "start": "node src/cli.ts start",
@@ -21,11 +27,5 @@
   },
   "engines": {
     "node": ">=24.2"
-  },
-  "bin": {
-    "telegram-approval-bot": "dist/cli.js"
-  },
-  "files": [
-    "dist"
-  ]
+  }
 }
