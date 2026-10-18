@@ -10,6 +10,10 @@
   ],
   "license": "Apache-2.0",
   "author": "Cozmin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cozminu/telegram-ask.git"
+  },
   "bin": {
     "telegram-ask": "dist/cli.js"
   },
