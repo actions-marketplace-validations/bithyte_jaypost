@@ -1,3 +1,4 @@
+import { request as httpRequest } from 'node:http'
 import {
   CANCELLED_MESSAGE,
   HOST,
@@ -8,7 +9,10 @@ import {
 } from './constants.ts'
 import type { ApiOptions, ApiPath, ApiResult } from './types.ts'
 
-/** POSTs JSON to the local service. Never throws; no retries. */
+/**
+ * POSTs JSON to the local service. Never throws; no retries. Uses node:http rather than fetch,
+ * whose 300 s headers timeout would cut off a request that waits the full approval timeout.
+ */
 export async function postApi(
   port: number,
   path: ApiPath,
@@ -17,23 +21,59 @@ export async function postApi(
 ): Promise<ApiResult> {
   const timeout = AbortSignal.timeout(options.timeoutMs)
   const signal = AbortSignal.any([options.signal, timeout])
-  let response: Response
-  let text: string
+  let response: RawResponse
   try {
-    response = await fetch(`http://${HOST}:${port}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal,
-    })
-    text = await response.text()
+    response = await send(port, path, JSON.stringify(body), signal)
   } catch {
     return { kind: 'failed', message: describeTransportFailure(port, options, timeout) }
   }
   if (response.status === 200) {
-    return parseOk(text)
+    return parseOk(response.text)
   }
-  return { kind: 'failed', message: describeStatus(response.status, path, text) }
+  return { kind: 'failed', message: describeStatus(response.status, path, response.text) }
+}
+
+type RawResponse = { readonly status: number; readonly text: string }
+
+/** Rejects on connection errors, resets and aborts; an abort destroys the socket. */
+function send(
+  port: number,
+  path: ApiPath,
+  payload: string,
+  signal: AbortSignal,
+): Promise<RawResponse> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: HOST,
+        port,
+        path,
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(payload),
+        },
+        signal,
+      },
+      (response) => {
+        let text = ''
+        response.setEncoding('utf8')
+        response.on('data', (chunk: string) => {
+          text += chunk
+        })
+        response.on('error', reject)
+        response.on('close', () => {
+          if (!response.complete) {
+            reject(new Error('response cut off'))
+            return
+          }
+          resolve({ status: response.statusCode ?? 0, text })
+        })
+      },
+    )
+    request.on('error', reject)
+    request.end(payload)
+  })
 }
 
 function describeTransportFailure(port: number, options: ApiOptions, timeout: AbortSignal): string {

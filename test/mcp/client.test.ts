@@ -1,11 +1,12 @@
 import { createServer } from 'node:http'
 import type { RequestListener, Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, expect, test } from 'vite-plus/test'
+import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { postApi } from '../../src/mcp/index.ts'
 
 const servers: Server[] = []
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await Promise.all(
     servers.splice(0).map(
       (server) =>
@@ -142,4 +143,12 @@ test('caller abort', async () => {
   controller.abort()
   expect(await pending).toEqual({ kind: 'failed', message: 'cancelled' })
   await closed
+})
+
+// Global fetch has a fixed 300 s headers timeout that drops an ask waiting the full 300 s; a real
+// 300 s wait is too slow for a test, so this pins the client to not going through fetch at all.
+test('does not use global fetch', async () => {
+  vi.stubGlobal('fetch', () => Promise.reject(new Error('fetch must not be used')))
+  const port = await startStub(reply(200, '{"ok":true}'))
+  expect(await postApi(port, '/notify', {}, options())).toEqual({ kind: 'ok', body: { ok: true } })
 })

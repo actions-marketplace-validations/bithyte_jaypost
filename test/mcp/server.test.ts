@@ -227,7 +227,10 @@ test('closing stdin cancels a pending ask', async () => {
   // The call rejects once the connection closes; that's expected here.
   pending.catch(() => {})
   await waitFor(() => messenger.sent.length === 1)
+  const startedAt = performance.now()
   await client.close()
+  // The SDK sends SIGTERM only after waiting 2 s; finishing sooner means stdin's end stopped it.
+  expect(performance.now() - startedAt).toBeLessThan(2000)
   await waitFor(() => messenger.finalized[0]?.settlement.kind === 'cancelled')
 })
 
