@@ -35,7 +35,11 @@ async function start(
   notify?: NotifyFn,
 ): Promise<string> {
   const stub = { request: vi.fn(request) }
-  server = createApiServer(stub, status, notify === undefined ? undefined : { notify })
+  server = createApiServer(stub, status, {
+    maxTextLength: 3900,
+    providerName: 'test',
+    ...(notify === undefined ? {} : { notifications: { notify } }),
+  })
   await server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = server.server.address() as AddressInfo
   return `http://127.0.0.1:${port}`
@@ -114,7 +118,22 @@ test('502 on SendError', async () => {
   })
   const res = await post(url, JSON.stringify(valid))
   expect(res.status).toBe(502)
-  expect(await res.json()).toEqual({ error: 'failed to send Telegram message' })
+  expect(await res.json()).toEqual({ error: 'failed to send message' })
+})
+
+test('server uses the provider text limit', async () => {
+  server = createApiServer({ request: vi.fn<RequestFn>() }, () => ({ paired: true, bot: 'b' }), {
+    maxTextLength: 10,
+    providerName: 'test',
+  })
+  await server.listen({ port: 0, host: '127.0.0.1' })
+  const { port } = server.server.address() as AddressInfo
+  const res = await post(
+    `http://127.0.0.1:${port}`,
+    JSON.stringify({ ...valid, text: 'x'.repeat(11) }),
+  )
+  expect(res.status).toBe(400)
+  expect(await res.json()).toEqual({ error: 'text must be at most 10 characters' })
 })
 
 test('500 on unexpected error without leaking details', async () => {

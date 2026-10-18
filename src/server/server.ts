@@ -3,20 +3,20 @@ import type { FastifyError, FastifyInstance } from 'fastify'
 import { parseApprovalRequest, SendError } from '../approval/index.ts'
 import type { ApprovalService } from '../approval/index.ts'
 import { parseNotifyRequest } from '../notify/index.ts'
-import type { NotificationService } from '../notify/index.ts'
 import { MAX_BODY_BYTES } from './constants.ts'
-import type { StatusInfo } from './types.ts'
+import type { ApiServerOptions, StatusInfo } from './types.ts'
 
 /**
  * Builds the HTTP API (POST /request, POST /notify, GET /status) without listening. Aborting the
- * connection cancels the pending request; errors return JSON bodies. Without `notifications`,
+ * connection cancels the pending request; errors return JSON bodies. Without `options.notifications`,
  * POST /notify answers 501.
  */
 export function createApiServer(
   service: Pick<ApprovalService, 'request'>,
   status: () => StatusInfo,
-  notifications?: Pick<NotificationService, 'notify'>,
+  options: ApiServerOptions,
 ): FastifyInstance {
+  const { maxTextLength, providerName, notifications } = options
   // Pending requests can hang for minutes; close() shouldn't wait for them.
   const app = Fastify({ bodyLimit: MAX_BODY_BYTES, forceCloseConnections: true })
   // Take the body as text whatever the content type, so bad JSON gets our own 400.
@@ -35,7 +35,9 @@ export function createApiServer(
   })
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof SendError) {
-      return reply.code(502).send({ error: 'failed to send Telegram message' })
+      // Log the message only; the cause can hold provider internals.
+      console.error(`${error.message} via ${providerName}`)
+      return reply.code(502).send({ error: 'failed to send message' })
     }
     if (error.statusCode === 413) {
       // Drop the rest of the upload once the response is flushed.
@@ -59,7 +61,7 @@ export function createApiServer(
     } catch {
       return reply.code(400).send({ error: 'body must be valid JSON' })
     }
-    const parsed = parseApprovalRequest(json)
+    const parsed = parseApprovalRequest(json, maxTextLength)
     if (!parsed.ok) {
       return reply.code(400).send({ error: parsed.error })
     }
@@ -93,7 +95,7 @@ export function createApiServer(
     } catch {
       return reply.code(400).send({ error: 'body must be valid JSON' })
     }
-    const parsed = parseNotifyRequest(json)
+    const parsed = parseNotifyRequest(json, maxTextLength)
     if (!parsed.ok) {
       return reply.code(400).send({ error: parsed.error })
     }

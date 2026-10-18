@@ -319,7 +319,7 @@ test('onPaired sets owner and writes config', () => {
   const path = join(dir, 'config.json')
   const owner: Owner = { id: undefined }
   const log = vi.fn()
-  createOnPaired(owner, path, log)(42)
+  createOnPaired(owner, (id) => writeFileSync(path, JSON.stringify({ ownerId: id })), path, log)(42)
   expect(owner.id).toBe(42)
   expect(JSON.parse(readFileSync(path, 'utf8')).ownerId).toBe(42)
   expect(log).not.toHaveBeenCalled()
@@ -332,7 +332,14 @@ test('onPaired keeps owner in memory when the file is unwritable', () => {
   writeFileSync(blocker, '')
   const owner: Owner = { id: undefined }
   const log = vi.fn()
-  expect(() => createOnPaired(owner, join(blocker, 'config.json'), log)(42)).not.toThrow()
+  expect(() =>
+    createOnPaired(
+      owner,
+      (id) => writeFileSync(join(blocker, 'config.json'), JSON.stringify({ ownerId: id })),
+      join(blocker, 'config.json'),
+      log,
+    )(42),
+  ).not.toThrow()
   expect(owner.id).toBe(42)
   expect(log).toHaveBeenCalledTimes(1)
   expect(log.mock.calls[0]?.[0]).toMatch(/couldn't save/)

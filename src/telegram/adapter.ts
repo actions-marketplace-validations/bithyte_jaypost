@@ -1,6 +1,5 @@
 import type { Bot } from 'grammy'
 import type { MessageReference, Messenger } from '../approval/index.ts'
-import { updateConfigFile } from '../config/index.ts'
 import type { Notifier } from '../notify/index.ts'
 import type { Pairing } from '../pairing/index.ts'
 import {
@@ -168,18 +167,19 @@ export function registerPairingHandler(
 }
 
 /**
- * Callback that sets the owner in memory first, then saves it to the config file. A failed save is
+ * Callback that sets the owner in memory first, then calls `save` (which writes `path`). A failed save is
  * logged, not thrown.
  */
 export function createOnPaired(
   owner: Owner,
+  save: (id: number) => void,
   path: string,
   log: (line: string) => void = console.error,
 ): (id: number) => void {
   return (id) => {
     owner.id = id
     try {
-      updateConfigFile(path, { ownerId: id })
+      save(id)
     } catch {
       log(`paired with ${id} but couldn't save the owner to ${path}; it'll be lost on restart`)
     }

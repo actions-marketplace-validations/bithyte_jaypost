@@ -10,6 +10,10 @@ import {
   readConfigFile,
   updateConfigFile,
 } from '../../src/config/index.ts'
+import { PROVIDERS } from '../../src/provider/index.ts'
+import { createFakeProvider } from '../provider/fake.ts'
+
+const TELEGRAM = PROVIDERS[0]
 
 let dir: string
 let file: string
@@ -34,8 +38,8 @@ test('resolveConfigPath precedence: TELEGRAM_ASK_CONFIG > XDG_CONFIG_HOME > HOME
 test('save then load roundtrip, host defaults to 127.0.0.1', () => {
   updateConfigFile(file, { botToken: 'tok', ownerId: 7, port: 9000 })
   expect(loadConfig({ TELEGRAM_ASK_CONFIG: file })).toEqual({
-    botToken: 'tok',
-    ownerId: 7,
+    provider: TELEGRAM,
+    settings: { botToken: 'tok', ownerId: 7 },
     port: 9000,
     host: '127.0.0.1',
   })
@@ -69,26 +73,41 @@ test('env overrides file values; env-only config works with no file', () => {
       PORT: '2222',
       HOST: '0.0.0.0',
     }),
-  ).toEqual({ botToken: 'envtok', ownerId: 42, port: 2222, host: '0.0.0.0' })
+  ).toEqual({
+    provider: TELEGRAM,
+    settings: { botToken: 'envtok', ownerId: 42 },
+    port: 2222,
+    host: '0.0.0.0',
+  })
   expect(
     loadConfig({ TELEGRAM_ASK_CONFIG: join(dir, 'missing.json'), BOT_TOKEN: 't', OWNER_ID: '42' }),
-  ).toEqual({ botToken: 't', ownerId: 42, port: 8787, host: '127.0.0.1' })
+  ).toEqual({
+    provider: TELEGRAM,
+    settings: { botToken: 't', ownerId: 42 },
+    port: 8787,
+    host: '127.0.0.1',
+  })
 })
 
 test('empty-string env vars count as unset', () => {
   updateConfigFile(file, { botToken: 'filetok', ownerId: 1, port: 1111 })
   expect(
     loadConfig({ TELEGRAM_ASK_CONFIG: file, BOT_TOKEN: '', OWNER_ID: '', PORT: '', HOST: '' }),
-  ).toEqual({ botToken: 'filetok', ownerId: 1, port: 1111, host: '127.0.0.1' })
+  ).toEqual({
+    provider: TELEGRAM,
+    settings: { botToken: 'filetok', ownerId: 1 },
+    port: 1111,
+    host: '127.0.0.1',
+  })
 })
 
 test('missing token or non-integer OWNER_ID throws mentioning init', () => {
   const none = join(dir, 'none.json')
   expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: none, OWNER_ID: '1' })).toThrow(
-    /telegram-ask init/,
+    'missing bot token; run `telegram-ask init` to set up the bot (or set BOT_TOKEN)',
   )
   expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: none, BOT_TOKEN: 't', OWNER_ID: 'abc' })).toThrow(
-    /telegram-ask init/,
+    'invalid owner id; run `telegram-ask init` to set up the bot (or set OWNER_ID)',
   )
   expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: none, BOT_TOKEN: 't', OWNER_ID: '1.5' })).toThrow(
     /telegram-ask init/,
@@ -97,7 +116,9 @@ test('missing token or non-integer OWNER_ID throws mentioning init', () => {
 
 test('missing owner is undefined, not an error', () => {
   const none = join(dir, 'none.json')
-  expect(loadConfig({ TELEGRAM_ASK_CONFIG: none, BOT_TOKEN: 't' }).ownerId).toBeUndefined()
+  expect(loadConfig({ TELEGRAM_ASK_CONFIG: none, BOT_TOKEN: 't' }).settings).toEqual({
+    botToken: 't',
+  })
 })
 
 test('updateConfigFile merges, null deletes, keeps 0600', () => {
@@ -141,6 +162,36 @@ test('malformed config file gives readable error with path', () => {
   expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: bad })).toThrow(bad)
   expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: bad })).toThrow(/invalid JSON/)
   expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: bad })).not.toThrow(/SECRET123/)
+})
+
+test('old config without provider loads as telegram', () => {
+  updateConfigFile(file, { botToken: 't', ownerId: 42 })
+  const config = loadConfig({ TELEGRAM_ASK_CONFIG: file })
+  expect(config.provider.name).toBe('telegram')
+  expect(config.settings).toEqual({ botToken: 't', ownerId: 42 })
+})
+
+test('PROVIDER env overrides the file provider', () => {
+  const fake = createFakeProvider()
+  updateConfigFile(file, { provider: 'telegram', fakeKey: 'k' })
+  const config = loadConfig({ TELEGRAM_ASK_CONFIG: file, PROVIDER: 'fake' }, [TELEGRAM!, fake])
+  expect(config.provider.name).toBe('fake')
+})
+
+test('unknown provider fails with the init hint', () => {
+  updateConfigFile(file, { provider: 'nope' })
+  expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: file })).toThrow(
+    'unknown provider "nope"; run `telegram-ask init`',
+  )
+})
+
+test('fake provider settings load from env and file', () => {
+  const fake = createFakeProvider()
+  updateConfigFile(file, { provider: 'fake', fakeKey: 'filekey' })
+  expect(loadConfig({ TELEGRAM_ASK_CONFIG: file }, [fake]).settings).toEqual({ fakeKey: 'filekey' })
+  expect(loadConfig({ TELEGRAM_ASK_CONFIG: file, FAKE_KEY: 'envkey' }, [fake]).settings).toEqual({
+    fakeKey: 'envkey',
+  })
 })
 
 test('readConfigFile rethrows read errors other than a missing file', () => {

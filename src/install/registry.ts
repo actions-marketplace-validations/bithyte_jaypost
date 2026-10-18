@@ -89,11 +89,10 @@ function readEnvSecrets(path: string): Secrets {
 function readConfigSecrets(path: string): Secrets {
   try {
     const config = readConfigFile(path)
+    const { botToken, ownerId } = config
     return {
-      ...(config.botToken ? { token: config.botToken } : {}),
-      ...(config.ownerId !== undefined && Number.isSafeInteger(config.ownerId)
-        ? { ownerId: config.ownerId }
-        : {}),
+      ...(typeof botToken === 'string' && botToken !== '' ? { token: botToken } : {}),
+      ...(typeof ownerId === 'number' && Number.isSafeInteger(ownerId) ? { ownerId } : {}),
     }
   } catch {
     // Corrupt config: treat as nothing left over.

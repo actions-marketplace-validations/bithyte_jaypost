@@ -1,10 +1,11 @@
 import type { z } from 'zod'
+import type { Provider, SettingValues } from '../provider/index.ts'
 import type { fileConfigSchema } from './schema.ts'
 
-/** Resolved settings; `ownerId` is undefined until someone has paired. */
+/** Resolved settings; the owner setting is absent until someone has paired. */
 export type Config = {
-  readonly botToken: string
-  readonly ownerId: number | undefined
+  readonly provider: Provider
+  readonly settings: SettingValues
   readonly port: number
   readonly host: string
 }
@@ -13,4 +14,4 @@ export type Config = {
 export type FileConfig = Readonly<z.infer<typeof fileConfigSchema>>
 
 /** Keys to merge into the config file; `null` deletes the key. */
-export type ConfigPatch = { readonly [K in keyof FileConfig]?: FileConfig[K] | null }
+export type ConfigPatch = Readonly<Record<string, unknown>>

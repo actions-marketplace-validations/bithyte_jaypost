@@ -1,19 +1,45 @@
 import { readConfigFile, resolveConfigPath, updateConfigFile } from '../config/index.ts'
+import {
+  DEFAULT_PROVIDER,
+  findOwnerSetting,
+  PROVIDERS,
+  requireProvider,
+} from '../provider/index.ts'
+import type { Provider } from '../provider/index.ts'
 
 /** Hidden helper; runs inside containers so the CLI can read/clear the owner in the data volume. */
-export function runOwner(args: readonly string[], env: NodeJS.ProcessEnv = process.env): number {
+export function runOwner(
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+  providers: readonly Provider[] = PROVIDERS,
+): number {
+  if (args[0] !== 'get' && args[0] !== 'clear') {
+    console.error('Usage: owner get|clear')
+    return 2
+  }
   const path = resolveConfigPath(env)
+  const file = readConfigFile(path)
+  let provider: Provider
+  try {
+    provider = requireProvider(
+      providers,
+      (env.PROVIDER === '' ? undefined : env.PROVIDER) ?? file.provider ?? DEFAULT_PROVIDER,
+    )
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
+    return 1
+  }
+  const owner = findOwnerSetting(provider)
+  if (owner === undefined) {
+    return 0
+  }
   if (args[0] === 'get') {
-    const id = readConfigFile(path).ownerId
-    if (id !== undefined) {
-      console.log(String(id))
+    const value = owner.parse(file[owner.configKey])
+    if (value !== undefined) {
+      console.log(String(value))
     }
     return 0
   }
-  if (args[0] === 'clear') {
-    updateConfigFile(path, { ownerId: null })
-    return 0
-  }
-  console.error('Usage: owner get|clear')
-  return 2
+  updateConfigFile(path, { [owner.configKey]: null })
+  return 0
 }

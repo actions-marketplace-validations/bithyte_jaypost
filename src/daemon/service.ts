@@ -1,6 +1,6 @@
 import { Bot, GrammyError } from 'grammy'
 import { ApprovalService } from '../approval/index.ts'
-import { loadConfig, resolveConfigPath } from '../config/index.ts'
+import { loadConfig, resolveConfigPath, updateConfigFile } from '../config/index.ts'
 import type { Config } from '../config/index.ts'
 import { NotificationService } from '../notify/index.ts'
 import { formatCode, generateCode, Pairing } from '../pairing/index.ts'
@@ -26,8 +26,11 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   }
-  const owner: Owner = { id: config.ownerId }
-  const bot = new Bot(config.botToken)
+  // Temporary until the daemon runs providers generically.
+  const rawOwnerId = config.settings.ownerId
+  const configPath = resolveConfigPath(env)
+  const owner: Owner = { id: typeof rawOwnerId === 'number' ? rawOwnerId : undefined }
+  const bot = new Bot(String(config.settings.botToken))
   const messenger = createTelegramMessenger(bot, owner)
   const service = new ApprovalService(messenger)
   const notifications = new NotificationService(messenger)
@@ -60,7 +63,11 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     console.log(
       `Not paired. Send "/start ${formatCode(code)}" to @${botUsername}, or open https://t.me/${botUsername}?start=${code}`,
     )
-    registerPairingHandler(bot, pairing, createOnPaired(owner, resolveConfigPath(env)))
+    registerPairingHandler(
+      bot,
+      pairing,
+      createOnPaired(owner, (id) => updateConfigFile(configPath, { ownerId: id }), configPath),
+    )
   }
   const server = createApiServer(
     service,
@@ -68,7 +75,11 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
       owner.id !== undefined || pairing === undefined || pairing.code === undefined
         ? { paired: true, bot: botUsername }
         : { paired: false, code: formatCode(pairing.code), bot: botUsername },
-    notifications,
+    {
+      maxTextLength: config.provider.maxTextLength,
+      providerName: config.provider.name,
+      notifications,
+    },
   )
   server.listen({ port: config.port, host: config.host }).then(
     () => console.log(`listening on ${config.host}:${config.port}`),

@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { DEFAULT_PROVIDER, PROVIDERS, requireProvider } from '../provider/index.ts'
+import type { Provider, SettingValue } from '../provider/index.ts'
 import { isMissingFileError, writeFileAtomic } from '../system/index.ts'
 import {
   DEFAULT_HOST,
@@ -80,27 +82,41 @@ function toInteger(value: unknown): number | undefined {
 }
 
 /**
- * Env vars (BOT_TOKEN, OWNER_ID, PORT, HOST) override the config file. Throws a user-facing error
- * on a missing token or invalid owner id or port; read errors other than a missing config file
- * are rethrown.
+ * Provider (PROVIDER env, else the file, else telegram), its settings, port and host. Env vars
+ * (e.g. BOT_TOKEN, PORT, HOST) override the config file. Throws a user-facing error on an unknown
+ * provider, a missing required setting, or an invalid setting or port; read errors other than a
+ * missing config file are rethrown.
  */
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  providers: readonly Provider[] = PROVIDERS,
+): Config {
   const file = readConfigFile(resolveConfigPath(env))
-  const botToken = findEnvValue(env, 'BOT_TOKEN') ?? file.botToken
-  if (typeof botToken !== 'string' || botToken === '') {
-    throw new Error(`missing bot token; ${INIT_HINT} (or set BOT_TOKEN)`)
-  }
-  const rawOwnerId = findEnvValue(env, 'OWNER_ID') ?? file.ownerId
-  const ownerId = rawOwnerId === undefined ? undefined : toInteger(rawOwnerId)
-  if (rawOwnerId !== undefined && (ownerId === undefined || !Number.isSafeInteger(ownerId))) {
-    throw new Error(`invalid owner id; ${INIT_HINT} (or set OWNER_ID)`)
+  const provider = requireProvider(
+    providers,
+    findEnvValue(env, 'PROVIDER') ?? file.provider ?? DEFAULT_PROVIDER,
+  )
+  const settings: Record<string, SettingValue> = {}
+  for (const setting of provider.settings) {
+    const raw = findEnvValue(env, setting.envVar) ?? file[setting.configKey]
+    if (raw === undefined) {
+      if (setting.required) {
+        throw new Error(`missing ${setting.description}; ${INIT_HINT} (or set ${setting.envVar})`)
+      }
+      continue
+    }
+    const value = setting.parse(raw)
+    if (value === undefined) {
+      throw new Error(`invalid ${setting.description}; ${INIT_HINT} (or set ${setting.envVar})`)
+    }
+    settings[setting.configKey] = value
   }
   const rawPort = findEnvValue(env, 'PORT') ?? file.port ?? DEFAULT_PORT
   const port = toInteger(rawPort)
   if (port === undefined || port < 1 || port > 65535) {
     throw new Error(`invalid port ${JSON.stringify(String(rawPort))}: must be an integer 1-65535`)
   }
-  return { botToken, ownerId, port, host: findEnvValue(env, 'HOST') ?? DEFAULT_HOST }
+  return { provider, settings, port, host: findEnvValue(env, 'HOST') ?? DEFAULT_HOST }
 }
 
 /** Merges `patch` into the file's JSON object; a `null` value deletes that key. */

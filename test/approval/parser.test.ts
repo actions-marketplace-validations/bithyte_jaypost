@@ -4,19 +4,22 @@ import { parseApprovalRequest } from '../../src/approval/index.ts'
 const base = { text: 'This is a test', options: ['Approve', 'Decline'], timeoutOption: 'Decline' }
 
 test('valid, default timeout', () =>
-  expect(parseApprovalRequest(base)).toEqual({ ok: true, value: { ...base, timeoutSeconds: 300 } }))
+  expect(parseApprovalRequest(base, 3900)).toEqual({
+    ok: true,
+    value: { ...base, timeoutSeconds: 300 },
+  }))
 test('custom timeout', () =>
-  expect(parseApprovalRequest({ ...base, timeout: 30 })).toMatchObject({
+  expect(parseApprovalRequest({ ...base, timeout: 30 }, 3900)).toMatchObject({
     ok: true,
     value: { timeoutSeconds: 30 },
   }))
 test('timeout clamped', () =>
-  expect(parseApprovalRequest({ ...base, timeout: 900 })).toMatchObject({
+  expect(parseApprovalRequest({ ...base, timeout: 900 }, 3900)).toMatchObject({
     ok: true,
     value: { timeoutSeconds: 300 },
   }))
 test.each([0, -5, '30', null, Number.NaN, Infinity])('bad timeout %s', (t) => {
-  const r = parseApprovalRequest({ ...base, timeout: t })
+  const r = parseApprovalRequest({ ...base, timeout: t }, 3900)
   expect(r.ok).toBe(false)
   if (!r.ok) {
     expect(r.error).toContain('timeout')
@@ -39,7 +42,7 @@ test.each([
   ['missing timeoutOption', { ...base, timeoutOption: undefined }],
   ['timeoutOption not in options', { ...base, timeoutOption: 'Maybe' }],
 ])('%s rejected', (_n, body) => {
-  const r = parseApprovalRequest(body)
+  const r = parseApprovalRequest(body, 3900)
   expect(r.ok).toBe(false)
   if (!r.ok) {
     expect(r.error.length).toBeGreaterThan(0)
@@ -49,6 +52,13 @@ test.each([
 test('64-char option label accepted', () => {
   const long = 'x'.repeat(64)
   expect(
-    parseApprovalRequest({ ...base, options: ['Approve', long], timeoutOption: long }).ok,
+    parseApprovalRequest({ ...base, options: ['Approve', long], timeoutOption: long }, 3900).ok,
   ).toBe(true)
+})
+
+test('text limit comes from the caller', () => {
+  expect(parseApprovalRequest({ ...base, text: 'x'.repeat(11) }, 10)).toEqual({
+    ok: false,
+    error: 'text must be at most 10 characters',
+  })
 })

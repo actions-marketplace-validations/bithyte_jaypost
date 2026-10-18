@@ -1,15 +1,14 @@
 import { z } from 'zod'
-import { requestTextSchema } from '../approval/index.ts'
+import { createTextSchema } from '../approval/index.ts'
 import type { NotifyParseResult } from './types.ts'
 
-const notifyRequestSchema = z.object(
-  { text: requestTextSchema },
-  { error: 'body must be a JSON object' },
-)
-
 /** Validates a /notify body; never throws. Returns the first problem as `error`. */
-export function parseNotifyRequest(body: unknown): NotifyParseResult {
-  const result = notifyRequestSchema.safeParse(body)
+export function parseNotifyRequest(body: unknown, maxTextLength: number): NotifyParseResult {
+  const schema = z.object(
+    { text: createTextSchema(maxTextLength) },
+    { error: 'body must be a JSON object' },
+  )
+  const result = schema.safeParse(body)
   if (result.success) {
     return { ok: true, value: result.data }
   }

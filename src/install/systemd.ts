@@ -139,9 +139,10 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
     },
     async readSecrets(record): Promise<Secrets> {
       const config = readConfigFile(resolveConfigFile(record))
+      const { botToken, ownerId } = config
       return {
-        ...(config.botToken === undefined ? {} : { token: config.botToken }),
-        ...(config.ownerId === undefined ? {} : { ownerId: config.ownerId }),
+        ...(typeof botToken === 'string' ? { token: botToken } : {}),
+        ...(typeof ownerId === 'number' ? { ownerId } : {}),
       }
     },
     async remove(record, purge) {
