@@ -13,9 +13,17 @@ try {
   process.exit(1)
 }
 
+const ownerId = config.ownerId
+if (ownerId === undefined) {
+  console.error(
+    'Missing owner id; run `telegram-approval-bot init` to set up the bot (or set OWNER_ID)',
+  )
+  process.exit(1)
+}
+
 const bot = new Bot(config.botToken)
-const service = new ApprovalService(createTelegramMessenger(bot, config.ownerId))
-registerTapHandler(bot, config.ownerId, (id, i) => service.tap(id, i))
+const service = new ApprovalService(createTelegramMessenger(bot, ownerId))
+registerTapHandler(bot, ownerId, (id, i) => service.tap(id, i))
 
 // Log handler errors instead of crashing; grammY's error text doesn't include the token.
 bot.catch((err) => {

@@ -4,14 +4,20 @@ import { dirname, join } from 'node:path'
 
 export interface Config {
   botToken: string
-  ownerId: number
+  ownerId: number | undefined
   port: number
   host: string
 }
 
+export interface FileConfig {
+  botToken?: string
+  ownerId?: number
+  port?: number
+}
+
 export const DEFAULT_PORT = 8787
 
-const ONBOARD_HINT = 'run `npm run onboard` to set up the bot'
+const INIT_HINT = 'run `telegram-approval-bot init` to set up the bot'
 
 function envVal(env: NodeJS.ProcessEnv, key: string): string | undefined {
   const v = env[key]
@@ -26,19 +32,24 @@ export function configPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(base, 'telegram-approval-bot', 'config.json')
 }
 
-function readFile(path: string): Record<string, unknown> {
+export function configDir(env: NodeJS.ProcessEnv = process.env): string {
+  const { APPROVAL_BOT_CONFIG: _ignored, ...rest } = env
+  return dirname(configPath(rest))
+}
+
+export function readConfigFile(path: string): FileConfig {
   if (!existsSync(path)) return {}
   let parsed: unknown
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'))
   } catch {
     // Don't include the parser's message: V8 can quote part of the file, which may hold the bot token.
-    throw new Error(`Config file ${path} contains invalid JSON; ${ONBOARD_HINT}`)
+    throw new Error(`Config file ${path} contains invalid JSON; ${INIT_HINT}`)
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Config file ${path} must contain a JSON object; ${ONBOARD_HINT}`)
+    throw new Error(`Config file ${path} must contain a JSON object; ${INIT_HINT}`)
   }
-  return parsed as Record<string, unknown>
+  return parsed as FileConfig
 }
 
 function toInt(v: unknown): number | undefined {
@@ -48,14 +59,15 @@ function toInt(v: unknown): number | undefined {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const file = readFile(configPath(env))
+  const file = readConfigFile(configPath(env))
   const botToken = envVal(env, 'BOT_TOKEN') ?? file.botToken
   if (typeof botToken !== 'string' || botToken === '') {
-    throw new Error(`Missing bot token; ${ONBOARD_HINT} (or set BOT_TOKEN)`)
+    throw new Error(`Missing bot token; ${INIT_HINT} (or set BOT_TOKEN)`)
   }
-  const ownerId = toInt(envVal(env, 'OWNER_ID') ?? file.ownerId)
-  if (ownerId === undefined || !Number.isSafeInteger(ownerId)) {
-    throw new Error(`Missing or invalid owner id; ${ONBOARD_HINT} (or set OWNER_ID)`)
+  const rawOwnerId = envVal(env, 'OWNER_ID') ?? file.ownerId
+  const ownerId = rawOwnerId === undefined ? undefined : toInt(rawOwnerId)
+  if (rawOwnerId !== undefined && (ownerId === undefined || !Number.isSafeInteger(ownerId))) {
+    throw new Error(`Invalid owner id; ${INIT_HINT} (or set OWNER_ID)`)
   }
   const rawPort = envVal(env, 'PORT') ?? file.port ?? DEFAULT_PORT
   const port = toInt(rawPort)
@@ -65,8 +77,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return { botToken, ownerId, port, host: envVal(env, 'HOST') ?? '127.0.0.1' }
 }
 
-export function saveConfig(path: string, c: Omit<Config, 'host'>): void {
+/** Merges `patch` into the file's JSON object; a `null` value deletes that key. */
+export function updateConfigFile(
+  path: string,
+  patch: { [K in keyof FileConfig]?: FileConfig[K] | null },
+): void {
+  const next: Record<string, unknown> = { ...readConfigFile(path) }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key]
+    else if (value !== undefined) next[key] = value
+  }
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(c, null, 2) + '\n', { mode: 0o600 })
+  writeFileSync(path, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 })
   chmodSync(path, 0o600)
+}
+
+// Kept only so scripts/onboard.ts compiles until it is removed.
+export function saveConfig(path: string, c: Omit<Config, 'host'>): void {
+  updateConfigFile(path, c)
 }

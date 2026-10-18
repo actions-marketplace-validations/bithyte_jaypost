@@ -2,7 +2,14 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
-import { DEFAULT_PORT, configPath, loadConfig, saveConfig } from '../src/config.ts'
+import {
+  DEFAULT_PORT,
+  configDir,
+  configPath,
+  loadConfig,
+  readConfigFile,
+  updateConfigFile,
+} from '../src/config.ts'
 
 let dir: string
 let file: string
@@ -25,7 +32,7 @@ test('configPath precedence: APPROVAL_BOT_CONFIG > XDG_CONFIG_HOME > HOME', () =
 })
 
 test('save then load roundtrip, host defaults to 127.0.0.1', () => {
-  saveConfig(file, { botToken: 'tok', ownerId: 7, port: 9000 })
+  updateConfigFile(file, { botToken: 'tok', ownerId: 7, port: 9000 })
   expect(loadConfig({ APPROVAL_BOT_CONFIG: file })).toEqual({
     botToken: 'tok',
     ownerId: 7,
@@ -35,7 +42,7 @@ test('save then load roundtrip, host defaults to 127.0.0.1', () => {
 })
 
 test('port defaults to DEFAULT_PORT', () => {
-  saveConfig(file, { botToken: 'tok', ownerId: 7, port: DEFAULT_PORT })
+  updateConfigFile(file, { botToken: 'tok', ownerId: 7, port: DEFAULT_PORT })
   expect(loadConfig({ APPROVAL_BOT_CONFIG: file }).port).toBe(8787)
   expect(
     loadConfig({ BOT_TOKEN: 't', OWNER_ID: '1', APPROVAL_BOT_CONFIG: join(dir, 'no') }).port,
@@ -43,17 +50,17 @@ test('port defaults to DEFAULT_PORT', () => {
 })
 
 test('saved file has mode 0o600, including when it already existed', () => {
-  saveConfig(file, { botToken: 'tok', ownerId: 7, port: 9000 })
+  updateConfigFile(file, { botToken: 'tok', ownerId: 7, port: 9000 })
   expect(statSync(file).mode & 0o777).toBe(0o600)
   const loose = join(dir, 'loose.json')
   writeFileSync(loose, '{}', { mode: 0o644 })
-  saveConfig(loose, { botToken: 'tok', ownerId: 7, port: 9000 })
+  updateConfigFile(loose, { botToken: 'tok', ownerId: 7, port: 9000 })
   expect(statSync(loose).mode & 0o777).toBe(0o600)
   expect(JSON.parse(readFileSync(loose, 'utf8')).botToken).toBe('tok')
 })
 
 test('env overrides file values; env-only config works with no file', () => {
-  saveConfig(file, { botToken: 'filetok', ownerId: 1, port: 1111 })
+  updateConfigFile(file, { botToken: 'filetok', ownerId: 1, port: 1111 })
   expect(
     loadConfig({
       APPROVAL_BOT_CONFIG: file,
@@ -69,22 +76,52 @@ test('env overrides file values; env-only config works with no file', () => {
 })
 
 test('empty-string env vars count as unset', () => {
-  saveConfig(file, { botToken: 'filetok', ownerId: 1, port: 1111 })
+  updateConfigFile(file, { botToken: 'filetok', ownerId: 1, port: 1111 })
   expect(
     loadConfig({ APPROVAL_BOT_CONFIG: file, BOT_TOKEN: '', OWNER_ID: '', PORT: '', HOST: '' }),
   ).toEqual({ botToken: 'filetok', ownerId: 1, port: 1111, host: '127.0.0.1' })
 })
 
-test('missing token or non-numeric OWNER_ID throws mentioning onboard', () => {
+test('missing token or non-integer OWNER_ID throws mentioning init', () => {
   const none = join(dir, 'none.json')
-  expect(() => loadConfig({ APPROVAL_BOT_CONFIG: none, OWNER_ID: '1' })).toThrow(/npm run onboard/)
-  expect(() => loadConfig({ APPROVAL_BOT_CONFIG: none, BOT_TOKEN: 't' })).toThrow(/npm run onboard/)
+  expect(() => loadConfig({ APPROVAL_BOT_CONFIG: none, OWNER_ID: '1' })).toThrow(
+    /telegram-approval-bot init/,
+  )
   expect(() => loadConfig({ APPROVAL_BOT_CONFIG: none, BOT_TOKEN: 't', OWNER_ID: 'abc' })).toThrow(
-    /npm run onboard/,
+    /telegram-approval-bot init/,
   )
   expect(() => loadConfig({ APPROVAL_BOT_CONFIG: none, BOT_TOKEN: 't', OWNER_ID: '1.5' })).toThrow(
-    /npm run onboard/,
+    /telegram-approval-bot init/,
   )
+})
+
+test('missing owner is undefined, not an error', () => {
+  const none = join(dir, 'none.json')
+  expect(loadConfig({ APPROVAL_BOT_CONFIG: none, BOT_TOKEN: 't' }).ownerId).toBeUndefined()
+})
+
+test('updateConfigFile merges, null deletes, keeps 0600', () => {
+  updateConfigFile(file, { botToken: 'tok', port: 9000 })
+  updateConfigFile(file, { ownerId: 42 })
+  expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
+    botToken: 'tok',
+    port: 9000,
+    ownerId: 42,
+  })
+  updateConfigFile(file, { ownerId: null })
+  expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ botToken: 'tok', port: 9000 })
+  expect(statSync(file).mode & 0o777).toBe(0o600)
+})
+
+test('updateConfigFile does not copy env values into the file', () => {
+  updateConfigFile(file, { ownerId: 1 })
+  loadConfig({ APPROVAL_BOT_CONFIG: file, BOT_TOKEN: 'envtok' })
+  expect(readConfigFile(file)).toEqual({ ownerId: 1 })
+})
+
+test('configDir is the directory of the default config path', () => {
+  expect(configDir({ XDG_CONFIG_HOME: '/xdg', HOME: '/h' })).toBe('/xdg/telegram-approval-bot')
+  expect(configDir({ HOME: '/h' })).toBe('/h/.config/telegram-approval-bot')
 })
 
 test.each(['0', '65536', '-1', 'abc', '80.5'])('invalid port %s throws', (p) => {
