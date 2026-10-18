@@ -1,0 +1,50 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1
+      - name: Ensure npm supports trusted publishing
+        run: |
+          if ! npx --yes semver --range ">=11.5.1" "$(npm --version)" > /dev/null; then
+            npm install --global npm@latest
+          fi
+          npm --version
+
+      - run: npm ci
+
+      - run: npm run check
+
+      - run: npm test
+
+      - name: Verify tag matches package version
+        id: version
+        run: |
+          version="$(node --print 'require("./package.json").version')"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "tag ${GITHUB_REF_NAME} doesn't match package version ${version}" >&2
+            exit 1
+          fi
+          case "${version}" in
+            *-*) echo "dist_tag=next" >> "${GITHUB_OUTPUT}" ;;
+            *) echo "dist_tag=latest" >> "${GITHUB_OUTPUT}" ;;
+          esac
+
+      - run: npm publish --tag "${{ steps.version.outputs.dist_tag }}"
