@@ -80,9 +80,9 @@ test('legacy port defaults to 8787', () => {
   expect(found?.record.port).toBe(8787)
 })
 
-test('legacy port honors APPROVAL_BOT_CONFIG', () => {
-  const env = { HOME: tmp, APPROVAL_BOT_CONFIG: join(tmp, 'other.json') }
-  writeFileSync(env.APPROVAL_BOT_CONFIG, JSON.stringify({ port: 9100 }))
+test('legacy port honors TELEGRAM_ASK_CONFIG', () => {
+  const env = { HOME: tmp, TELEGRAM_ASK_CONFIG: join(tmp, 'other.json') }
+  writeFileSync(env.TELEGRAM_ASK_CONFIG, JSON.stringify({ port: 9100 }))
   const paths = resolveInstallPaths(env)
   mkdirSync(dirname(paths.systemdUnit), { recursive: true })
   writeFileSync(paths.systemdUnit, '[Unit]\n')
@@ -115,15 +115,15 @@ test('install.json wins over legacy unit', () => {
   })
 })
 
-test('legacy unit Environment=APPROVAL_BOT_CONFIG wins over the env', () => {
-  const env = { HOME: tmp, APPROVAL_BOT_CONFIG: join(tmp, 'env.json') }
+test('legacy unit Environment=TELEGRAM_ASK_CONFIG wins over the env', () => {
+  const env = { HOME: tmp, TELEGRAM_ASK_CONFIG: join(tmp, 'env.json') }
   const paths = resolveInstallPaths(env)
   const pinned = join(tmp, 'pin ned.json')
   writeFileSync(pinned, JSON.stringify({ port: 9200 }))
   mkdirSync(dirname(paths.systemdUnit), { recursive: true })
   writeFileSync(
     paths.systemdUnit,
-    `[Service]\nEnvironment="APPROVAL_BOT_CONFIG=${pinned}"\nExecStart=/n /c start\n`,
+    `[Service]\nEnvironment="TELEGRAM_ASK_CONFIG=${pinned}"\nExecStart=/n /c start\n`,
   )
   expect(
     findExistingInstall(paths, fakes({ systemd: true, compose: true, quadlet: true }), env),
@@ -137,9 +137,9 @@ test('leftover secrets: none', () => {
   expect(findLeftoverSecrets(resolveInstallPaths({ HOME: tmp }), { HOME: tmp })).toEqual({})
 })
 
-test('leftover secrets from config.json (honoring APPROVAL_BOT_CONFIG)', () => {
-  const env = { HOME: tmp, APPROVAL_BOT_CONFIG: join(tmp, 'c.json') }
-  writeFileSync(env.APPROVAL_BOT_CONFIG, JSON.stringify({ botToken: 'ct', ownerId: 3 }))
+test('leftover secrets from config.json (honoring TELEGRAM_ASK_CONFIG)', () => {
+  const env = { HOME: tmp, TELEGRAM_ASK_CONFIG: join(tmp, 'c.json') }
+  writeFileSync(env.TELEGRAM_ASK_CONFIG, JSON.stringify({ botToken: 'ct', ownerId: 3 }))
   expect(findLeftoverSecrets(resolveInstallPaths(env), env)).toEqual({ token: 'ct', ownerId: 3 })
 })
 

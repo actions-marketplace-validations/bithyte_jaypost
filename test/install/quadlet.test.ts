@@ -44,7 +44,7 @@ function make() {
 }
 const base = { version: '0.1.0', port: 8787, token: 't', print: () => {} }
 const rec = { target: 'quadlet' as const, port: 8787, version: '0.1.0' }
-const TAG = 'localhost/telegram-approval-bot:0.1.0'
+const TAG = 'localhost/telegram-ask:0.1.0'
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'qd-'))
@@ -92,7 +92,7 @@ test('quadlet install builds tagged image then starts', async () => {
   expect(calls.filter(([c]) => c !== 'loginctl')).toEqual([
     ['podman', ['build', '-t', TAG, paths.quadletDirectory]],
     ['systemctl', ['--user', 'daemon-reload']],
-    ['systemctl', ['--user', 'start', 'telegram-approval-bot']],
+    ['systemctl', ['--user', 'start', 'telegram-ask']],
   ])
   const envPath = join(paths.quadletDirectory, '.env')
   expect(statSync(envPath).mode & 0o777).toBe(0o600)
@@ -119,16 +119,7 @@ test('readSecrets prefers .env, falls back to owner get in container', async () 
   expect(await t.readSecrets(rec)).toEqual({ token: 't', ownerId: 77 })
   expect(calls[0]).toEqual([
     'podman',
-    [
-      'run',
-      '--rm',
-      '-v',
-      'telegram-approval-bot-data:/data',
-      TAG,
-      'telegram-approval-bot',
-      'owner',
-      'get',
-    ],
+    ['run', '--rm', '-v', 'telegram-ask-data:/data', TAG, 'telegram-ask', 'owner', 'get'],
   ])
 })
 
@@ -139,7 +130,7 @@ test('clearOwner uses podman exec', async () => {
   await t.clearOwner(rec)
   expect(calls).toContainEqual([
     'podman',
-    ['exec', 'telegram-approval-bot', 'telegram-approval-bot', 'owner', 'clear'],
+    ['exec', 'telegram-ask', 'telegram-ask', 'owner', 'clear'],
   ])
 })
 
@@ -148,7 +139,7 @@ test('remove without purge keeps volume, image and .env', async () => {
   await t.install(base)
   calls = []
   await t.remove(rec, false)
-  expect(calls).toContainEqual(['systemctl', ['--user', 'stop', 'telegram-approval-bot']])
+  expect(calls).toContainEqual(['systemctl', ['--user', 'stop', 'telegram-ask']])
   expect(calls.some(([c]) => c === 'podman')).toBe(false)
   expect(existsSync(paths.quadletUnit)).toBe(false)
   expect(existsSync(join(paths.quadletDirectory, '.env'))).toBe(true)
@@ -159,7 +150,7 @@ test('remove with purge drops volume, image, dir', async () => {
   await t.install(base)
   calls = []
   await t.remove(rec, true)
-  expect(calls).toContainEqual(['podman', ['volume', 'rm', 'telegram-approval-bot-data']])
+  expect(calls).toContainEqual(['podman', ['volume', 'rm', 'telegram-ask-data']])
   expect(calls).toContainEqual(['podman', ['rmi', TAG]])
   expect(existsSync(paths.quadletDirectory)).toBe(false)
 })
@@ -167,9 +158,9 @@ test('remove with purge drops volume, image, dir', async () => {
 test('restart, isRunning, logsHint', async () => {
   const { t } = make()
   await t.restart(rec)
-  expect(calls[0]).toEqual(['systemctl', ['--user', 'restart', 'telegram-approval-bot']])
+  expect(calls[0]).toEqual(['systemctl', ['--user', 'restart', 'telegram-ask']])
   expect(await t.isRunning(rec)).toBe(true)
-  expect(t.logsHint(rec)).toBe('journalctl --user -u telegram-approval-bot -f')
+  expect(t.logsHint(rec)).toBe('journalctl --user -u telegram-ask -f')
 })
 
 test('clearOwner falls back to a one-off container when exec fails', async () => {
@@ -180,16 +171,7 @@ test('clearOwner falls back to a one-off container when exec fails', async () =>
   await t.clearOwner(rec)
   expect(calls).toContainEqual([
     'podman',
-    [
-      'run',
-      '--rm',
-      '-v',
-      'telegram-approval-bot-data:/data',
-      TAG,
-      'telegram-approval-bot',
-      'owner',
-      'clear',
-    ],
+    ['run', '--rm', '-v', 'telegram-ask-data:/data', TAG, 'telegram-ask', 'owner', 'clear'],
   ])
 })
 

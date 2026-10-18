@@ -121,9 +121,7 @@ function runUninstallCommand(): Promise<number> {
 /** Takes argv without node and script path; returns the exit code (2 for usage errors). */
 export async function main(argv: readonly string[]): Promise<number> {
   let code = 0
-  const program = new Command('telegram-approval-bot')
-    .version(VERSION, '-v, --version')
-    .exitOverride()
+  const program = new Command('telegram-ask').version(VERSION, '-v, --version').exitOverride()
   program
     .command('init')
     .description('set up the bot token and install the service')

@@ -58,10 +58,10 @@ test('installs from npm into a user prefix when global prefix is not writable', 
   const rec = await t.install(base)
   expect(calls).toContainEqual([
     'npm',
-    ['i', '-g', '--prefix', paths.userNpmPrefix, 'telegram-approval-bot@0.1.0'],
+    ['i', '-g', '--prefix', paths.userNpmPrefix, 'telegram-ask@0.1.0'],
   ])
   expect(rec.cliPath).toBe(
-    join(paths.userNpmPrefix, 'lib', 'node_modules', 'telegram-approval-bot', 'dist', 'cli.js'),
+    join(paths.userNpmPrefix, 'lib', 'node_modules', 'telegram-ask', 'dist', 'cli.js'),
   )
 })
 
@@ -71,23 +71,20 @@ test('installs globally when prefix is writable', async () => {
   const { t } = make()
   const rec = await t.install({ ...base, tarball: '/x/pkg.tgz' })
   expect(calls).toContainEqual(['npm', ['i', '-g', '/x/pkg.tgz']])
-  expect(rec.cliPath).toBe(join(rootOut, 'telegram-approval-bot', 'dist', 'cli.js'))
+  expect(rec.cliPath).toBe(join(rootOut, 'telegram-ask', 'dist', 'cli.js'))
 })
 
 test('install writes unit, config 0600, enables', async () => {
   const { t, paths } = make()
   const rec = await t.install(base)
   expect(calls).toContainEqual(['systemctl', ['--user', 'daemon-reload']])
-  expect(calls).toContainEqual([
-    'systemctl',
-    ['--user', 'enable', '--now', 'telegram-approval-bot'],
-  ])
+  expect(calls).toContainEqual(['systemctl', ['--user', 'enable', '--now', 'telegram-ask']])
   expect(calls.some(([c]) => c === 'sudo')).toBe(false)
   expect(readConfigFile(paths.configFile)).toEqual({ botToken: 't', port: 8787 })
   expect(statSync(paths.configFile).mode & 0o777).toBe(0o600)
   const unit = readFileSync(paths.systemdUnit, 'utf8')
   expect(unit).toContain(`ExecStart="/usr/bin/node" "${rec.cliPath}" start`)
-  expect(unit).toContain(`Environment="APPROVAL_BOT_CONFIG=${paths.configFile}"`)
+  expect(unit).toContain(`Environment="TELEGRAM_ASK_CONFIG=${paths.configFile}"`)
   expect(rec).toMatchObject({
     target: 'systemd',
     port: 8787,
@@ -99,12 +96,12 @@ test('install writes unit, config 0600, enables', async () => {
 test('unit stays quoted with spaces in paths and config env', async () => {
   const cfg = join(tmp, 'my dir', 'c.json')
   rootOut = join(tmp, 'my root')
-  const self = join(rootOut, 'telegram-approval-bot', 'dist', 'cli.js')
-  const { t, paths } = make({ APPROVAL_BOT_CONFIG: cfg }, self)
+  const self = join(rootOut, 'telegram-ask', 'dist', 'cli.js')
+  const { t, paths } = make({ TELEGRAM_ASK_CONFIG: cfg }, self)
   await t.install(base)
   const unit = readFileSync(paths.systemdUnit, 'utf8')
   expect(unit).toContain(`ExecStart="/usr/bin/node" "${self}" start`)
-  expect(unit).toContain(`Environment="APPROVAL_BOT_CONFIG=${cfg}"`)
+  expect(unit).toContain(`Environment="TELEGRAM_ASK_CONFIG=${cfg}"`)
   expect(readConfigFile(cfg).botToken).toBe('t')
 })
 
@@ -118,7 +115,7 @@ test('install keeps a reused owner id', async () => {
 })
 
 test('already global: no npm install', async () => {
-  const self = join(rootOut, 'telegram-approval-bot', 'dist', 'cli.js')
+  const self = join(rootOut, 'telegram-ask', 'dist', 'cli.js')
   const { t } = make({}, self)
   const rec = await t.install(base)
   expect(calls.some(([c, a]) => c === 'npm' && a[0] === 'i')).toBe(false)
@@ -131,10 +128,7 @@ test('remove without purge keeps config; with purge deletes it', async () => {
   await t.remove(rec, false)
   expect(existsSync(paths.systemdUnit)).toBe(false)
   expect(existsSync(paths.configFile)).toBe(true)
-  expect(calls).toContainEqual([
-    'systemctl',
-    ['--user', 'disable', '--now', 'telegram-approval-bot'],
-  ])
+  expect(calls).toContainEqual(['systemctl', ['--user', 'disable', '--now', 'telegram-ask']])
   await t.remove(rec, true)
   expect(existsSync(paths.configFile)).toBe(false)
 })
@@ -144,8 +138,8 @@ test('available, isRunning, restart, logsHint', async () => {
   expect(await t.available()).toEqual({ ok: true })
   expect(await t.isRunning({} as never)).toBe(true)
   await t.restart({} as never)
-  expect(calls).toContainEqual(['systemctl', ['--user', 'restart', 'telegram-approval-bot']])
-  expect(t.logsHint({} as never)).toBe('journalctl --user -u telegram-approval-bot -f')
+  expect(calls).toContainEqual(['systemctl', ['--user', 'restart', 'telegram-ask']])
+  expect(t.logsHint({} as never)).toBe('journalctl --user -u telegram-ask -f')
 })
 
 test('restart throws on a non-zero exit without leaking stderr', async () => {
@@ -154,16 +148,16 @@ test('restart throws on a non-zero exit without leaking stderr', async () => {
   await expect(t.restart({} as never)).rejects.toThrow('systemctl restart failed (exit 1)')
 })
 
-test('relative APPROVAL_BOT_CONFIG is resolved to an absolute path and recorded', async () => {
+test('relative TELEGRAM_ASK_CONFIG is resolved to an absolute path and recorded', async () => {
   const cwd = process.cwd()
   process.chdir(tmp)
   try {
-    const { t, paths } = make({ APPROVAL_BOT_CONFIG: 'rel/c.json' })
+    const { t, paths } = make({ TELEGRAM_ASK_CONFIG: 'rel/c.json' })
     const rec = await t.install(base)
     const abs = join(tmp, 'rel', 'c.json')
     expect(rec.configFile).toBe(abs)
     expect(readFileSync(paths.systemdUnit, 'utf8')).toContain(
-      `Environment="APPROVAL_BOT_CONFIG=${abs}"`,
+      `Environment="TELEGRAM_ASK_CONFIG=${abs}"`,
     )
     expect(readConfigFile(abs).botToken).toBe('t')
   } finally {
@@ -174,7 +168,7 @@ test('relative APPROVAL_BOT_CONFIG is resolved to an absolute path and recorded'
 test('readSecrets, clearOwner and purge use the recorded configFile, not the env', async () => {
   const recorded = join(tmp, 'recorded.json')
   writeFileSync(recorded, JSON.stringify({ botToken: 'rt', ownerId: 5 }))
-  const { t, paths } = make({ APPROVAL_BOT_CONFIG: join(tmp, 'other.json') })
+  const { t, paths } = make({ TELEGRAM_ASK_CONFIG: join(tmp, 'other.json') })
   const rec = { target: 'systemd' as const, port: 1, version: 'v', configFile: recorded }
   expect(await t.readSecrets(rec)).toEqual({ token: 'rt', ownerId: 5 })
   await t.clearOwner(rec)
@@ -199,25 +193,22 @@ test('purge hint names the user prefix when the fallback was used', async () => 
   const rec = await t.install(base)
   await t.remove(rec, true)
   expect(log).toHaveBeenCalledWith(
-    `The npm package was left in place; remove it with: npm rm -g --prefix ${paths.userNpmPrefix} telegram-approval-bot`,
+    `The npm package was left in place; remove it with: npm rm -g --prefix ${paths.userNpmPrefix} telegram-ask`,
   )
   log.mockClear()
-  await t.remove(
-    { ...rec, cliPath: '/usr/lib/node_modules/telegram-approval-bot/dist/cli.js' },
-    true,
-  )
+  await t.remove({ ...rec, cliPath: '/usr/lib/node_modules/telegram-ask/dist/cli.js' }, true)
   expect(log).toHaveBeenCalledWith(
-    'The npm package was left in place; remove it with: npm rm -g telegram-approval-bot',
+    'The npm package was left in place; remove it with: npm rm -g telegram-ask',
   )
   log.mockRestore()
 })
 
 test('findUnitConfigFile parses quoted and unquoted Environment lines', () => {
   expect(
-    findUnitConfigFile('[Service]\nEnvironment="APPROVAL_BOT_CONFIG=/a b/50%%/c.json"\n'),
+    findUnitConfigFile('[Service]\nEnvironment="TELEGRAM_ASK_CONFIG=/a b/50%%/c.json"\n'),
   ).toBe('/a b/50%/c.json')
-  expect(findUnitConfigFile('Environment="APPROVAL_BOT_CONFIG=/x\\"q.json"\n')).toBe('/x"q.json')
-  expect(findUnitConfigFile('Environment=APPROVAL_BOT_CONFIG=/plain/c.json\n')).toBe(
+  expect(findUnitConfigFile('Environment="TELEGRAM_ASK_CONFIG=/x\\"q.json"\n')).toBe('/x"q.json')
+  expect(findUnitConfigFile('Environment=TELEGRAM_ASK_CONFIG=/plain/c.json\n')).toBe(
     '/plain/c.json',
   )
   expect(findUnitConfigFile('Environment="FOO=bar"\nExecStart=x\n')).toBeUndefined()

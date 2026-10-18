@@ -107,15 +107,7 @@ test('readSecrets prefers OWNER_ID in .env, falls back to owner get', async () =
   calls = []
   expect(await t.readSecrets(rec)).toEqual({ token: 't', ownerId: 77 })
   expect(calls[0]![1]).toEqual(
-    expect.arrayContaining([
-      'run',
-      '--rm',
-      '--no-deps',
-      'bot',
-      'telegram-approval-bot',
-      'owner',
-      'get',
-    ]),
+    expect.arrayContaining(['run', '--rm', '--no-deps', 'bot', 'telegram-ask', 'owner', 'get']),
   )
   ownerOut = ''
   expect((await t.readSecrets(rec)).ownerId).toBeUndefined()

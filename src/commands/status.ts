@@ -10,7 +10,7 @@ export async function runStatus(deps: StatusDeps): Promise<number> {
   const { print } = deps
   const existing = findExistingInstall(deps.paths, deps.targets)
   if (!existing) {
-    print('Not installed. Run "telegram-approval-bot init".')
+    print('Not installed. Run "telegram-ask init".')
     return 1
   }
   const { record } = existing

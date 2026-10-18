@@ -41,7 +41,7 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     // Don't print the error text; it can embed the request URL with the token.
     console.error(
       error instanceof GrammyError
-        ? `Telegram rejected the bot token (${error.error_code}); check it with \`telegram-approval-bot init\``
+        ? `Telegram rejected the bot token (${error.error_code}); check it with \`telegram-ask init\``
         : 'could not reach Telegram to verify the bot token',
     )
     process.exit(1)

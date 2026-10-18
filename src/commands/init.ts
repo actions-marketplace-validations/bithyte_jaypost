@@ -47,7 +47,7 @@ export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
     }
     const message = error instanceof Error ? error.message : String(error)
     deps.print(`Install failed: ${redact(message, seen)}`)
-    deps.print('Run telegram-approval-bot init again. Check the logs for details.')
+    deps.print('Run telegram-ask init again. Check the logs for details.')
     return 1
   }
 }
@@ -159,8 +159,8 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     print,
   })
   if (result === 'paired') {
-    print('Done. Try it: telegram-approval-bot test')
-    print('Check state: telegram-approval-bot status')
+    print('Done. Try it: telegram-ask test')
+    print('Check state: telegram-ask status')
     print(`Logs: ${target.logsHint(installed)}`)
     return 0
   }

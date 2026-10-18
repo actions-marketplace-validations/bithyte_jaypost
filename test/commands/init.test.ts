@@ -76,7 +76,7 @@ test('fresh install: default target, default port, writes install record', async
     expect.objectContaining({ port: 8787, token: 'good-token', version: '1.2.3' }),
   )
   expect(readInstall(paths.installFile)?.target).toBe('quadlet')
-  expect(out.join('\n')).toContain('Done. Try it: telegram-approval-bot test')
+  expect(out.join('\n')).toContain('Done. Try it: telegram-ask test')
 })
 
 test('replace: reads secrets, removes old without purge, checks port after removal, reuses token and owner', async () => {
@@ -283,7 +283,7 @@ test('install throwing returns 1 with generic message, no secrets', async () => 
   expect(await runInit({}, d)).toBe(1)
   const text = out.join('\n')
   expect(text).toContain('Install failed: boom ***')
-  expect(text).toContain('Run telegram-approval-bot init again')
+  expect(text).toContain('Run telegram-ask init again')
   expect(text).not.toContain('good-token')
 })
 

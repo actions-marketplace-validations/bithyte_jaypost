@@ -31,7 +31,7 @@ test('abort returns interrupted and says the service is still running', async ()
   })
   expect(r).toBe('interrupted')
   expect(print.mock.calls.flat().join('\n')).toBe(
-    'Service is still running and waiting for pairing. Run "telegram-approval-bot status" to see the code again.',
+    'Service is still running and waiting for pairing. Run "telegram-ask status" to see the code again.',
   )
 })
 
@@ -46,7 +46,7 @@ test('abort during the wait (after code shown) returns interrupted', async () =>
     print,
   })
   expect(r).toBe('interrupted')
-  expect(print.mock.calls.flat().join('\n')).toMatch(/telegram-approval-bot status/)
+  expect(print.mock.calls.flat().join('\n')).toMatch(/telegram-ask status/)
 })
 
 test('abort interrupts a real sleep promptly', async () => {

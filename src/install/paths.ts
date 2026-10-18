@@ -19,8 +19,8 @@ export function resolveInstallPaths(env: NodeJS.ProcessEnv = process.env): Insta
     installFile: join(configDirectory, 'install.json'),
     composeDirectory: join(configDirectory, 'compose'),
     quadletDirectory: join(configDirectory, 'quadlet'),
-    systemdUnit: join(xdgConfigHome, 'systemd', 'user', 'telegram-approval-bot.service'),
-    quadletUnit: join(xdgConfigHome, 'containers', 'systemd', 'telegram-approval-bot.container'),
-    userNpmPrefix: join(xdgDataHome, 'telegram-approval-bot', 'npm'),
+    systemdUnit: join(xdgConfigHome, 'systemd', 'user', 'telegram-ask.service'),
+    quadletUnit: join(xdgConfigHome, 'containers', 'systemd', 'telegram-ask.container'),
+    userNpmPrefix: join(xdgDataHome, 'telegram-ask', 'npm'),
   }
 }

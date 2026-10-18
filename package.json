@@ -1,5 +1,5 @@
 {
-  "name": "telegram-approval-bot",
+  "name": "telegram-ask",
   "version": "0.1.0",
   "description": "Local HTTP API that asks you a question on Telegram with inline buttons and returns your answer",
   "keywords": [
@@ -11,7 +11,7 @@
   "license": "Apache-2.0",
   "author": "Cozmin",
   "bin": {
-    "telegram-approval-bot": "dist/cli.js"
+    "telegram-ask": "dist/cli.js"
   },
   "files": [
     "dist"

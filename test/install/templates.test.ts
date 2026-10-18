@@ -9,7 +9,7 @@ import {
 } from '../../src/install/index.ts'
 
 test('formatDockerfile pins version', () =>
-  expect(formatDockerfile({ version: '0.1.0' })).toContain('npm i -g telegram-approval-bot@0.1.0'))
+  expect(formatDockerfile({ version: '0.1.0' })).toContain('npm i -g telegram-ask@0.1.0'))
 test('formatDockerfile from tarball', () => {
   const d = formatDockerfile({ version: '0.1.0', tarball: '/a/b/pkg.tgz' })
   expect(d).toContain('COPY pkg.tgz /tmp/pkg.tgz')
@@ -18,7 +18,7 @@ test('formatDockerfile from tarball', () => {
 test('formatDockerfile binds all interfaces inside', () => {
   const d = formatDockerfile({ version: '1' })
   expect(d).toContain('HOST=0.0.0.0')
-  expect(d).toContain('CMD ["telegram-approval-bot","start"]')
+  expect(d).toContain('CMD ["telegram-ask","start"]')
 })
 test('compose publishes on localhost only, restarts', () => {
   const y = formatComposeYaml(9000)
@@ -30,7 +30,7 @@ test('quadlet publishes on localhost and quotes the env file path', () => {
   const q = formatQuadletContainer({ version: '0.1.0', port: 8787, envFile: '/home/a b/.env' })
   expect(q).toContain('PublishPort=127.0.0.1:8787:8787')
   expect(q).toContain('EnvironmentFile="/home/a b/.env"')
-  expect(q).toContain('Image=localhost/telegram-approval-bot:0.1.0')
+  expect(q).toContain('Image=localhost/telegram-ask:0.1.0')
 })
 test('systemd unit quotes paths with spaces and percent', () => {
   const u = formatSystemdUnit({
@@ -39,13 +39,13 @@ test('systemd unit quotes paths with spaces and percent', () => {
     config: '/h/50%/c.json',
   })
   expect(u).toContain('ExecStart="/opt/node 24/bin/node" "/x/cli.js" start')
-  expect(u).toContain('Environment="APPROVAL_BOT_CONFIG=/h/50%%/c.json"')
+  expect(u).toContain('Environment="TELEGRAM_ASK_CONFIG=/h/50%%/c.json"')
   expect(u).not.toContain('WorkingDirectory')
 })
 test('systemd unit escapes $ in ExecStart only', () => {
   const u = formatSystemdUnit({ node: '/n$x/node', cli: '/c$y/cli.js', config: '/h/$z/c.json' })
   expect(u).toContain('ExecStart="/n$$x/node" "/c$$y/cli.js" start')
-  expect(u).toContain('Environment="APPROVAL_BOT_CONFIG=/h/$z/c.json"')
+  expect(u).toContain('Environment="TELEGRAM_ASK_CONFIG=/h/$z/c.json"')
 })
 test('quoteSystemdValue escapes backslash and quote', () =>
   expect(quoteSystemdValue('a\\b"c%')).toBe('"a\\\\b\\"c%%"'))

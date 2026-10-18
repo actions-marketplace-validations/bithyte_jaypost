@@ -1,4 +1,4 @@
-# telegram-approval-bot
+# telegram-ask
 
 Small local service that asks you a question on Telegram and hands the answer back to the caller. A script POSTs a question with button options to a local HTTP API; the bot sends it to you with inline buttons, and the request returns when you tap one or the timeout fires.
 
@@ -7,7 +7,7 @@ Single owner, one Telegram user. Needs Node 24+ for `npx` and the systemd target
 ## Install
 
 ```
-npx telegram-approval-bot init
+npx telegram-ask init
 ```
 
 Create a bot with @BotFather first and have the token ready. `init`:
@@ -22,74 +22,74 @@ If it finds an existing install it offers to replace it, reusing the saved token
 
 The first time (and after `reset-owner`), the bot only answers whoever proves they own it. `init` prints a code like `ABCD-EFGH` and a link. Either send `/start ABCD-EFGH` to your bot, or open `https://t.me/<bot>?start=ABCDEFGH`. Case and the dash don't matter. After 5 wrong codes from one Telegram user that user is blocked until the service restarts.
 
-If you lose the code: `telegram-approval-bot status` prints it again while unpaired.
+If you lose the code: `telegram-ask status` prints it again while unpaired.
 
 To move to another Telegram account:
 
 ```
-telegram-approval-bot reset-owner
+telegram-ask reset-owner
 ```
 
 It asks first, clears the owner, restarts the service and waits for a new pairing.
 
 ## Targets
 
-All targets keep their files under `~/.config/telegram-approval-bot/` (or `$XDG_CONFIG_HOME/telegram-approval-bot/`). `install.json` there records which target is installed, its port and version. It's what `status`, `reset-owner` and `uninstall` read.
+All targets keep their files under `~/.config/telegram-ask/` (or `$XDG_CONFIG_HOME/telegram-ask/`). `install.json` there records which target is installed, its port and version. It's what `status`, `reset-owner` and `uninstall` read.
 
 ### Podman Quadlet
 
 Needs Podman 4.4 or newer and a systemd user session. Written:
 
-- `~/.config/telegram-approval-bot/quadlet/` with a `Dockerfile`, `.env` (token, port, owner) and a `.dockerignore` that keeps `.env` out of the image build
-- `~/.config/containers/systemd/telegram-approval-bot.container`
-- image `localhost/telegram-approval-bot:<version>`, volume `telegram-approval-bot-data` (holds the pairing state)
+- `~/.config/telegram-ask/quadlet/` with a `Dockerfile`, `.env` (token, port, owner) and a `.dockerignore` that keeps `.env` out of the image build
+- `~/.config/containers/systemd/telegram-ask.container`
+- image `localhost/telegram-ask:<version>`, volume `telegram-ask-data` (holds the pairing state)
 
-Runs as a user service named `telegram-approval-bot`. `init` enables linger (`loginctl enable-linger`) if needed so it survives logout; it tells you if that needs a password. Logs:
+Runs as a user service named `telegram-ask`. `init` enables linger (`loginctl enable-linger`) if needed so it survives logout; it tells you if that needs a password. Logs:
 
 ```
-journalctl --user -u telegram-approval-bot -f
+journalctl --user -u telegram-ask -f
 ```
 
 ### Docker Compose
 
 Needs Docker with the compose v2 plugin, and your user in the `docker` group (otherwise `init` reports it can't talk to docker and skips this target). Written:
 
-- `~/.config/telegram-approval-bot/compose/` with `Dockerfile`, `compose.yaml`, `.env` and `.dockerignore`
-- a named volume `data` in the `telegram-approval-bot` compose project
+- `~/.config/telegram-ask/compose/` with `Dockerfile`, `compose.yaml`, `.env` and `.dockerignore`
+- a named volume `data` in the `telegram-ask` compose project
 
 Logs:
 
 ```
-docker compose -f ~/.config/telegram-approval-bot/compose/compose.yaml logs -f
+docker compose -f ~/.config/telegram-ask/compose/compose.yaml logs -f
 ```
 
 This target is untested on real Docker so far.
 
 ### systemd (npm)
 
-No container. `init` installs the package globally with npm (`npm i -g`), or into `~/.local/share/telegram-approval-bot/npm` if the global prefix isn't writable. If you ran `init` from an already-installed copy, it uses that. Written:
+No container. `init` installs the package globally with npm (`npm i -g`), or into `~/.local/share/telegram-ask/npm` if the global prefix isn't writable. If you ran `init` from an already-installed copy, it uses that. Written:
 
-- `~/.config/telegram-approval-bot/config.json` (token, port, owner)
-- `~/.config/systemd/user/telegram-approval-bot.service` with absolute paths to `node`, the CLI and the config file (`APPROVAL_BOT_CONFIG` is always set in the unit, and `install.json` records the same path)
+- `~/.config/telegram-ask/config.json` (token, port, owner)
+- `~/.config/systemd/user/telegram-ask.service` with absolute paths to `node`, the CLI and the config file (`TELEGRAM_ASK_CONFIG` is always set in the unit, and `install.json` records the same path)
 
-Logs: `journalctl --user -u telegram-approval-bot -f`. Linger is handled as for Quadlet.
+Logs: `journalctl --user -u telegram-ask -f`. Linger is handled as for Quadlet.
 
-Config is read from `$APPROVAL_BOT_CONFIG`, else `$XDG_CONFIG_HOME/telegram-approval-bot/config.json`, else `~/.config/telegram-approval-bot/config.json`. The env vars `BOT_TOKEN`, `OWNER_ID`, `PORT` and `HOST` override the file. `HOST` defaults to `127.0.0.1` (the container targets set `0.0.0.0` inside the container and publish only on `127.0.0.1`).
+Config is read from `$TELEGRAM_ASK_CONFIG`, else `$XDG_CONFIG_HOME/telegram-ask/config.json`, else `~/.config/telegram-ask/config.json`. The env vars `BOT_TOKEN`, `OWNER_ID`, `PORT` and `HOST` override the file. `HOST` defaults to `127.0.0.1` (the container targets set `0.0.0.0` inside the container and publish only on `127.0.0.1`).
 
 ## Commands
 
 ```
-telegram-approval-bot init [systemd|compose|quadlet] [--port N]
-telegram-approval-bot status
-telegram-approval-bot test
-telegram-approval-bot reset-owner
-telegram-approval-bot uninstall
-telegram-approval-bot start
+telegram-ask init [systemd|compose|quadlet] [--port N]
+telegram-ask status
+telegram-ask test
+telegram-ask reset-owner
+telegram-ask uninstall
+telegram-ask start
 ```
 
 - `status`: target, version, port, whether it's running, and pairing state (with the code if unpaired).
 - `test`: sends "This is a test" with Approve/Decline buttons (Decline on timeout) and prints the response.
-- `uninstall`: stops and removes the service, then asks whether to also delete the bot token and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the token and owner without asking. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-approval-bot`, or `npm rm -g --prefix ~/.local/share/telegram-approval-bot/npm telegram-approval-bot` if `init` installed it into that prefix.
+- `uninstall`: stops and removes the service, then asks whether to also delete the bot token and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the token and owner without asking. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
 
 ## One instance per token

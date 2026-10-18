@@ -10,7 +10,7 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
   const { print } = deps
   const existing = findExistingInstall(deps.paths, deps.targets)
   if (!existing) {
-    print('Not installed. Run "telegram-approval-bot init".')
+    print('Not installed. Run "telegram-ask init".')
     return 1
   }
   const { record } = existing
@@ -47,7 +47,7 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
     return 1
   }
   if (result === 'paired') {
-    print('Paired. Try it: telegram-approval-bot test')
+    print('Paired. Try it: telegram-ask test')
     return 0
   }
   if (result === 'interrupted') {

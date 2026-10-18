@@ -65,7 +65,7 @@ function base(over = {}) {
 
 test('status not installed -> 1', async () => {
   expect(await runStatus({ ...base(), fetchStatus: vi.fn() })).toBe(1)
-  expect(out.join('\n')).toContain('Not installed. Run "telegram-approval-bot init".')
+  expect(out.join('\n')).toContain('Not installed. Run "telegram-ask init".')
 })
 
 test('status running and paired -> 0', async () => {

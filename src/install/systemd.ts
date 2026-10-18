@@ -33,12 +33,12 @@ function isWritable(directory: string): boolean {
   }
 }
 
-/** The config file a systemd install uses when nothing recorded one: $APPROVAL_BOT_CONFIG or the default, absolute. */
+/** The config file a systemd install uses when nothing recorded one: $TELEGRAM_ASK_CONFIG or the default, absolute. */
 export function resolveDefaultConfigFile(paths: InstallPaths, env: NodeJS.ProcessEnv): string {
-  return resolve(env.APPROVAL_BOT_CONFIG || paths.configFile)
+  return resolve(env.TELEGRAM_ASK_CONFIG || paths.configFile)
 }
 
-/** Best-effort read of the APPROVAL_BOT_CONFIG value from a unit's Environment= lines. */
+/** Best-effort read of the TELEGRAM_ASK_CONFIG value from a unit's Environment= lines. */
 export function findUnitConfigFile(unit: string): string | undefined {
   for (const line of unit.split('\n')) {
     const rawValue = ENVIRONMENT_LINE_PATTERN.exec(line)?.[1]
@@ -64,7 +64,7 @@ export function findUnitConfigFile(unit: string): string | undefined {
 export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target {
   const { exec, paths, env, user } = deps
   const systemctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
-  // The unit always pins APPROVAL_BOT_CONFIG to this absolute path, and install.json records it,
+  // The unit always pins TELEGRAM_ASK_CONFIG to this absolute path, and install.json records it,
   // so later commands don't depend on the environment they happen to run in.
   const configFile = resolveDefaultConfigFile(paths, env)
   const resolveConfigFile = (record: InstallRecord) => record.configFile ?? configFile

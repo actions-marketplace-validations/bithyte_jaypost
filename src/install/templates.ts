@@ -20,21 +20,21 @@ export function formatDockerfile(options: {
 }): string {
   const install =
     options.tarball === undefined
-      ? `RUN npm i -g telegram-approval-bot@${options.version}`
+      ? `RUN npm i -g telegram-ask@${options.version}`
       : `COPY ${basename(options.tarball)} /tmp/pkg.tgz\nRUN npm i -g /tmp/pkg.tgz && rm /tmp/pkg.tgz`
   return `FROM node:24-slim
-ENV NODE_ENV=production APPROVAL_BOT_CONFIG=/data/config.json HOST=0.0.0.0
+ENV NODE_ENV=production TELEGRAM_ASK_CONFIG=/data/config.json HOST=0.0.0.0
 ${install}
 RUN mkdir /data && chown node:node /data
 VOLUME /data
 USER node
-CMD ["telegram-approval-bot","start"]
+CMD ["telegram-ask","start"]
 `
 }
 
 /** Compose file publishing `port` on loopback only, with a named volume for /data. */
 export function formatComposeYaml(port: number): string {
-  return `name: telegram-approval-bot
+  return `name: telegram-ask
 services:
   bot:
     build: .
@@ -70,12 +70,12 @@ export function formatQuadletContainer(options: {
   readonly envFile: string
 }): string {
   return `[Unit]
-Description=Telegram approval bot
+Description=telegram-ask service
 
 [Container]
-Image=localhost/telegram-approval-bot:${options.version}
-ContainerName=telegram-approval-bot
-Volume=telegram-approval-bot-data:/data
+Image=localhost/telegram-ask:${options.version}
+ContainerName=telegram-ask
+Volume=telegram-ask-data:/data
 EnvironmentFile=${quoteSystemdValue(options.envFile)}
 PublishPort=127.0.0.1:${options.port}:${options.port}
 
@@ -87,19 +87,19 @@ WantedBy=default.target
 `
 }
 
-/** User unit that runs `node cli start` with APPROVAL_BOT_CONFIG pinned to `config`. */
+/** User unit that runs `node cli start` with TELEGRAM_ASK_CONFIG pinned to `config`. */
 export function formatSystemdUnit(options: {
   readonly node: string
   readonly cli: string
   readonly config: string
 }): string {
   return `[Unit]
-Description=Telegram approval bot
+Description=telegram-ask service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Environment=${quoteSystemdValue(`APPROVAL_BOT_CONFIG=${options.config}`)}
+Environment=${quoteSystemdValue(`TELEGRAM_ASK_CONFIG=${options.config}`)}
 ExecStart=${quoteExecWord(options.node)} ${quoteExecWord(options.cli)} start
 Restart=on-failure
 RestartSec=5

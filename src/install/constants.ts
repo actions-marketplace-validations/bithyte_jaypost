@@ -3,11 +3,11 @@ import type { TargetName } from './types.ts'
 /** Preference order; the first available target is the default. */
 export const TARGET_ORDER: readonly TargetName[] = ['quadlet', 'compose', 'systemd']
 /** Name of the systemd unit and container. */
-export const SERVICE_NAME = 'telegram-approval-bot'
+export const SERVICE_NAME = 'telegram-ask'
 /** npm package name, also the container's command. */
-export const PACKAGE_NAME = 'telegram-approval-bot'
+export const PACKAGE_NAME = 'telegram-ask'
 /** Podman volume holding /data (the config file). */
-export const VOLUME_NAME = 'telegram-approval-bot-data'
+export const VOLUME_NAME = 'telegram-ask-data'
 /** Keeps the .env file with the bot token out of the image build context. */
 export const DOCKERIGNORE = '.env\n'
 /** Quadlet needs podman 4.4 or newer (major part). */
@@ -25,6 +25,6 @@ export const ENVIRONMENT_LINE_PATTERN = /^\s*Environment=(.*)$/
 /** Matches a backslash escape inside a quoted unit value. */
 export const ESCAPED_CHAR_PATTERN = /\\(.)/g
 /** Variable the unit sets to pin the config file path. */
-export const CONFIG_ENV_PREFIX = 'APPROVAL_BOT_CONFIG='
+export const CONFIG_ENV_PREFIX = 'TELEGRAM_ASK_CONFIG='
 /** Owner read/write only, for files that hold the bot token. */
 export const SECRET_FILE_MODE = 0o600
