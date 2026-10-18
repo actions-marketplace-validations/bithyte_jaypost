@@ -1,7 +1,13 @@
 import { CANCELLED_RESULT } from './constants.ts'
 import { formatFinalText } from './formatter.ts'
 import { PendingRequests } from './pending.ts'
-import type { ApprovalRequest, Messenger, RequestResult } from './types.ts'
+import type {
+  ApprovalRequest,
+  MessageReference,
+  Messenger,
+  RequestResult,
+  Settlement,
+} from './types.ts'
 
 /** The messenger failed to send the request; the original error is in `cause`. */
 export class SendError extends Error {}
@@ -47,14 +53,7 @@ export class ApprovalService {
     }
     const settlement = await settled
     signal?.removeEventListener('abort', onAbort)
-    try {
-      await this.#messenger.finalize(
-        reference,
-        formatFinalText(request.text, settlement, this.#now()),
-      )
-    } catch (error) {
-      console.error('failed to finalize approval message', error)
-    }
+    await this.#finalize(reference, request.text, settlement)
     if (settlement.kind === 'cancelled') {
       return CANCELLED_RESULT
     }
@@ -70,5 +69,24 @@ export class ApprovalService {
    */
   tap(id: string, optionIndex: number): 'accepted' | 'expired' {
     return this.#pending.answer(id, optionIndex) ? 'accepted' : 'expired'
+  }
+
+  async #finalize(
+    reference: MessageReference,
+    text: string,
+    settlement: Settlement,
+  ): Promise<void> {
+    if (this.#messenger.finalize === undefined) {
+      return
+    }
+    try {
+      await this.#messenger.finalize(
+        reference,
+        formatFinalText(text, settlement, this.#now()),
+        settlement,
+      )
+    } catch (error) {
+      console.error('failed to finalize approval message', error)
+    }
   }
 }

@@ -1,21 +1,22 @@
 import { expect, test, vi } from 'vite-plus/test'
 import type { Bot } from 'grammy'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import {
   formatCallbackData,
   formatDismissData,
   parseDismissData,
   createTelegramMessenger,
   handlePairingMessage,
-  createOnPaired,
   registerPairingHandler,
   registerTapHandler,
   routeTap,
+  formatPairingInstructions,
+  formatLegacyInstructions,
 } from '../../src/telegram/index.ts'
 import type { Owner } from '../../src/telegram/index.ts'
 import { Pairing } from '../../src/pairing/index.ts'
+
+const attempt = (pairing: Pairing) => (senderId: string, text: string) =>
+  pairing.attempt(senderId, text)
 
 test('formatCallbackData format', () => expect(formatCallbackData('abc', 1)).toBe('abc:1'))
 
@@ -70,7 +71,9 @@ test('sendRequest sends plain text with one button per row', async () => {
 test('finalize edits text and clears keyboard', async () => {
   const editMessageText = vi.fn(async () => true)
   const bot = { api: { editMessageText } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).finalize({ chatId: 42, messageId: 5 }, 'done')
+  await createTelegramMessenger(bot, { id: 42 }).finalize({ chatId: 42, messageId: 5 }, 'done', {
+    kind: 'cancelled',
+  })
   expect(editMessageText).toHaveBeenCalledWith(42, 5, 'done', {
     reply_markup: { inline_keyboard: [] },
   })
@@ -234,7 +237,7 @@ test('pairing: right code replies and calls onPaired', () => {
   const onPaired = vi.fn()
   const reply = handlePairingMessage(
     { fromId: 9, chatType: 'private', text: '/start K7QM-4XPD' },
-    new Pairing('K7QM4XPD'),
+    attempt(new Pairing('K7QM4XPD')),
     onPaired,
   )
   expect(reply).toBe('Paired. Approval requests will appear here.')
@@ -247,7 +250,7 @@ test.each(['/start K7QM-4XPD', '/start@my_bot k7qm4xpd'])(
     const onPaired = vi.fn()
     const reply = handlePairingMessage(
       { fromId: 42, chatType: 'private', text },
-      new Pairing('K7QM4XPD'),
+      attempt(new Pairing('K7QM4XPD')),
       onPaired,
     )
     expect(reply).toBe('Paired. Approval requests will appear here.')
@@ -259,7 +262,7 @@ test('pairing: wrong code gets the hint, onPaired not called', () => {
   const onPaired = vi.fn()
   const reply = handlePairingMessage(
     { fromId: 9, chatType: 'private', text: 'nope' },
-    new Pairing('K7QM4XPD'),
+    attempt(new Pairing('K7QM4XPD')),
     onPaired,
   )
   expect(reply).toBe("This bot isn't paired. Check the service logs for the pairing code.")
@@ -269,7 +272,7 @@ test('pairing: wrong code gets the hint, onPaired not called', () => {
 test('pairing: group chat ignored', () => {
   const p = new Pairing('K7QM4XPD')
   expect(
-    handlePairingMessage({ fromId: 9, chatType: 'group', text: 'K7QM4XPD' }, p, vi.fn()),
+    handlePairingMessage({ fromId: 9, chatType: 'group', text: 'K7QM4XPD' }, attempt(p), vi.fn()),
   ).toBeUndefined()
   expect(p.paired).toBe(false)
 })
@@ -277,8 +280,8 @@ test('pairing: group chat ignored', () => {
 test('pairing: blocked sender gets no reply', () => {
   const p = new Pairing('K7QM4XPD', 1)
   const msg = { fromId: 9, chatType: 'private', text: 'bad' }
-  handlePairingMessage(msg, p, vi.fn())
-  expect(handlePairingMessage(msg, p, vi.fn())).toBeUndefined()
+  handlePairingMessage(msg, attempt(p), vi.fn())
+  expect(handlePairingMessage(msg, attempt(p), vi.fn())).toBeUndefined()
 })
 
 test('after pairing, strangers and old codes get no reply', () => {
@@ -286,10 +289,14 @@ test('after pairing, strangers and old codes get no reply', () => {
   p.attempt('1', 'K7QM4XPD')
   const onPaired = vi.fn()
   expect(
-    handlePairingMessage({ fromId: 2, chatType: 'private', text: '/start' }, p, onPaired),
+    handlePairingMessage({ fromId: 2, chatType: 'private', text: '/start' }, attempt(p), onPaired),
   ).toBeUndefined()
   expect(
-    handlePairingMessage({ fromId: 2, chatType: 'private', text: 'K7QM4XPD' }, p, onPaired),
+    handlePairingMessage(
+      { fromId: 2, chatType: 'private', text: 'K7QM4XPD' },
+      attempt(p),
+      onPaired,
+    ),
   ).toBeUndefined()
   expect(onPaired).not.toHaveBeenCalled()
 })
@@ -299,7 +306,7 @@ test('pairing handler replies via ctx.reply and stays silent when ignored', asyn
   const on = vi.fn((_f: string, h: typeof handler) => {
     handler = h
   })
-  registerPairingHandler({ on } as unknown as Bot, new Pairing('K7QM4XPD'), vi.fn())
+  registerPairingHandler({ on } as unknown as Bot, attempt(new Pairing('K7QM4XPD')), vi.fn())
   expect(on).toHaveBeenCalledWith('message:text', expect.any(Function))
   const reply = vi.fn(async () => {})
   await handler({
@@ -314,33 +321,14 @@ test('pairing handler replies via ctx.reply and stays silent when ignored', asyn
   expect(reply).not.toHaveBeenCalled()
 })
 
-test('onPaired sets owner and writes config', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'tab-'))
-  const path = join(dir, 'config.json')
-  const owner: Owner = { id: undefined }
-  const log = vi.fn()
-  createOnPaired(owner, (id) => writeFileSync(path, JSON.stringify({ ownerId: id })), path, log)(42)
-  expect(owner.id).toBe(42)
-  expect(JSON.parse(readFileSync(path, 'utf8')).ownerId).toBe(42)
-  expect(log).not.toHaveBeenCalled()
+test('formatPairingInstructions text', () => {
+  expect(formatPairingInstructions('K7QM4XPD', 'mybot')).toBe(
+    'Send "/start K7QM-4XPD" to @mybot, or open https://t.me/mybot?start=K7QM4XPD',
+  )
 })
 
-test('onPaired keeps owner in memory when the file is unwritable', () => {
-  // a regular file as the parent dir makes the write fail with ENOTDIR
-  const dir = mkdtempSync(join(tmpdir(), 'tab-'))
-  const blocker = join(dir, 'file')
-  writeFileSync(blocker, '')
-  const owner: Owner = { id: undefined }
-  const log = vi.fn()
-  expect(() =>
-    createOnPaired(
-      owner,
-      (id) => writeFileSync(join(blocker, 'config.json'), JSON.stringify({ ownerId: id })),
-      join(blocker, 'config.json'),
-      log,
-    )(42),
-  ).not.toThrow()
-  expect(owner.id).toBe(42)
-  expect(log).toHaveBeenCalledTimes(1)
-  expect(log.mock.calls[0]?.[0]).toMatch(/couldn't save/)
+test('formatLegacyInstructions takes the dashed code', () => {
+  expect(formatLegacyInstructions('K7QM-4XPD', 'mybot')).toBe(
+    'Send "/start K7QM-4XPD" to @mybot, or open https://t.me/mybot?start=K7QM4XPD',
+  )
 })

@@ -30,21 +30,22 @@ export type ParseResult =
   | { readonly ok: true; readonly value: ApprovalRequest }
   | { readonly ok: false; readonly error: string }
 
-/** Identifies the sent Telegram message so it can be edited later. */
-export type MessageReference = {
-  readonly chatId: number
-  readonly messageId: number
-}
+/** Opaque handle to a sent message; the core only hands it back to the messenger. */
+export type MessageReference = unknown
 
-/** Chat transport the service uses, so the approval logic stays independent of Telegram. */
+/** Chat transport the service uses, so the approval logic stays independent of any provider. */
 export type Messenger = {
   readonly sendRequest: (
     id: string,
     text: string,
     options: readonly string[],
   ) => Promise<MessageReference>
-  /** Replace the message text and remove its buttons. */
-  readonly finalize: (reference: MessageReference, text: string) => Promise<void>
+  /** Request ended: show the final text and stop accepting answers. Absent means skipped. */
+  readonly finalize?: (
+    reference: MessageReference,
+    text: string,
+    settlement: Settlement,
+  ) => Promise<void>
 }
 
 /** A pending request with its timeout timer and the resolver that settles it. */

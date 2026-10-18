@@ -1,22 +1,115 @@
-import { Bot, GrammyError } from 'grammy'
+import type { FastifyInstance } from 'fastify'
 import { ApprovalService } from '../approval/index.ts'
 import { loadConfig, resolveConfigPath, updateConfigFile } from '../config/index.ts'
 import type { Config } from '../config/index.ts'
 import { NotificationService } from '../notify/index.ts'
-import { formatCode, generateCode, Pairing } from '../pairing/index.ts'
+import { formatCode, generateCode as generateDefaultCode, Pairing } from '../pairing/index.ts'
+import type { PairResult } from '../pairing/index.ts'
+import { findOwnerSetting } from '../provider/index.ts'
+import type { RuntimeHandlers } from '../provider/index.ts'
 import { createApiServer } from '../server/index.ts'
-import {
-  createOnPaired,
-  createTelegramMessenger,
-  registerPairingHandler,
-  registerTapHandler,
-} from '../telegram/index.ts'
-import type { Owner } from '../telegram/index.ts'
+import type { StatusInfo } from '../server/index.ts'
+
+export type ServiceOptions = {
+  readonly config: Config
+  readonly configPath: string
+  /** The provider can't continue; the caller decides how to exit. */
+  readonly fatal: (message: string) => void
+  readonly log?: (line: string) => void
+  readonly generateCode?: () => string
+}
+
+export type RunningService = {
+  readonly server: FastifyInstance
+  /** Closes the server and the provider runtime; never rejects. */
+  readonly stop: () => Promise<void>
+}
+
+/** Throws an Error with the provider's reason when credentials are rejected. Doesn't listen. */
+export async function startService(options: ServiceOptions): Promise<RunningService> {
+  const { config, configPath } = options
+  const log = options.log ?? console.error
+  const provider = config.provider
+  const runtime = provider.createRuntime(config.settings, log)
+  const check = await runtime.checkCredentials()
+  if (!check.ok) {
+    throw new Error(check.reason)
+  }
+  const displayName = check.displayName
+  const service = new ApprovalService(runtime)
+  const sendNotification = runtime.sendNotification
+  const notifications =
+    sendNotification === undefined
+      ? undefined
+      : new NotificationService(
+          { sendNotification, deleteMessage: runtime.deleteMessage },
+          undefined,
+          log,
+        )
+  const ownerSetting = findOwnerSetting(provider)
+  let pairing: Pairing | undefined
+  let instructions: string | undefined
+  if (ownerSetting !== undefined && !Object.hasOwn(config.settings, ownerSetting.configKey)) {
+    if (runtime.pairingInstructions === undefined) {
+      throw new Error(
+        `provider ${JSON.stringify(provider.name)} has an owner setting but no pairing support`,
+      )
+    }
+    const code = (options.generateCode ?? generateDefaultCode)()
+    pairing = new Pairing(code)
+    instructions = runtime.pairingInstructions(code)
+    log(`Not paired. ${instructions}`)
+  }
+  const status = (): StatusInfo => {
+    const extraFields = runtime.statusFields?.() ?? {}
+    if (pairing === undefined || pairing.code === undefined || instructions === undefined) {
+      return { paired: true, provider: provider.name, displayName, ...extraFields }
+    }
+    return {
+      paired: false,
+      provider: provider.name,
+      displayName,
+      code: formatCode(pairing.code),
+      instructions,
+      ...extraFields,
+    }
+  }
+  const pair = (senderId: string, text: string): PairResult => {
+    const result = pairing?.attempt(senderId, text) ?? 'notPairing'
+    if (result === 'paired' && ownerSetting !== undefined) {
+      try {
+        updateConfigFile(configPath, { [ownerSetting.configKey]: ownerSetting.parse(senderId) })
+      } catch {
+        log(
+          `paired with ${senderId} but couldn't save the owner to ${configPath}; it'll be lost on restart`,
+        )
+      }
+    }
+    return result
+  }
+  const server = createApiServer(service, status, {
+    maxTextLength: provider.maxTextLength,
+    providerName: provider.name,
+    ...(notifications === undefined ? {} : { notifications }),
+  })
+  const handlers: RuntimeHandlers = {
+    answer: (id, optionIndex) => service.tap(id, optionIndex),
+    dismiss: (id) => notifications?.dismiss(id) ?? false,
+    fatal: options.fatal,
+    ...(pairing === undefined ? {} : { pair }),
+  }
+  runtime.start(handlers)
+  return {
+    server,
+    stop: async () => {
+      await Promise.allSettled([server.close(), runtime.stop()])
+    },
+  }
+}
 
 /**
- * Starts the bot and API. Exits the process with 1 on bad config, a rejected token, Telegram being
- * unreachable at startup, an HTTP server error, or a fatal polling error (409 means another
- * instance is polling with the same token).
+ * Starts the provider and API. Exits the process with 1 on bad config, rejected credentials, an
+ * HTTP server error, or a fatal provider error.
  */
 export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   let config: Config
@@ -26,94 +119,39 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   }
-  // Temporary until the daemon runs providers generically.
-  const rawOwnerId = config.settings.ownerId
-  const configPath = resolveConfigPath(env)
-  const owner: Owner = { id: typeof rawOwnerId === 'number' ? rawOwnerId : undefined }
-  const bot = new Bot(String(config.settings.botToken))
-  const messenger = createTelegramMessenger(bot, owner)
-  const service = new ApprovalService(messenger)
-  const notifications = new NotificationService(messenger)
-  registerTapHandler(
-    bot,
-    owner,
-    (id, optionIndex) => service.tap(id, optionIndex),
-    (id) => notifications.dismiss(id),
-  )
-  // Log handler errors instead of crashing; grammY's error text doesn't include the token.
-  bot.catch((error) => {
-    console.error('bot error:', error.error instanceof Error ? error.error.message : error.error)
-  })
+  let stopping = false
+  let running: RunningService
   try {
-    await bot.init()
+    running = await startService({
+      config,
+      configPath: resolveConfigPath(env),
+      fatal: (message) => {
+        if (stopping) {
+          return
+        }
+        console.error(message)
+        process.exit(1)
+      },
+    })
   } catch (error) {
-    // Don't print the error text; it can embed the request URL with the token.
-    console.error(
-      error instanceof GrammyError
-        ? `Telegram rejected the bot token (${error.error_code}); check it with \`telegram-ask init\``
-        : 'could not reach Telegram to verify the bot token',
-    )
+    console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   }
-  const botUsername = bot.botInfo.username
-  let pairing: Pairing | undefined
-  if (owner.id === undefined) {
-    const code = generateCode()
-    pairing = new Pairing(code)
-    console.log(
-      `Not paired. Send "/start ${formatCode(code)}" to @${botUsername}, or open https://t.me/${botUsername}?start=${code}`,
-    )
-    registerPairingHandler(
-      bot,
-      pairing,
-      createOnPaired(owner, (id) => updateConfigFile(configPath, { ownerId: id }), configPath),
-    )
-  }
-  const server = createApiServer(
-    service,
-    () =>
-      owner.id !== undefined || pairing === undefined || pairing.code === undefined
-        ? { paired: true, bot: botUsername }
-        : { paired: false, code: formatCode(pairing.code), bot: botUsername },
-    {
-      maxTextLength: config.provider.maxTextLength,
-      providerName: config.provider.name,
-      notifications,
-    },
-  )
-  server.listen({ port: config.port, host: config.host }).then(
+  running.server.listen({ port: config.port, host: config.host }).then(
     () => console.log(`listening on ${config.host}:${config.port}`),
     (error: unknown) => {
       console.error('http server error:', error instanceof Error ? error.message : String(error))
       process.exit(1)
     },
   )
-  let stopping = false
   function shutdown(): void {
     if (stopping) {
       return
     }
     stopping = true
     setTimeout(() => process.exit(0), 5000).unref()
-    server.close().catch(() => {})
-    bot
-      .stop()
-      .catch(() => {})
-      .finally(() => process.exit(0))
+    void running.stop().finally(() => process.exit(0))
   }
   process.on('SIGTERM', shutdown)
   process.on('SIGINT', shutdown)
-  bot
-    .start({ onStart: (botUser) => console.log(`bot @${botUser.username} polling`) })
-    .catch((error: unknown) => {
-      if (stopping) {
-        return
-      }
-      if (error instanceof GrammyError && error.error_code === 409) {
-        console.error('another instance is already polling with this bot token; exiting')
-      } else {
-        console.error('bot stopped:', error instanceof Error ? error.message : String(error))
-      }
-      process.exit(1)
-    })
 }

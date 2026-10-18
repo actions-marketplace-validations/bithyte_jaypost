@@ -1,14 +1,32 @@
 import type { Bot } from 'grammy'
 import type { MessageReference, Messenger } from '../approval/index.ts'
 import type { Notifier } from '../notify/index.ts'
-import type { Pairing } from '../pairing/index.ts'
+import { formatCode } from '../pairing/index.ts'
+import type { PairResult } from '../pairing/index.ts'
 import {
   CALLBACK_DATA_PATTERN,
   DISMISS_DATA_PATTERN,
   DISMISS_LABEL,
   START_COMMAND_PATTERN,
 } from './constants.ts'
-import type { Dismiss, Owner, PairingMessage, Tap, TapRoute } from './types.ts'
+import type {
+  Dismiss,
+  Owner,
+  PairingMessage,
+  Tap,
+  TapRoute,
+  TelegramMessageReference,
+} from './types.ts'
+
+/** How to pair: `code` is raw (no dash), `bot` the username without `@`. */
+export function formatPairingInstructions(code: string, bot: string): string {
+  return `Send "/start ${formatCode(code)}" to @${bot}, or open https://t.me/${bot}?start=${code}`
+}
+
+/** `formatPairingInstructions` for the dashed code an old /status body carries. */
+export function formatLegacyInstructions(displayCode: string, bot: string): string {
+  return formatPairingInstructions(displayCode.replaceAll('-', ''), bot)
+}
 
 /** Button payload `<id>:<optionIndex>`; `routeTap` parses it. */
 export function formatCallbackData(id: string, optionIndex: number): string {
@@ -48,7 +66,10 @@ export function routeTap(
  * Sends requests as inline-keyboard messages to the owner; the final edit removes the buttons.
  * Notifications get a single Dismiss button. Sending throws when nobody is paired.
  */
-export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger & Required<Notifier> {
+export function createTelegramMessenger(
+  bot: Bot,
+  owner: Owner,
+): Required<Messenger> & Required<Notifier> {
   return {
     async sendRequest(id, text, options): Promise<MessageReference> {
       if (owner.id === undefined) {
@@ -61,10 +82,11 @@ export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger & Req
           ]),
         },
       })
-      return { chatId: sent.chat.id, messageId: sent.message_id }
+      return { chatId: sent.chat.id, messageId: sent.message_id } satisfies TelegramMessageReference
     },
     async finalize(reference, text) {
-      await bot.api.editMessageText(reference.chatId, reference.messageId, text, {
+      const { chatId, messageId } = reference as TelegramMessageReference
+      await bot.api.editMessageText(chatId, messageId, text, {
         reply_markup: { inline_keyboard: [] },
       })
     },
@@ -77,10 +99,11 @@ export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger & Req
           inline_keyboard: [[{ text: DISMISS_LABEL, callback_data: formatDismissData(id) }]],
         },
       })
-      return { chatId: sent.chat.id, messageId: sent.message_id }
+      return { chatId: sent.chat.id, messageId: sent.message_id } satisfies TelegramMessageReference
     },
     async deleteMessage(reference) {
-      await bot.api.deleteMessage(reference.chatId, reference.messageId)
+      const { chatId, messageId } = reference as TelegramMessageReference
+      await bot.api.deleteMessage(chatId, messageId)
     },
   }
 }
@@ -128,13 +151,13 @@ export function registerTapHandler(
  */
 export function handlePairingMessage(
   message: PairingMessage,
-  pairing: Pairing,
+  pair: (senderId: string, text: string) => PairResult,
   onPaired: (id: number) => void,
 ): string | undefined {
   if (message.chatType !== 'private') {
     return undefined
   }
-  const result = pairing.attempt(
+  const result = pair(
     String(message.fromId),
     message.text.trim().replace(START_COMMAND_PATTERN, ''),
   )
@@ -151,37 +174,17 @@ export function handlePairingMessage(
 /** Feeds text messages to `handlePairingMessage` and sends any reply. */
 export function registerPairingHandler(
   bot: Bot,
-  pairing: Pairing,
+  pair: (senderId: string, text: string) => PairResult,
   onPaired: (id: number) => void,
 ): void {
   bot.on('message:text', async (context) => {
     const reply = handlePairingMessage(
       { fromId: context.from.id, chatType: context.chat.type, text: context.message.text },
-      pairing,
+      pair,
       onPaired,
     )
     if (reply !== undefined) {
       await context.reply(reply)
     }
   })
-}
-
-/**
- * Callback that sets the owner in memory first, then calls `save` (which writes `path`). A failed save is
- * logged, not thrown.
- */
-export function createOnPaired(
-  owner: Owner,
-  save: (id: number) => void,
-  path: string,
-  log: (line: string) => void = console.error,
-): (id: number) => void {
-  return (id) => {
-    owner.id = id
-    try {
-      save(id)
-    } catch {
-      log(`paired with ${id} but couldn't save the owner to ${path}; it'll be lost on restart`)
-    }
-  }
 }

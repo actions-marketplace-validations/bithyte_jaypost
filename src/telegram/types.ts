@@ -21,3 +21,9 @@ export type Tap = (id: string, optionIndex: number) => 'accepted' | 'expired'
 
 /** Clears the expiry of notification `id`; false when it is unknown or already expired. */
 export type Dismiss = (id: string) => boolean
+
+/** What `MessageReference` holds for Telegram; cast back at the messenger's edge. */
+export type TelegramMessageReference = {
+  readonly chatId: number
+  readonly messageId: number
+}

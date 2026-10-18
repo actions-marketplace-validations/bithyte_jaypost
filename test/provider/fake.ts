@@ -50,7 +50,7 @@ export function createFakeProvider(
         sendRequest: async (id, text, options) => {
           runtime.sent.push({ id, text, options })
           counter += 1
-          return { chatId: 0, messageId: counter }
+          return { n: counter }
         },
         start: (handlers) => {
           runtime.handlers = handlers

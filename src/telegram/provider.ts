@@ -1,5 +1,6 @@
 import type { Provider, SettingValue } from '../provider/index.ts'
 import { TELEGRAM_MAX_TEXT_LENGTH } from './constants.ts'
+import { createTelegramRuntime } from './runtime.ts'
 import { validateToken } from './setup.ts'
 
 const INTEGER_PATTERN = /^-?\d+$/
@@ -19,7 +20,7 @@ function parseOwnerId(raw: unknown): SettingValue | undefined {
   return undefined
 }
 
-/** Telegram, declared as data; the runtime arrives with the daemon move. */
+/** Telegram: settings and setup as data, plus the bot runtime the daemon drives. */
 export const telegramProvider: Provider = {
   name: 'telegram',
   label: 'Telegram',
@@ -59,7 +60,5 @@ export const telegramProvider: Provider = {
       resetOwnerWarning: 'This unlinks your Telegram account.',
     },
   },
-  createRuntime: () => {
-    throw new Error('not implemented')
-  },
+  createRuntime: (settings, log) => createTelegramRuntime(settings, log),
 }

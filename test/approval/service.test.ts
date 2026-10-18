@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
 import { ApprovalService, SendError } from '../../src/approval/index.ts'
-import type { ApprovalRequest, MessageReference, Messenger } from '../../src/approval/index.ts'
+import type {
+  ApprovalRequest,
+  MessageReference,
+  Messenger,
+  Settlement,
+} from '../../src/approval/index.ts'
 
 const at = new Date(2026, 0, 1, 9, 5)
 
@@ -14,7 +19,7 @@ const req: ApprovalRequest = {
 class FakeMessenger implements Messenger {
   ref: MessageReference = { chatId: 1, messageId: 2 }
   sent: { id: string; text: string; options: readonly string[] }[] = []
-  finalized: { ref: MessageReference; text: string }[] = []
+  finalized: { ref: MessageReference; text: string; settlement: Settlement }[] = []
   sendError: Error | undefined
   finalizeError: Error | undefined
 
@@ -30,8 +35,8 @@ class FakeMessenger implements Messenger {
     return this.ref
   }
 
-  async finalize(ref: MessageReference, text: string): Promise<void> {
-    this.finalized.push({ ref, text })
+  async finalize(ref: MessageReference, text: string, settlement: Settlement): Promise<void> {
+    this.finalized.push({ ref, text, settlement })
     if (this.finalizeError) {
       throw this.finalizeError
     }
@@ -69,7 +74,13 @@ test('tap resolves request and finalizes message', async () => {
     kind: 'completed',
     outcome: { answer: 'Approve', timedOut: false },
   })
-  expect(m.finalized).toEqual([{ ref: m.ref, text: 'Deploy?\n\n✅ Approve, 09:05' }])
+  expect(m.finalized).toEqual([
+    {
+      ref: m.ref,
+      text: 'Deploy?\n\n✅ Approve, 09:05',
+      settlement: { kind: 'answered', answer: 'Approve' },
+    },
+  ])
 })
 
 test('timeout returns timeoutOption, timedOut true', async () => {
@@ -81,7 +92,13 @@ test('timeout returns timeoutOption, timedOut true', async () => {
     kind: 'completed',
     outcome: { answer: 'Decline', timedOut: true },
   })
-  expect(m.finalized).toEqual([{ ref: m.ref, text: 'Deploy?\n\n⏱ Timed out, Decline, 09:05' }])
+  expect(m.finalized).toEqual([
+    {
+      ref: m.ref,
+      text: 'Deploy?\n\n⏱ Timed out, Decline, 09:05',
+      settlement: { kind: 'timedOut', answer: 'Decline' },
+    },
+  ])
   expect(svc.tap('id1', 0)).toBe('expired')
 })
 
@@ -117,7 +134,13 @@ test('abort cancels: returns cancelled, finalizes with Cancelled, later tap expi
   await flush()
   ctrl.abort()
   await expect(r).resolves.toEqual({ kind: 'cancelled' })
-  expect(m.finalized).toEqual([{ ref: m.ref, text: 'Deploy?\n\n🚫 Cancelled, 09:05' }])
+  expect(m.finalized).toEqual([
+    {
+      ref: m.ref,
+      text: 'Deploy?\n\n🚫 Cancelled, 09:05',
+      settlement: { kind: 'cancelled' },
+    },
+  ])
   expect(svc.tap('id1', 0)).toBe('expired')
   expect(vi.getTimerCount()).toBe(0)
 })
@@ -127,7 +150,13 @@ test('already-aborted signal cancels right after send', async () => {
   const r = svc.request(req, AbortSignal.abort())
   await expect(r).resolves.toEqual({ kind: 'cancelled' })
   expect(m.sent).toHaveLength(1)
-  expect(m.finalized).toEqual([{ ref: m.ref, text: 'Deploy?\n\n🚫 Cancelled, 09:05' }])
+  expect(m.finalized).toEqual([
+    {
+      ref: m.ref,
+      text: 'Deploy?\n\n🚫 Cancelled, 09:05',
+      settlement: { kind: 'cancelled' },
+    },
+  ])
   expect(svc.tap('id1', 0)).toBe('expired')
 })
 
@@ -156,4 +185,22 @@ test('finalize failure still returns the answer', async () => {
   })
   expect(spy).toHaveBeenCalledTimes(1)
   expect(spy.mock.calls[0]).toContain(err)
+})
+
+test('no finalize part: request still settles', async () => {
+  const sendRequest = vi.fn(async () => ({ n: 1 }))
+  const svc = new ApprovalService(
+    { sendRequest },
+    () => at,
+    () => 'id1',
+  )
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const r = svc.request(req)
+  await flush()
+  expect(svc.tap('id1', 1)).toBe('accepted')
+  await expect(r).resolves.toEqual({
+    kind: 'completed',
+    outcome: { answer: 'Decline', timedOut: false },
+  })
+  expect(spy).not.toHaveBeenCalled()
 })
