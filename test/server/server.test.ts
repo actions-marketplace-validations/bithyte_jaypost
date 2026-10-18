@@ -5,9 +5,9 @@ import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { SendError } from '../../src/approval/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
 import type { StatusInfo } from '../../src/server/index.ts'
-import type { ApprovalRequest, Outcome } from '../../src/approval/index.ts'
+import type { ApprovalRequest, RequestResult } from '../../src/approval/index.ts'
 
-type RequestFn = (req: ApprovalRequest, signal?: AbortSignal) => Promise<Outcome | null>
+type RequestFn = (req: ApprovalRequest, signal?: AbortSignal) => Promise<RequestResult>
 
 const valid = {
   text: 'Deploy?',
@@ -40,7 +40,10 @@ const post = (url: string, body: string) =>
   fetch(`${url}/request`, { method: 'POST', body, headers: { 'content-type': 'application/json' } })
 
 test('200 with outcome', async () => {
-  const request = vi.fn<RequestFn>(async () => ({ answer: 'Approve', timedOut: false }))
+  const request = vi.fn<RequestFn>(async () => ({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  }))
   const url = await start(request)
   const res = await post(url, JSON.stringify(valid))
   expect(res.status).toBe(200)
@@ -146,7 +149,7 @@ test('signal is not aborted after a normal response', async () => {
   let signal: AbortSignal | undefined
   const url = await start(async (_req, s) => {
     signal = s
-    return { answer: 'Approve', timedOut: false }
+    return { kind: 'completed', outcome: { answer: 'Approve', timedOut: false } }
   })
   const res = await post(url, JSON.stringify(valid))
   await res.json()
@@ -156,12 +159,12 @@ test('signal is not aborted after a normal response', async () => {
 })
 
 test('client gone before service resolves does not crash the server', async () => {
-  let resolve!: (o: Outcome | null) => void
+  let resolve!: (o: RequestResult) => void
   const url = await start(
     (_req, s) =>
       new Promise((r) => {
         resolve = r
-        s?.addEventListener('abort', () => r(null))
+        s?.addEventListener('abort', () => r({ kind: 'cancelled' }))
       }),
   )
   const ac = new AbortController()
@@ -174,7 +177,7 @@ test('client gone before service resolves does not crash the server', async () =
   ac.abort()
   await p
   await new Promise((r) => setTimeout(r, 50))
-  resolve({ answer: 'Approve', timedOut: false })
+  resolve({ kind: 'completed', outcome: { answer: 'Approve', timedOut: false } })
   await new Promise((r) => setTimeout(r, 50))
   const again = await fetch(`${url}/other`)
   expect(again.status).toBe(404)
@@ -199,7 +202,7 @@ test('malformed request target gets 404 and the server keeps serving', async () 
 
 test('GET /status reports pairing', async () => {
   const url = await start(
-    async () => null,
+    async () => ({ kind: 'cancelled' }),
     () => ({ paired: false, code: 'K7QM-4XPD', bot: 'b' }),
   )
   const res = await fetch(`${url}/status`)
@@ -208,7 +211,7 @@ test('GET /status reports pairing', async () => {
 })
 
 test('GET /status when paired', async () => {
-  const url = await start(async () => null)
+  const url = await start(async () => ({ kind: 'cancelled' }))
   const res = await fetch(`${url}/status`)
   expect(await res.json()).toEqual({ paired: true, bot: 'b' })
 })
@@ -225,7 +228,7 @@ test('POST /request is 503 while unpaired, service not called', async () => {
 })
 
 test('POST /status is 405 with Allow: GET', async () => {
-  const url = await start(async () => null)
+  const url = await start(async () => ({ kind: 'cancelled' }))
   const res = await fetch(`${url}/status`, { method: 'POST', body: '{}' })
   expect(res.status).toBe(405)
   expect(res.headers.get('allow')).toBe('GET')

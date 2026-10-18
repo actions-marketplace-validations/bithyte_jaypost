@@ -11,19 +11,19 @@ export class MissingCommandError extends Error {
 }
 
 /** Never rejects on a non-zero exit; rejects only when the binary doesn't exist. */
-export const realExec: Exec = (cmd, args, opts = {}) =>
+export const realExec: Exec = (command, args, options = {}) =>
   new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
-      env: opts.env ?? process.env,
-      stdio: opts.inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+    const child = spawn(command, args, {
+      env: options.env ?? process.env,
+      stdio: options.inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
     let stderr = ''
-    child.stdout?.on('data', (d: Buffer) => (stdout += d.toString()))
-    child.stderr?.on('data', (d: Buffer) => (stderr += d.toString()))
-    child.on('error', (e: NodeJS.ErrnoException) => {
-      if (e.code === 'ENOENT') reject(new MissingCommandError(cmd))
-      else reject(e)
+    child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
+    child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') reject(new MissingCommandError(command))
+      else reject(error)
     })
     child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
   })

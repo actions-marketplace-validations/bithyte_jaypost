@@ -2,15 +2,15 @@ import net from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { expect, test, vi } from 'vite-plus/test'
 import type { Exec } from '../../src/system/index.ts'
-import { ensureLinger, portFree, validateToken } from '../../src/system/index.ts'
+import { ensureLinger, isPortFree, validateToken } from '../../src/system/index.ts'
 
-test('portFree false while held, true after', async () => {
+test('isPortFree false while held, true after', async () => {
   const s = net.createServer()
   await new Promise<void>((r) => s.listen(0, '127.0.0.1', r))
   const port = (s.address() as AddressInfo).port
-  expect(await portFree(port)).toBe(false)
+  expect(await isPortFree(port)).toBe(false)
   await new Promise((r) => s.close(r))
-  expect(await portFree(port)).toBe(true)
+  expect(await isPortFree(port)).toBe(true)
 })
 
 const res = (code: number, stdout = '') => ({ code, stdout, stderr: '' })

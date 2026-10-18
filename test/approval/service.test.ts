@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
 import { ApprovalService, SendError } from '../../src/approval/index.ts'
-import type { ApprovalRequest, MessageRef, Messenger } from '../../src/approval/index.ts'
+import type { ApprovalRequest, MessageReference, Messenger } from '../../src/approval/index.ts'
 
 const at = new Date(2026, 0, 1, 9, 5)
 
@@ -12,19 +12,23 @@ const req: ApprovalRequest = {
 }
 
 class FakeMessenger implements Messenger {
-  ref: MessageRef = { chatId: 1, messageId: 2 }
-  sent: { id: string; text: string; options: string[] }[] = []
-  finalized: { ref: MessageRef; text: string }[] = []
+  ref: MessageReference = { chatId: 1, messageId: 2 }
+  sent: { id: string; text: string; options: readonly string[] }[] = []
+  finalized: { ref: MessageReference; text: string }[] = []
   sendError: Error | undefined
   finalizeError: Error | undefined
 
-  async sendRequest(id: string, text: string, options: string[]): Promise<MessageRef> {
+  async sendRequest(
+    id: string,
+    text: string,
+    options: readonly string[],
+  ): Promise<MessageReference> {
     if (this.sendError) throw this.sendError
     this.sent.push({ id, text, options })
     return this.ref
   }
 
-  async finalize(ref: MessageRef, text: string): Promise<void> {
+  async finalize(ref: MessageReference, text: string): Promise<void> {
     this.finalized.push({ ref, text })
     if (this.finalizeError) throw this.finalizeError
   }
@@ -57,7 +61,10 @@ test('tap resolves request and finalizes message', async () => {
   await flush()
   expect(m.sent).toEqual([{ id: 'id1', text: 'Deploy?', options: ['Approve', 'Decline'] }])
   expect(svc.tap('id1', 0)).toBe('accepted')
-  await expect(r).resolves.toEqual({ answer: 'Approve', timedOut: false })
+  await expect(r).resolves.toEqual({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  })
   expect(m.finalized).toEqual([{ ref: m.ref, text: 'Deploy?\n\n✅ Approve, 09:05' }])
 })
 
@@ -66,7 +73,10 @@ test('timeout returns timeoutOption, timedOut true', async () => {
   const r = svc.request(req)
   await flush()
   await vi.advanceTimersByTimeAsync(30_000)
-  await expect(r).resolves.toEqual({ answer: 'Decline', timedOut: true })
+  await expect(r).resolves.toEqual({
+    kind: 'completed',
+    outcome: { answer: 'Decline', timedOut: true },
+  })
   expect(m.finalized).toEqual([{ ref: m.ref, text: 'Deploy?\n\n⏱ Timed out, Decline, 09:05' }])
   expect(svc.tap('id1', 0)).toBe('expired')
 })
@@ -96,13 +106,13 @@ test('send failure throws SendError and leaves nothing pending', async () => {
   expect(vi.getTimerCount()).toBe(0)
 })
 
-test('abort cancels: returns null, finalizes with Cancelled, later tap expired', async () => {
+test('abort cancels: returns cancelled, finalizes with Cancelled, later tap expired', async () => {
   const { m, svc } = setup()
   const ctrl = new AbortController()
   const r = svc.request(req, ctrl.signal)
   await flush()
   ctrl.abort()
-  await expect(r).resolves.toBeNull()
+  await expect(r).resolves.toEqual({ kind: 'cancelled' })
   expect(m.finalized).toEqual([{ ref: m.ref, text: 'Deploy?\n\n🚫 Cancelled, 09:05' }])
   expect(svc.tap('id1', 0)).toBe('expired')
   expect(vi.getTimerCount()).toBe(0)
@@ -111,7 +121,7 @@ test('abort cancels: returns null, finalizes with Cancelled, later tap expired',
 test('already-aborted signal cancels right after send', async () => {
   const { m, svc } = setup()
   const r = svc.request(req, AbortSignal.abort())
-  await expect(r).resolves.toBeNull()
+  await expect(r).resolves.toEqual({ kind: 'cancelled' })
   expect(m.sent).toHaveLength(1)
   expect(m.finalized).toEqual([{ ref: m.ref, text: 'Deploy?\n\n🚫 Cancelled, 09:05' }])
   expect(svc.tap('id1', 0)).toBe('expired')
@@ -136,7 +146,10 @@ test('finalize failure still returns the answer', async () => {
   const r = svc.request(req)
   await flush()
   svc.tap('id1', 0)
-  await expect(r).resolves.toEqual({ answer: 'Approve', timedOut: false })
+  await expect(r).resolves.toEqual({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  })
   expect(spy).toHaveBeenCalledTimes(1)
   expect(spy.mock.calls[0]).toContain(err)
 })

@@ -1,6 +1,7 @@
-import { finalText } from './formatter.ts'
+import { CANCELLED_RESULT } from './constants.ts'
+import { formatFinalText } from './formatter.ts'
 import { PendingRequests } from './pending.ts'
-import type { ApprovalRequest, Messenger, Outcome } from './types.ts'
+import type { ApprovalRequest, Messenger, RequestResult } from './types.ts'
 
 export class SendError extends Error {}
 
@@ -20,16 +21,16 @@ export class ApprovalService {
     this.#newId = newId
   }
 
-  async request(req: ApprovalRequest, signal?: AbortSignal): Promise<Outcome | null> {
+  async request(request: ApprovalRequest, signal?: AbortSignal): Promise<RequestResult> {
     const id = this.#newId()
-    let ref
+    let reference
     try {
-      ref = await this.#messenger.sendRequest(id, req.text, req.options)
+      reference = await this.#messenger.sendRequest(id, request.text, request.options)
     } catch (cause) {
       throw new SendError('failed to send approval request', { cause })
     }
 
-    const settled = this.#pending.open(id, req)
+    const settled = this.#pending.open(id, request)
     const onAbort = () => {
       this.#pending.cancel(id)
     }
@@ -41,13 +42,19 @@ export class ApprovalService {
     signal?.removeEventListener('abort', onAbort)
 
     try {
-      await this.#messenger.finalize(ref, finalText(req.text, settlement, this.#now()))
-    } catch (err) {
-      console.error('failed to finalize approval message', err)
+      await this.#messenger.finalize(
+        reference,
+        formatFinalText(request.text, settlement, this.#now()),
+      )
+    } catch (error) {
+      console.error('failed to finalize approval message', error)
     }
 
-    if (settlement.kind === 'cancelled') return null
-    return { answer: settlement.answer, timedOut: settlement.kind === 'timedOut' }
+    if (settlement.kind === 'cancelled') return CANCELLED_RESULT
+    return {
+      kind: 'completed',
+      outcome: { answer: settlement.answer, timedOut: settlement.kind === 'timedOut' },
+    }
   }
 
   tap(id: string, optionIndex: number): 'accepted' | 'expired' {

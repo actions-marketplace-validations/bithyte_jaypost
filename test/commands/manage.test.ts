@@ -3,8 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
 import { runResetOwner, runStatus, runUninstall } from '../../src/commands/index.ts'
-import { installPaths, writeInstall } from '../../src/install/index.ts'
+import { resolveInstallPaths, writeInstall } from '../../src/install/index.ts'
 import type { InstallPaths, Target, TargetName } from '../../src/install/index.ts'
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
 let tmp: string
 let paths: InstallPaths
@@ -13,12 +15,12 @@ let out: string[]
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'manage-'))
-  paths = installPaths({ HOME: tmp, XDG_CONFIG_HOME: join(tmp, 'cfg') })
+  paths = resolveInstallPaths({ HOME: tmp, XDG_CONFIG_HOME: join(tmp, 'cfg') })
   order = []
   out = []
 })
 
-function fake(name: TargetName, running = true): Target {
+function fake(name: TargetName, running = true): Mutable<Target> {
   return {
     name,
     available: vi.fn(),
@@ -35,7 +37,7 @@ function fake(name: TargetName, running = true): Target {
     }),
     isRunning: vi.fn(async () => running),
     logsHint: vi.fn(() => 'logs hint'),
-  } as unknown as Target
+  } as unknown as Mutable<Target>
 }
 
 function targets(over: Partial<Record<TargetName, Target>> = {}) {
@@ -127,7 +129,7 @@ test('reset-owner wait exit codes', async () => {
   seed()
   for (const [r, code] of [
     ['interrupted', 130],
-    ['not-started', 1],
+    ['notStarted', 1],
     ['stopped', 1],
   ] as const) {
     expect(await runResetOwner({ ...base(), wait: vi.fn(async () => r) })).toBe(code)

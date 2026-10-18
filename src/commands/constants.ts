@@ -1,6 +1,6 @@
 import type { TargetName } from '../install/index.ts'
 
-export const TARGET_LABELS: Record<TargetName, string> = {
+export const TARGET_LABELS: Readonly<Record<TargetName, string>> = {
   quadlet: 'Podman Quadlet (user service)',
   compose: 'Docker Compose',
   systemd: 'systemd user service (npm)',

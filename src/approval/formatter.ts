@@ -1,23 +1,23 @@
 import type { Settlement } from './types.ts'
 
-function hhmm(at: Date): string {
-  const h = String(at.getHours()).padStart(2, '0')
-  const m = String(at.getMinutes()).padStart(2, '0')
-  return `${h}:${m}`
+function formatTime(at: Date): string {
+  const hours = String(at.getHours()).padStart(2, '0')
+  const minutes = String(at.getMinutes()).padStart(2, '0')
+  return `${hours}:${minutes}`
 }
 
-export function resultLine(s: Settlement, at: Date): string {
-  const time = hhmm(at)
-  switch (s.kind) {
+export function formatResultLine(settlement: Settlement, at: Date): string {
+  const time = formatTime(at)
+  switch (settlement.kind) {
     case 'answered':
-      return `✅ ${s.answer}, ${time}`
+      return `✅ ${settlement.answer}, ${time}`
     case 'timedOut':
-      return `⏱ Timed out, ${s.answer}, ${time}`
+      return `⏱ Timed out, ${settlement.answer}, ${time}`
     case 'cancelled':
       return `🚫 Cancelled, ${time}`
   }
 }
 
-export function finalText(original: string, s: Settlement, at: Date): string {
-  return `${original}\n\n${resultLine(s, at)}`
+export function formatFinalText(original: string, settlement: Settlement, at: Date): string {
+  return `${original}\n\n${formatResultLine(settlement, at)}`
 }

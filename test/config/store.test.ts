@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
 import {
   DEFAULT_PORT,
-  configDir,
-  configPath,
+  resolveConfigDirectory,
+  resolveConfigPath,
   loadConfig,
   readConfigFile,
   updateConfigFile,
@@ -18,15 +18,15 @@ beforeEach(() => {
   file = join(dir, 'nested', 'config.json')
 })
 
-test('configPath precedence: APPROVAL_BOT_CONFIG > XDG_CONFIG_HOME > HOME', () => {
+test('resolveConfigPath precedence: APPROVAL_BOT_CONFIG > XDG_CONFIG_HOME > HOME', () => {
   expect(
-    configPath({ APPROVAL_BOT_CONFIG: '/x/c.json', XDG_CONFIG_HOME: '/xdg', HOME: '/h' }),
+    resolveConfigPath({ APPROVAL_BOT_CONFIG: '/x/c.json', XDG_CONFIG_HOME: '/xdg', HOME: '/h' }),
   ).toBe('/x/c.json')
-  expect(configPath({ XDG_CONFIG_HOME: '/xdg', HOME: '/h' })).toBe(
+  expect(resolveConfigPath({ XDG_CONFIG_HOME: '/xdg', HOME: '/h' })).toBe(
     '/xdg/telegram-approval-bot/config.json',
   )
-  expect(configPath({ HOME: '/h' })).toBe('/h/.config/telegram-approval-bot/config.json')
-  expect(configPath({ APPROVAL_BOT_CONFIG: '', XDG_CONFIG_HOME: '', HOME: '/h' })).toBe(
+  expect(resolveConfigPath({ HOME: '/h' })).toBe('/h/.config/telegram-approval-bot/config.json')
+  expect(resolveConfigPath({ APPROVAL_BOT_CONFIG: '', XDG_CONFIG_HOME: '', HOME: '/h' })).toBe(
     '/h/.config/telegram-approval-bot/config.json',
   )
 })
@@ -120,8 +120,10 @@ test('updateConfigFile does not copy env values into the file', () => {
 })
 
 test('configDir is the directory of the default config path', () => {
-  expect(configDir({ XDG_CONFIG_HOME: '/xdg', HOME: '/h' })).toBe('/xdg/telegram-approval-bot')
-  expect(configDir({ HOME: '/h' })).toBe('/h/.config/telegram-approval-bot')
+  expect(resolveConfigDirectory({ XDG_CONFIG_HOME: '/xdg', HOME: '/h' })).toBe(
+    '/xdg/telegram-approval-bot',
+  )
+  expect(resolveConfigDirectory({ HOME: '/h' })).toBe('/h/.config/telegram-approval-bot')
 })
 
 test.each(['0', '65536', '-1', 'abc', '80.5'])('invalid port %s throws', (p) => {

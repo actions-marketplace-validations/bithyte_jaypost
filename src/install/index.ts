@@ -1,27 +1,28 @@
-export { composeTarget } from './compose.ts'
+export { createComposeTarget } from './compose.ts'
 export { TARGET_ORDER } from './constants.ts'
 export { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
-export { installPaths } from './paths.ts'
-export { quadletTarget } from './quadlet.ts'
+export { resolveInstallPaths } from './paths.ts'
+export { createQuadletTarget } from './quadlet.ts'
 export {
-  defaultTarget,
-  detect,
-  findExisting,
+  createTargets,
+  detectTargets,
+  findDefaultTarget,
+  findExistingInstall,
   findLeftoverSecrets,
-  makeTargets,
 } from './registry.ts'
 export { readInstall, removeInstall, writeInstall } from './state.ts'
-export { systemdTarget, unitConfigFile } from './systemd.ts'
+export { createSystemdTarget, findUnitConfigFile } from './systemd.ts'
 export {
-  composeYaml,
-  dockerfile,
-  envFile,
-  execWord,
-  quadletContainer,
-  systemdQuote,
-  systemdUnit,
+  formatComposeYaml,
+  formatDockerfile,
+  formatEnvFile,
+  formatQuadletContainer,
+  formatSystemdUnit,
+  quoteExecWord,
+  quoteSystemdValue,
 } from './templates.ts'
 export type {
+  Availability,
   CliLocation,
   DetectedTarget,
   ExistingInstall,

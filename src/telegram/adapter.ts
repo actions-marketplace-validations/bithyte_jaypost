@@ -1,11 +1,11 @@
 import type { Bot } from 'grammy'
-import type { MessageRef, Messenger } from '../approval/index.ts'
+import type { MessageReference, Messenger } from '../approval/index.ts'
 import { updateConfigFile } from '../config/index.ts'
 import { CALLBACK_DATA_PATTERN } from './constants.ts'
 import type { Pairing } from './pairing.ts'
-import type { Owner, Tap, TapRoute } from './types.ts'
+import type { Owner, PairingMessage, Tap, TapRoute } from './types.ts'
 
-export function callbackData(id: string, optionIndex: number): string {
+export function formatCallbackData(id: string, optionIndex: number): string {
   return `${id}:${optionIndex}`
 }
 
@@ -16,26 +16,26 @@ export function routeTap(
   tap: Tap,
 ): TapRoute {
   if (ownerId === undefined || fromId !== ownerId) return 'ignored'
-  const m = data === undefined ? null : CALLBACK_DATA_PATTERN.exec(data)
-  if (!m) return 'expired'
-  return tap(m[1]!, Number(m[2]))
+  const [, id, rawIndex] = (data === undefined ? null : CALLBACK_DATA_PATTERN.exec(data)) ?? []
+  if (id === undefined || rawIndex === undefined) return 'expired'
+  return tap(id, Number(rawIndex))
 }
 
 export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger {
   return {
-    async sendRequest(id, text, options): Promise<MessageRef> {
+    async sendRequest(id, text, options): Promise<MessageReference> {
       if (owner.id === undefined) throw new Error('bot is not paired yet')
       const sent = await bot.api.sendMessage(owner.id, text, {
         reply_markup: {
-          inline_keyboard: options.map((label, i) => [
-            { text: label, callback_data: callbackData(id, i) },
+          inline_keyboard: options.map((label, index) => [
+            { text: label, callback_data: formatCallbackData(id, index) },
           ]),
         },
       })
       return { chatId: sent.chat.id, messageId: sent.message_id }
     },
-    async finalize(ref, text) {
-      await bot.api.editMessageText(ref.chatId, ref.messageId, text, {
+    async finalize(reference, text) {
+      await bot.api.editMessageText(reference.chatId, reference.messageId, text, {
         reply_markup: { inline_keyboard: [] },
       })
     },
@@ -43,22 +43,22 @@ export function createTelegramMessenger(bot: Bot, owner: Owner): Messenger {
 }
 
 export function registerTapHandler(bot: Bot, owner: Owner, tap: Tap): void {
-  bot.on('callback_query:data', async (ctx) => {
-    const route = routeTap(ctx.from.id, ctx.callbackQuery.data, owner.id, tap)
-    if (route === 'expired') await ctx.answerCallbackQuery({ text: 'Expired' })
-    else await ctx.answerCallbackQuery()
+  bot.on('callback_query:data', async (context) => {
+    const route = routeTap(context.from.id, context.callbackQuery.data, owner.id, tap)
+    if (route === 'expired') await context.answerCallbackQuery({ text: 'Expired' })
+    else await context.answerCallbackQuery()
   })
 }
 
 export function handlePairingMessage(
-  msg: { fromId: number; chatType: string; text: string },
+  message: PairingMessage,
   pairing: Pairing,
   onPaired: (id: number) => void,
 ): string | undefined {
-  if (msg.chatType !== 'private') return undefined
-  const result = pairing.attempt(msg.fromId, msg.text)
+  if (message.chatType !== 'private') return undefined
+  const result = pairing.attempt(message.fromId, message.text)
   if (result === 'paired') {
-    onPaired(msg.fromId)
+    onPaired(message.fromId)
     return 'Paired. Approval requests will appear here.'
   }
   if (result === 'wrong') {
@@ -72,17 +72,17 @@ export function registerPairingHandler(
   pairing: Pairing,
   onPaired: (id: number) => void,
 ): void {
-  bot.on('message:text', async (ctx) => {
+  bot.on('message:text', async (context) => {
     const reply = handlePairingMessage(
-      { fromId: ctx.from.id, chatType: ctx.chat.type, text: ctx.message.text },
+      { fromId: context.from.id, chatType: context.chat.type, text: context.message.text },
       pairing,
       onPaired,
     )
-    if (reply !== undefined) await ctx.reply(reply)
+    if (reply !== undefined) await context.reply(reply)
   })
 }
 
-export function makeOnPaired(
+export function createOnPaired(
   owner: Owner,
   path: string,
   log: (line: string) => void = console.error,

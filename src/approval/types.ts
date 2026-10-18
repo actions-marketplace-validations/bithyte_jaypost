@@ -1,35 +1,47 @@
-export interface ApprovalRequest {
-  text: string
-  options: string[]
-  timeoutOption: string
-  timeoutSeconds: number
+export type ApprovalRequest = {
+  readonly text: string
+  readonly options: readonly string[]
+  readonly timeoutOption: string
+  readonly timeoutSeconds: number
 }
 
-export interface Outcome {
-  answer: string
-  timedOut: boolean
+/** The answer sent back to the HTTP client. */
+export type Outcome = {
+  readonly answer: string
+  readonly timedOut: boolean
 }
+
+/** What `ApprovalService.request` resolves to; `cancelled` when its signal aborted. */
+export type RequestResult =
+  | { readonly kind: 'completed'; readonly outcome: Outcome }
+  | { readonly kind: 'cancelled' }
 
 export type Settlement =
-  | { kind: 'answered'; answer: string }
-  | { kind: 'timedOut'; answer: string }
-  | { kind: 'cancelled' }
+  | { readonly kind: 'answered'; readonly answer: string }
+  | { readonly kind: 'timedOut'; readonly answer: string }
+  | { readonly kind: 'cancelled' }
 
-export type ParseResult = { ok: true; value: ApprovalRequest } | { ok: false; error: string }
+export type ParseResult =
+  | { readonly ok: true; readonly value: ApprovalRequest }
+  | { readonly ok: false; readonly error: string }
 
-export interface MessageRef {
-  chatId: number
-  messageId: number
+export type MessageReference = {
+  readonly chatId: number
+  readonly messageId: number
 }
 
-export interface Messenger {
-  sendRequest(id: string, text: string, options: string[]): Promise<MessageRef>
+export type Messenger = {
+  readonly sendRequest: (
+    id: string,
+    text: string,
+    options: readonly string[],
+  ) => Promise<MessageReference>
   /** Replace the message text and remove its buttons. */
-  finalize(ref: MessageRef, text: string): Promise<void>
+  readonly finalize: (reference: MessageReference, text: string) => Promise<void>
 }
 
-export interface PendingEntry {
-  req: ApprovalRequest
-  timer: ReturnType<typeof setTimeout>
-  resolve: (settlement: Settlement) => void
+export type PendingEntry = {
+  readonly request: ApprovalRequest
+  readonly timer: ReturnType<typeof setTimeout>
+  readonly resolve: (settlement: Settlement) => void
 }

@@ -1,25 +1,25 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { configDir } from '../config/index.ts'
+import { resolveConfigDirectory } from '../config/index.ts'
 import type { InstallPaths } from './types.ts'
 
-function nonEmpty(v: string | undefined): string | undefined {
-  return v === undefined || v === '' ? undefined : v
+function toNonEmpty(value: string | undefined): string | undefined {
+  return value === undefined || value === '' ? undefined : value
 }
 
-export function installPaths(env: NodeJS.ProcessEnv = process.env): InstallPaths {
-  const home = nonEmpty(env.HOME) ?? homedir()
-  const dir = configDir(env)
-  const xdgConfig = nonEmpty(env.XDG_CONFIG_HOME) ?? join(home, '.config')
-  const xdgData = nonEmpty(env.XDG_DATA_HOME) ?? join(home, '.local', 'share')
+export function resolveInstallPaths(env: NodeJS.ProcessEnv = process.env): InstallPaths {
+  const home = toNonEmpty(env.HOME) ?? homedir()
+  const configDirectory = resolveConfigDirectory(env)
+  const xdgConfigHome = toNonEmpty(env.XDG_CONFIG_HOME) ?? join(home, '.config')
+  const xdgDataHome = toNonEmpty(env.XDG_DATA_HOME) ?? join(home, '.local', 'share')
   return {
-    configDir: dir,
-    configFile: join(dir, 'config.json'),
-    installFile: join(dir, 'install.json'),
-    composeDir: join(dir, 'compose'),
-    quadletDir: join(dir, 'quadlet'),
-    systemdUnit: join(xdgConfig, 'systemd', 'user', 'telegram-approval-bot.service'),
-    quadletUnit: join(xdgConfig, 'containers', 'systemd', 'telegram-approval-bot.container'),
-    userNpmPrefix: join(xdgData, 'telegram-approval-bot', 'npm'),
+    configDirectory,
+    configFile: join(configDirectory, 'config.json'),
+    installFile: join(configDirectory, 'install.json'),
+    composeDirectory: join(configDirectory, 'compose'),
+    quadletDirectory: join(configDirectory, 'quadlet'),
+    systemdUnit: join(xdgConfigHome, 'systemd', 'user', 'telegram-approval-bot.service'),
+    quadletUnit: join(xdgConfigHome, 'containers', 'systemd', 'telegram-approval-bot.container'),
+    userNpmPrefix: join(xdgDataHome, 'telegram-approval-bot', 'npm'),
   }
 }

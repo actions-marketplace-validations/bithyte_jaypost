@@ -1,3 +1,4 @@
+import { CANCELLED_SETTLEMENT } from './constants.ts'
 import type { ApprovalRequest, PendingEntry, Settlement } from './types.ts'
 
 export class PendingRequests {
@@ -7,25 +8,25 @@ export class PendingRequests {
     return this.#entries.size
   }
 
-  open(id: string, req: ApprovalRequest): Promise<Settlement> {
+  open(id: string, request: ApprovalRequest): Promise<Settlement> {
     return new Promise((resolve) => {
       const timer = setTimeout(
-        () => this.#settle(id, { kind: 'timedOut', answer: req.timeoutOption }),
-        req.timeoutSeconds * 1000,
+        () => this.#settle(id, { kind: 'timedOut', answer: request.timeoutOption }),
+        request.timeoutSeconds * 1000,
       )
-      this.#entries.set(id, { req, timer, resolve })
+      this.#entries.set(id, { request, timer, resolve })
     })
   }
 
   answer(id: string, optionIndex: number): boolean {
     const entry = this.#entries.get(id)
-    const answer = entry?.req.options[optionIndex]
+    const answer = entry?.request.options[optionIndex]
     if (answer === undefined) return false
     return this.#settle(id, { kind: 'answered', answer })
   }
 
   cancel(id: string): boolean {
-    return this.#settle(id, { kind: 'cancelled' })
+    return this.#settle(id, CANCELLED_SETTLEMENT)
   }
 
   #settle(id: string, settlement: Settlement): boolean {

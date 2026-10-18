@@ -3,11 +3,15 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
 import { readConfigFile } from '../../src/config/index.ts'
-import { installPaths, systemdTarget, unitConfigFile } from '../../src/install/index.ts'
+import {
+  resolveInstallPaths,
+  createSystemdTarget,
+  findUnitConfigFile,
+} from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
 
 let tmp: string
-let calls: [string, string[]][]
+let calls: [string, readonly string[]][]
 let prefixOut: string
 let rootOut: string
 let failRestart: boolean
@@ -25,8 +29,8 @@ const fakeExec: Exec = async (cmd, args) => {
 
 function make(env: NodeJS.ProcessEnv = {}, selfPath = '/src/dist/cli.js') {
   const e = { HOME: tmp, ...env }
-  const paths = installPaths(e)
-  const t = systemdTarget(
+  const paths = resolveInstallPaths(e)
+  const t = createSystemdTarget(
     { exec: fakeExec, paths, env: e, user: 'me' },
     { selfPath, nodePath: '/usr/bin/node' },
   )
@@ -202,12 +206,14 @@ test('purge hint names the user prefix when the fallback was used', async () => 
   log.mockRestore()
 })
 
-test('unitConfigFile parses quoted and unquoted Environment lines', () => {
-  expect(unitConfigFile('[Service]\nEnvironment="APPROVAL_BOT_CONFIG=/a b/50%%/c.json"\n')).toBe(
-    '/a b/50%/c.json',
+test('findUnitConfigFile parses quoted and unquoted Environment lines', () => {
+  expect(
+    findUnitConfigFile('[Service]\nEnvironment="APPROVAL_BOT_CONFIG=/a b/50%%/c.json"\n'),
+  ).toBe('/a b/50%/c.json')
+  expect(findUnitConfigFile('Environment="APPROVAL_BOT_CONFIG=/x\\"q.json"\n')).toBe('/x"q.json')
+  expect(findUnitConfigFile('Environment=APPROVAL_BOT_CONFIG=/plain/c.json\n')).toBe(
+    '/plain/c.json',
   )
-  expect(unitConfigFile('Environment="APPROVAL_BOT_CONFIG=/x\\"q.json"\n')).toBe('/x"q.json')
-  expect(unitConfigFile('Environment=APPROVAL_BOT_CONFIG=/plain/c.json\n')).toBe('/plain/c.json')
-  expect(unitConfigFile('Environment="FOO=bar"\nExecStart=x\n')).toBeUndefined()
-  expect(unitConfigFile('[Unit]\n')).toBeUndefined()
+  expect(findUnitConfigFile('Environment="FOO=bar"\nExecStart=x\n')).toBeUndefined()
+  expect(findUnitConfigFile('[Unit]\n')).toBeUndefined()
 })

@@ -1,6 +1,16 @@
-export type ExecResult = { code: number; stdout: string; stderr: string }
+export type ExecResult = {
+  readonly code: number
+  readonly stdout: string
+  readonly stderr: string
+}
+
+export type ExecOptions = {
+  readonly inherit?: boolean
+  readonly env?: NodeJS.ProcessEnv
+}
+
 export type Exec = (
-  cmd: string,
-  args: string[],
-  opts?: { inherit?: boolean; env?: NodeJS.ProcessEnv },
+  command: string,
+  args: readonly string[],
+  options?: ExecOptions,
 ) => Promise<ExecResult>

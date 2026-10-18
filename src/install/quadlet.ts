@@ -12,143 +12,153 @@ import {
   VOLUME_NAME,
 } from './constants.ts'
 import { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
-import { dockerfile, envFile, quadletContainer } from './templates.ts'
+import { formatDockerfile, formatEnvFile, formatQuadletContainer } from './templates.ts'
 import type { InstallRecord, Secrets, Target, TargetDeps } from './types.ts'
 
-const tagOf = (version: string) => `localhost/${SERVICE_NAME}:${version}`
+function formatImageTag(version: string): string {
+  return `localhost/${SERVICE_NAME}:${version}`
+}
 
-export function quadletTarget(deps: TargetDeps): Target {
+export function createQuadletTarget(deps: TargetDeps): Target {
   const { exec, paths, user } = deps
-  const envPath = join(paths.quadletDir, '.env')
-  const ctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
+  const envPath = join(paths.quadletDirectory, '.env')
+  const systemctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
 
   return {
     name: 'quadlet',
     async available() {
-      let out: string
+      let output: string
       try {
-        const r = await exec('podman', ['--version'])
-        if (r.code !== 0) return { ok: false, reason: 'podman not installed' }
-        out = r.stdout
+        const result = await exec('podman', ['--version'])
+        if (result.code !== 0) return { ok: false, reason: 'podman not installed' }
+        output = result.stdout
       } catch {
         return { ok: false, reason: 'podman not installed' }
       }
-      const m = PODMAN_VERSION_PATTERN.exec(out)
-      if (!m) return { ok: false, reason: `can't parse podman version: ${out.trim()}` }
-      const major = Number(m[1])
-      const minor = Number(m[2])
+      const match = PODMAN_VERSION_PATTERN.exec(output)
+      if (!match) return { ok: false, reason: `can't parse podman version: ${output.trim()}` }
+      const major = Number(match[1])
+      const minor = Number(match[2])
       if (major > MIN_PODMAN_MAJOR || (major === MIN_PODMAN_MAJOR && minor >= MIN_PODMAN_MINOR)) {
         return { ok: true }
       }
-      return { ok: false, reason: `podman ${m[0]} is too old; quadlet needs 4.4 or newer` }
+      return { ok: false, reason: `podman ${match[0]} is too old; quadlet needs 4.4 or newer` }
     },
-    async install(opts): Promise<InstallRecord> {
-      mkdirSync(paths.quadletDir, { recursive: true })
-      if (opts.tarball !== undefined) {
-        const dest = join(paths.quadletDir, basename(opts.tarball))
-        if (resolve(opts.tarball) !== resolve(dest)) copyFileSync(opts.tarball, dest)
+    async install(options): Promise<InstallRecord> {
+      mkdirSync(paths.quadletDirectory, { recursive: true })
+      if (options.tarball !== undefined) {
+        const destination = join(paths.quadletDirectory, basename(options.tarball))
+        if (resolve(options.tarball) !== resolve(destination)) {
+          copyFileSync(options.tarball, destination)
+        }
       }
       // Keep the token out of the build context.
-      writeFileSync(join(paths.quadletDir, '.dockerignore'), DOCKERIGNORE)
+      writeFileSync(join(paths.quadletDirectory, '.dockerignore'), DOCKERIGNORE)
       writeFileSync(
-        join(paths.quadletDir, 'Dockerfile'),
-        dockerfile({ version: opts.version, ...(opts.tarball ? { tarball: opts.tarball } : {}) }),
+        join(paths.quadletDirectory, 'Dockerfile'),
+        formatDockerfile({
+          version: options.version,
+          ...(options.tarball ? { tarball: options.tarball } : {}),
+        }),
       )
       writeEnvFile(
         envPath,
-        envFile({
-          token: opts.token,
-          port: opts.port,
-          ...(opts.ownerId === undefined ? {} : { ownerId: opts.ownerId }),
+        formatEnvFile({
+          token: options.token,
+          port: options.port,
+          ...(options.ownerId === undefined ? {} : { ownerId: options.ownerId }),
         }),
       )
-      const b = await exec('podman', ['build', '-t', tagOf(opts.version), paths.quadletDir], {
-        inherit: true,
-      })
-      if (b.code !== 0) throw new Error(`podman build failed (exit ${b.code})`)
+      const build = await exec(
+        'podman',
+        ['build', '-t', formatImageTag(options.version), paths.quadletDirectory],
+        { inherit: true },
+      )
+      if (build.code !== 0) throw new Error(`podman build failed (exit ${build.code})`)
       mkdirSync(dirname(paths.quadletUnit), { recursive: true })
       writeFileSync(
         paths.quadletUnit,
-        quadletContainer({ version: opts.version, port: opts.port, envFile: envPath }),
+        formatQuadletContainer({ version: options.version, port: options.port, envFile: envPath }),
       )
       for (const args of [['daemon-reload'], ['start', SERVICE_NAME]]) {
-        const r = await ctl(...args)
-        if (r.code !== 0) throw new Error(`systemctl ${args.join(' ')} failed: ${r.stderr.trim()}`)
+        const result = await systemctl(...args)
+        if (result.code !== 0) {
+          throw new Error(`systemctl ${args.join(' ')} failed: ${result.stderr.trim()}`)
+        }
       }
-      await ensureLinger(exec, user, opts.print)
-      return { target: 'quadlet', port: opts.port, version: opts.version }
+      await ensureLinger(exec, user, options.print)
+      return { target: 'quadlet', port: options.port, version: options.version }
     },
-    async readSecrets(rec): Promise<Secrets> {
-      const e = readEnvFile(envPath)
-      const out: Secrets = {}
-      if (e.BOT_TOKEN) out.token = e.BOT_TOKEN
-      if (e.OWNER_ID && INTEGER_PATTERN.test(e.OWNER_ID)) {
-        out.ownerId = Number(e.OWNER_ID)
-        return out
+    async readSecrets(record): Promise<Secrets> {
+      const values = readEnvFile(envPath)
+      const tokenSecrets = values.BOT_TOKEN ? { token: values.BOT_TOKEN } : {}
+      if (values.OWNER_ID && INTEGER_PATTERN.test(values.OWNER_ID)) {
+        return { ...tokenSecrets, ownerId: Number(values.OWNER_ID) }
       }
-      const r = await exec('podman', [
+      const result = await exec('podman', [
         'run',
         '--rm',
         '-v',
         `${VOLUME_NAME}:/data`,
-        tagOf(rec.version),
+        formatImageTag(record.version),
         SERVICE_NAME,
         'owner',
         'get',
       ])
-      const t = r.stdout.trim()
-      if (r.code === 0 && INTEGER_PATTERN.test(t)) out.ownerId = Number(t)
-      return out
+      const output = result.stdout.trim()
+      if (result.code === 0 && INTEGER_PATTERN.test(output)) {
+        return { ...tokenSecrets, ownerId: Number(output) }
+      }
+      return tokenSecrets
     },
-    async remove(rec, purge) {
-      await ctl('stop', SERVICE_NAME)
+    async remove(record, purge) {
+      await systemctl('stop', SERVICE_NAME)
       rmSync(paths.quadletUnit, { force: true })
-      await ctl('daemon-reload')
+      await systemctl('daemon-reload')
       if (!purge) return
       const failures: string[] = []
-      let volumeFailed = false
-      const step = async (label: string, args: string[]): Promise<boolean> => {
+      const step = async (label: string, args: readonly string[]): Promise<boolean> => {
         try {
-          const r = await exec('podman', args)
-          if (r.code === 0 || NOT_FOUND_PATTERN.test(r.stderr)) return true
-          failures.push(`${label}: ${r.stderr.trim() || `exit ${r.code}`}`)
-        } catch (e) {
-          failures.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
+          const result = await exec('podman', args)
+          if (result.code === 0 || NOT_FOUND_PATTERN.test(result.stderr)) return true
+          failures.push(`${label}: ${result.stderr.trim() || `exit ${result.code}`}`)
+        } catch (error) {
+          failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`)
         }
         return false
       }
-      volumeFailed = !(await step('podman volume rm', ['volume', 'rm', VOLUME_NAME]))
-      await step('podman rmi', ['rmi', tagOf(rec.version)])
-      if (!volumeFailed) rmSync(paths.quadletDir, { recursive: true, force: true })
+      const isVolumeRemoved = await step('podman volume rm', ['volume', 'rm', VOLUME_NAME])
+      await step('podman rmi', ['rmi', formatImageTag(record.version)])
+      if (isVolumeRemoved) rmSync(paths.quadletDirectory, { recursive: true, force: true })
       if (failures.length > 0) throw new Error(`Purge incomplete; ${failures.join('; ')}`)
     },
     async restart() {
-      const r = await ctl('restart', SERVICE_NAME)
-      if (r.code !== 0) throw new Error(`systemctl restart failed (exit ${r.code})`)
+      const result = await systemctl('restart', SERVICE_NAME)
+      if (result.code !== 0) throw new Error(`systemctl restart failed (exit ${result.code})`)
     },
-    async clearOwner(rec) {
+    async clearOwner(record) {
       removeEnvKey(envPath, 'OWNER_ID')
       try {
-        const r = await exec('podman', ['exec', SERVICE_NAME, SERVICE_NAME, 'owner', 'clear'])
-        if (r.code === 0) return
+        const result = await exec('podman', ['exec', SERVICE_NAME, SERVICE_NAME, 'owner', 'clear'])
+        if (result.code === 0) return
       } catch {
         // fall through to the one-off container
       }
-      const r = await exec('podman', [
+      const result = await exec('podman', [
         'run',
         '--rm',
         '-v',
         `${VOLUME_NAME}:/data`,
-        tagOf(rec.version),
+        formatImageTag(record.version),
         SERVICE_NAME,
         'owner',
         'clear',
       ])
-      if (r.code !== 0)
-        throw new Error(`Couldn't clear the owner in the container: ${r.stderr.trim()}`)
+      if (result.code !== 0)
+        throw new Error(`Couldn't clear the owner in the container: ${result.stderr.trim()}`)
     },
     async isRunning() {
-      return (await ctl('is-active', '--quiet', SERVICE_NAME)).code === 0
+      return (await systemctl('is-active', '--quiet', SERVICE_NAME)).code === 0
     },
     logsHint() {
       return `journalctl --user -u ${SERVICE_NAME} -f`

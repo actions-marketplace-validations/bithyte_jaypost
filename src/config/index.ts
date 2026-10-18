@@ -1,3 +1,9 @@
 export { DEFAULT_PORT, VERSION } from './constants.ts'
-export { configDir, configPath, loadConfig, readConfigFile, updateConfigFile } from './store.ts'
-export type { Config, FileConfig } from './types.ts'
+export {
+  loadConfig,
+  readConfigFile,
+  resolveConfigDirectory,
+  resolveConfigPath,
+  updateConfigFile,
+} from './store.ts'
+export type { Config, ConfigPatch, FileConfig } from './types.ts'

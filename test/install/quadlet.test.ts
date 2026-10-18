@@ -2,16 +2,16 @@ import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from '
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
-import { installPaths, quadletTarget } from '../../src/install/index.ts'
+import { resolveInstallPaths, createQuadletTarget } from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
 
 let tmp: string
-let calls: [string, string[]][]
+let calls: [string, readonly string[]][]
 let podmanVersion: string
 let ownerOut: string
 let failBuild: boolean
-let failArgs: (args: string[]) => string | undefined
-let failCtl: (args: string[]) => boolean
+let failArgs: (args: readonly string[]) => string | undefined
+let failCtl: (args: readonly string[]) => boolean
 
 const fakeExec: Exec = async (cmd, args) => {
   calls.push([cmd, args])
@@ -29,8 +29,8 @@ const fakeExec: Exec = async (cmd, args) => {
 
 function make() {
   const env = { HOME: tmp }
-  const paths = installPaths(env)
-  return { t: quadletTarget({ exec: fakeExec, paths, env, user: 'me' }), paths }
+  const paths = resolveInstallPaths(env)
+  return { t: createQuadletTarget({ exec: fakeExec, paths, env, user: 'me' }), paths }
 }
 const base = { version: '0.1.0', port: 8787, token: 't', print: () => {} }
 const rec = { target: 'quadlet' as const, port: 8787, version: '0.1.0' }
@@ -62,7 +62,7 @@ test('quadlet available on 4.4 and 5.x', async () => {
 
 test('quadlet unavailable when podman missing', async () => {
   const { paths } = make()
-  const t = quadletTarget({
+  const t = createQuadletTarget({
     exec: async () => {
       throw new Error('ENOENT')
     },
@@ -80,16 +80,16 @@ test('quadlet install builds tagged image then starts', async () => {
   const r = await t.install({ ...base, tarball: tar })
   expect(r).toEqual({ target: 'quadlet', port: 8787, version: '0.1.0' })
   expect(calls.filter(([c]) => c !== 'loginctl')).toEqual([
-    ['podman', ['build', '-t', TAG, paths.quadletDir]],
+    ['podman', ['build', '-t', TAG, paths.quadletDirectory]],
     ['systemctl', ['--user', 'daemon-reload']],
     ['systemctl', ['--user', 'start', 'telegram-approval-bot']],
   ])
-  const envPath = join(paths.quadletDir, '.env')
+  const envPath = join(paths.quadletDirectory, '.env')
   expect(statSync(envPath).mode & 0o777).toBe(0o600)
   expect(readFileSync(envPath, 'utf8')).toContain('BOT_TOKEN=t')
-  expect(existsSync(join(paths.quadletDir, 'pkg-1.tgz'))).toBe(true)
+  expect(existsSync(join(paths.quadletDirectory, 'pkg-1.tgz'))).toBe(true)
   expect(readFileSync(paths.quadletUnit, 'utf8')).toContain(`Image=${TAG}`)
-  expect(readFileSync(join(paths.quadletDir, '.dockerignore'), 'utf8')).toBe('.env\n')
+  expect(readFileSync(join(paths.quadletDirectory, '.dockerignore'), 'utf8')).toBe('.env\n')
 })
 
 test('install throws when build fails and does not start', async () => {
@@ -141,7 +141,7 @@ test('remove without purge keeps volume, image and .env', async () => {
   expect(calls).toContainEqual(['systemctl', ['--user', 'stop', 'telegram-approval-bot']])
   expect(calls.some(([c]) => c === 'podman')).toBe(false)
   expect(existsSync(paths.quadletUnit)).toBe(false)
-  expect(existsSync(join(paths.quadletDir, '.env'))).toBe(true)
+  expect(existsSync(join(paths.quadletDirectory, '.env'))).toBe(true)
 })
 
 test('remove with purge drops volume, image, dir', async () => {
@@ -151,7 +151,7 @@ test('remove with purge drops volume, image, dir', async () => {
   await t.remove(rec, true)
   expect(calls).toContainEqual(['podman', ['volume', 'rm', 'telegram-approval-bot-data']])
   expect(calls).toContainEqual(['podman', ['rmi', TAG]])
-  expect(existsSync(paths.quadletDir)).toBe(false)
+  expect(existsSync(paths.quadletDirectory)).toBe(false)
 })
 
 test('restart, isRunning, logsHint', async () => {
@@ -195,7 +195,7 @@ test('purge tolerates not-found errors', async () => {
   await t.install(base)
   failArgs = (a) => (a[0] === 'volume' || a[0] === 'rmi' ? 'Error: no such volume' : undefined)
   await t.remove(rec, true)
-  expect(existsSync(paths.quadletDir)).toBe(false)
+  expect(existsSync(paths.quadletDirectory)).toBe(false)
 })
 
 test('purge runs all steps, throws, and keeps dir when volume rm fails', async () => {
@@ -206,7 +206,7 @@ test('purge runs all steps, throws, and keeps dir when volume rm fails', async (
   calls = []
   await expect(t.remove(rec, true)).rejects.toThrow(/volume in use.*image busy/)
   expect(calls).toContainEqual(['podman', ['rmi', TAG]])
-  expect(existsSync(paths.quadletDir)).toBe(true)
+  expect(existsSync(paths.quadletDirectory)).toBe(true)
 })
 
 test('purge rmi failure alone throws but dir is deleted', async () => {
@@ -214,7 +214,7 @@ test('purge rmi failure alone throws but dir is deleted', async () => {
   await t.install(base)
   failArgs = (a) => (a[0] === 'rmi' ? 'image busy' : undefined)
   await expect(t.remove(rec, true)).rejects.toThrow(/image busy/)
-  expect(existsSync(paths.quadletDir)).toBe(false)
+  expect(existsSync(paths.quadletDirectory)).toBe(false)
 })
 
 test('restart throws on a non-zero exit', async () => {

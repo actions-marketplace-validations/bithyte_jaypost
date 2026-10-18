@@ -1,1 +1,1 @@
-export const MAX_BODY_BYTES = 65536
+export const MAX_BODY_BYTES = 65_536

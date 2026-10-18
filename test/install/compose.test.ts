@@ -2,12 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
-import { composeTarget, installPaths } from '../../src/install/index.ts'
+import { createComposeTarget, resolveInstallPaths } from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
 
 let tmp: string
-let calls: [string, string[]][]
-let fail: (cmd: string, args: string[]) => boolean
+let calls: [string, readonly string[]][]
+let fail: (cmd: string, args: readonly string[]) => boolean
 let ownerOut: string
 
 const fakeExec: Exec = async (cmd, args) => {
@@ -20,8 +20,8 @@ const fakeExec: Exec = async (cmd, args) => {
 
 function make() {
   const env = { HOME: tmp }
-  const paths = installPaths(env)
-  return { t: composeTarget({ exec: fakeExec, paths, env, user: 'me' }), paths }
+  const paths = resolveInstallPaths(env)
+  return { t: createComposeTarget({ exec: fakeExec, paths, env, user: 'me' }), paths }
 }
 const base = { version: '0.1.0', port: 8787, token: 't', print: () => {} }
 const rec = { target: 'compose' as const, port: 8787, version: '0.1.0' }
@@ -42,7 +42,7 @@ test('unavailable when compose v2 is missing', async () => {
 test('unavailable when docker missing entirely (throws)', async () => {
   const { paths } = make()
   const env = { HOME: tmp }
-  const t = composeTarget({
+  const t = createComposeTarget({
     exec: async () => {
       throw new Error('ENOENT')
     },
@@ -73,17 +73,19 @@ test('install writes files and runs up -d --build', async () => {
   writeFileSync(tar, 'x')
   const r = await t.install({ ...base, ownerId: 9, tarball: tar })
   expect(r).toEqual({ target: 'compose', port: 8787, version: '0.1.0' })
-  expect(readFileSync(join(paths.composeDir, 'Dockerfile'), 'utf8')).toContain('COPY pkg-1.tgz')
-  expect(existsSync(join(paths.composeDir, 'pkg-1.tgz'))).toBe(true)
-  expect(existsSync(join(paths.composeDir, 'compose.yaml'))).toBe(true)
-  const envPath = join(paths.composeDir, '.env')
+  expect(readFileSync(join(paths.composeDirectory, 'Dockerfile'), 'utf8')).toContain(
+    'COPY pkg-1.tgz',
+  )
+  expect(existsSync(join(paths.composeDirectory, 'pkg-1.tgz'))).toBe(true)
+  expect(existsSync(join(paths.composeDirectory, 'compose.yaml'))).toBe(true)
+  const envPath = join(paths.composeDirectory, '.env')
   expect(statSync(envPath).mode & 0o777).toBe(0o600)
   expect(readFileSync(envPath, 'utf8')).toContain('BOT_TOKEN=t')
   expect(readFileSync(envPath, 'utf8')).toContain('OWNER_ID=9')
-  expect(readFileSync(join(paths.composeDir, '.dockerignore'), 'utf8')).toBe('.env\n')
+  expect(readFileSync(join(paths.composeDirectory, '.dockerignore'), 'utf8')).toBe('.env\n')
   expect(calls.at(-1)).toEqual([
     'docker',
-    ['compose', '-f', join(paths.composeDir, 'compose.yaml'), 'up', '-d', '--build'],
+    ['compose', '-f', join(paths.composeDirectory, 'compose.yaml'), 'up', '-d', '--build'],
   ])
 })
 
@@ -121,7 +123,7 @@ test('clearOwner removes env key and runs owner clear', async () => {
   await t.install({ ...base, ownerId: 9 })
   calls = []
   await t.clearOwner(rec)
-  expect(readFileSync(join(paths.composeDir, '.env'), 'utf8')).not.toContain('OWNER_ID')
+  expect(readFileSync(join(paths.composeDirectory, '.env'), 'utf8')).not.toContain('OWNER_ID')
   expect(calls[0]![1]).toContain('clear')
 })
 
@@ -132,7 +134,7 @@ test('remove without purge keeps .env and volume', async () => {
   await t.remove(rec, false)
   expect(calls.some(([, a]) => a.includes('-v'))).toBe(false)
   expect(calls.some(([, a]) => a.includes('down'))).toBe(true)
-  expect(existsSync(join(paths.composeDir, '.env'))).toBe(true)
+  expect(existsSync(join(paths.composeDirectory, '.env'))).toBe(true)
 })
 
 test('remove with purge uses down -v and deletes dir', async () => {
@@ -141,7 +143,7 @@ test('remove with purge uses down -v and deletes dir', async () => {
   calls = []
   await t.remove(rec, true)
   expect(calls.some(([, a]) => a.includes('down') && a.includes('-v'))).toBe(true)
-  expect(existsSync(paths.composeDir)).toBe(false)
+  expect(existsSync(paths.composeDirectory)).toBe(false)
 })
 
 test('restart, isRunning, logsHint', async () => {
@@ -150,7 +152,7 @@ test('restart, isRunning, logsHint', async () => {
   expect(calls[0]![1]).toEqual(expect.arrayContaining(['up', '-d', '--force-recreate']))
   expect(await t.isRunning(rec)).toBe(false)
   expect(t.logsHint(rec)).toBe(
-    `docker compose -f ${join(paths.composeDir, 'compose.yaml')} logs -f`,
+    `docker compose -f ${join(paths.composeDirectory, 'compose.yaml')} logs -f`,
   )
 })
 
@@ -166,13 +168,13 @@ test('failing down leaves files in place', async () => {
   await t.install(base)
   fail = (_c, a) => a.includes('down')
   await expect(t.remove(rec, true)).rejects.toThrow(/down failed/)
-  expect(existsSync(join(paths.composeDir, '.env'))).toBe(true)
+  expect(existsSync(join(paths.composeDirectory, '.env'))).toBe(true)
 })
 
 test('install skips copying a tarball already in the build dir', async () => {
   const { t, paths } = make()
-  mkdirSync(paths.composeDir, { recursive: true })
-  const tar = join(paths.composeDir, 'pkg-2.tgz')
+  mkdirSync(paths.composeDirectory, { recursive: true })
+  const tar = join(paths.composeDirectory, 'pkg-2.tgz')
   writeFileSync(tar, 'x')
   await t.install({ ...base, tarball: tar })
   expect(readFileSync(tar, 'utf8')).toBe('x')

@@ -10,13 +10,13 @@ export function readInstall(file: string): InstallRecord | undefined {
   } catch {
     return undefined
   }
-  const r = installRecordSchema.safeParse(parsed)
-  return r.success ? r.data : undefined
+  const result = installRecordSchema.safeParse(parsed)
+  return result.success ? result.data : undefined
 }
 
-export function writeInstall(file: string, rec: InstallRecord): void {
+export function writeInstall(file: string, record: InstallRecord): void {
   mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(rec, null, 2) + '\n', { mode: 0o600 })
+  writeFileSync(file, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 })
   chmodSync(file, 0o600)
 }
 

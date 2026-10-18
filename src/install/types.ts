@@ -2,67 +2,65 @@ import type { z } from 'zod'
 import type { Exec } from '../system/index.ts'
 import type { installRecordSchema } from './schema.ts'
 
-export type InstallRecord = z.infer<typeof installRecordSchema>
+export type InstallRecord = Readonly<z.infer<typeof installRecordSchema>>
 export type TargetName = InstallRecord['target']
 
-export interface InstallPaths {
-  configDir: string
-  configFile: string
-  installFile: string
-  composeDir: string
-  quadletDir: string
-  systemdUnit: string
-  quadletUnit: string
-  userNpmPrefix: string
+export type InstallPaths = {
+  readonly configDirectory: string
+  readonly configFile: string
+  readonly installFile: string
+  readonly composeDirectory: string
+  readonly quadletDirectory: string
+  readonly systemdUnit: string
+  readonly quadletUnit: string
+  readonly userNpmPrefix: string
 }
 
-export interface Secrets {
-  token?: string
-  ownerId?: number
+export type Secrets = {
+  readonly token?: string
+  readonly ownerId?: number
 }
 
-export interface InstallOptions {
-  version: string
-  port: number
-  token: string
-  ownerId?: number
-  tarball?: string
-  print: (s: string) => void
+export type InstallOptions = {
+  readonly version: string
+  readonly port: number
+  readonly token: string
+  readonly ownerId?: number
+  readonly tarball?: string
+  readonly print: (text: string) => void
 }
 
-export interface Target {
-  name: TargetName
-  available(): Promise<{ ok: true } | { ok: false; reason: string }>
+export type Availability = { readonly ok: true } | { readonly ok: false; readonly reason: string }
+
+export type Target = {
+  readonly name: TargetName
+  readonly available: () => Promise<Availability>
   /** Writes files, builds if needed, starts. */
-  install(opts: InstallOptions): Promise<InstallRecord>
-  readSecrets(rec: InstallRecord): Promise<Secrets>
+  readonly install: (options: InstallOptions) => Promise<InstallRecord>
+  readonly readSecrets: (record: InstallRecord) => Promise<Secrets>
   /** Stop and delete files; purge also deletes token/owner storage. */
-  remove(rec: InstallRecord, purge: boolean): Promise<void>
-  restart(rec: InstallRecord): Promise<void>
-  clearOwner(rec: InstallRecord): Promise<void>
-  isRunning(rec: InstallRecord): Promise<boolean>
-  logsHint(rec: InstallRecord): string
+  readonly remove: (record: InstallRecord, purge: boolean) => Promise<void>
+  readonly restart: (record: InstallRecord) => Promise<void>
+  readonly clearOwner: (record: InstallRecord) => Promise<void>
+  readonly isRunning: (record: InstallRecord) => Promise<boolean>
+  readonly logsHint: (record: InstallRecord) => string
 }
 
-export interface TargetDeps {
-  exec: Exec
-  paths: InstallPaths
-  env: NodeJS.ProcessEnv
-  user: string
+export type TargetDeps = {
+  readonly exec: Exec
+  readonly paths: InstallPaths
+  readonly env: NodeJS.ProcessEnv
+  readonly user: string
 }
 
-export interface CliLocation {
-  selfPath: string
-  nodePath: string
+export type CliLocation = {
+  readonly selfPath: string
+  readonly nodePath: string
 }
 
-export interface DetectedTarget {
-  name: TargetName
-  ok: boolean
-  reason?: string
-}
+export type DetectedTarget = { readonly name: TargetName } & Availability
 
-export interface ExistingInstall {
-  rec: InstallRecord
-  legacy: boolean
+export type ExistingInstall = {
+  readonly record: InstallRecord
+  readonly legacy: boolean
 }

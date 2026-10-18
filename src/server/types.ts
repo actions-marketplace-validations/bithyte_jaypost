@@ -1,4 +1,4 @@
 import type { z } from 'zod'
 import type { statusInfoSchema } from './schema.ts'
 
-export type StatusInfo = z.infer<typeof statusInfoSchema>
+export type StatusInfo = Readonly<z.infer<typeof statusInfoSchema>>

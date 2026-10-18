@@ -1,8 +1,8 @@
 import { DEFAULT_PORT } from '../config/index.ts'
 import {
-  defaultTarget,
-  detect,
-  findExisting,
+  detectTargets,
+  findDefaultTarget,
+  findExistingInstall,
   findLeftoverSecrets,
   writeInstall,
 } from '../install/index.ts'
@@ -11,7 +11,7 @@ import { TARGET_LABELS } from './constants.ts'
 import { PromptAborted } from './prompts.ts'
 import type { InitArgs, InitDeps } from './types.ts'
 
-async function safeValidate(deps: InitDeps, token: string): Promise<string | undefined> {
+async function findBotUsername(deps: InitDeps, token: string): Promise<string | undefined> {
   try {
     return await deps.validateToken(token)
   } catch {
@@ -22,9 +22,9 @@ async function safeValidate(deps: InitDeps, token: string): Promise<string | und
 class Aborted extends Error {}
 
 function redact(message: string, secrets: readonly string[]): string {
-  let out = message
-  for (const s of secrets) if (s !== '') out = out.replaceAll(s, '***')
-  return out
+  let redacted = message
+  for (const secret of secrets) if (secret !== '') redacted = redacted.replaceAll(secret, '***')
+  return redacted
 }
 
 export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
@@ -32,12 +32,12 @@ export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
   const seen: string[] = []
   try {
     return await runInitInner(args, deps, seen)
-  } catch (err) {
-    if (err instanceof Aborted || err instanceof PromptAborted || deps.signal?.aborted) {
+  } catch (error) {
+    if (error instanceof Aborted || error instanceof PromptAborted || deps.signal?.aborted) {
       deps.print('')
       return 130
     }
-    const message = err instanceof Error ? err.message : String(err)
+    const message = error instanceof Error ? error.message : String(error)
     deps.print(`Install failed: ${redact(message, seen)}`)
     deps.print('Run telegram-approval-bot init again. Check the logs for details.')
     return 1
@@ -48,52 +48,53 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
   const { print, prompt } = deps
   const env = deps.env ?? process.env
 
-  const detected = await detect(deps.targets)
+  const detected = await detectTargets(deps.targets)
   let name: TargetName
   if (args.target) {
-    const d = detected.find((x) => x.name === args.target)
-    if (!d?.ok) {
-      print(`Cannot use ${args.target}: ${d?.reason ?? 'unavailable'}`)
+    const chosen = detected.find((candidate) => candidate.name === args.target)
+    if (!chosen?.ok) {
+      print(`Cannot use ${args.target}: ${chosen?.reason ?? 'unavailable'}`)
       return 1
     }
     name = args.target
   } else {
-    const def = defaultTarget(detected)
-    if (!def) {
+    const defaultName = findDefaultTarget(detected)
+    if (!defaultName) {
       print('No install target is available:')
-      for (const d of detected) print(`  ${d.name}: ${d.reason}`)
+      for (const candidate of detected)
+        if (!candidate.ok) print(`  ${candidate.name}: ${candidate.reason}`)
       return 1
     }
     name = await prompt.select(
       'Where should the bot run?',
-      detected.map((d) => ({
-        value: d.name,
-        label: TARGET_LABELS[d.name],
-        ...(d.ok ? {} : { disabled: d.reason ?? 'unavailable' }),
+      detected.map((candidate) => ({
+        value: candidate.name,
+        label: TARGET_LABELS[candidate.name],
+        ...(candidate.ok ? {} : { disabled: candidate.reason }),
       })),
-      def,
+      defaultName,
     )
   }
   const target = deps.targets[name]
 
   let secrets: Secrets = {}
-  let rec: InstallRecord | undefined
-  const existing = findExisting(deps.paths, deps.targets, env)
+  let record: InstallRecord | undefined
+  const existing = findExistingInstall(deps.paths, deps.targets, env)
   if (existing) {
-    rec = existing.rec
+    record = existing.record
     print(
-      `Found an existing ${rec.target} install (version ${rec.version}, port ${rec.port}).` +
+      `Found an existing ${record.target} install (version ${record.version}, port ${record.port}).` +
         (existing.legacy ? ' It looks like a legacy install from an older setup.' : ''),
     )
     if (!(await prompt.confirm('Replace it?', true))) return 0
-    const old = deps.targets[rec.target]
-    secrets = await old.readSecrets(rec)
+    const old = deps.targets[record.target]
+    secrets = await old.readSecrets(record)
     if (secrets.token) seen.push(secrets.token)
     // Record a legacy install too, so a failed run below can still find its config on retry.
-    if (existing.legacy) writeInstall(deps.paths.installFile, rec)
+    if (existing.legacy) writeInstall(deps.paths.installFile, record)
     // Remove first: the old service may hold the port we're about to check. install.json stays
     // until the new install replaces it; remove() keeps the secrets and is safe to repeat.
-    await old.remove(rec, false)
+    await old.remove(record, false)
   } else {
     secrets = findLeftoverSecrets(deps.paths, env)
     if (secrets.token) {
@@ -104,7 +105,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
 
   let token: string | undefined
   if (secrets.token) {
-    const bot = await safeValidate(deps, secrets.token)
+    const bot = await findBotUsername(deps, secrets.token)
     if (bot) {
       token = secrets.token
       print(`Reusing the saved bot token (@${bot}).`)
@@ -114,12 +115,12 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     if (deps.signal?.aborted) throw new Aborted()
     const candidate = await prompt.password('Bot token')
     seen.push(candidate)
-    if (candidate !== '' && (await safeValidate(deps, candidate))) token = candidate
+    if (candidate !== '' && (await findBotUsername(deps, candidate))) token = candidate
     else print('Telegram rejected that token (or could not be reached). Try again.')
   }
 
-  const port = args.port ?? rec?.port ?? DEFAULT_PORT
-  if (!(await deps.portFree(port))) {
+  const port = args.port ?? record?.port ?? DEFAULT_PORT
+  if (!(await deps.isPortFree(port))) {
     print(`Port ${port} is in use. Pick another with --port.`)
     return 1
   }

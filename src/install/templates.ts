@@ -1,19 +1,22 @@
 import { basename } from 'node:path'
 
-export function systemdQuote(s: string): string {
-  return `"${s.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('%', '%%')}"`
+export function quoteSystemdValue(value: string): string {
+  return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('%', '%%')}"`
 }
 
 /** Quotes one ExecStart word; `$` is also escaped there because systemd expands `$VAR` in ExecStart. */
-export function execWord(s: string): string {
-  return systemdQuote(s).replaceAll('$', () => '$$')
+export function quoteExecWord(word: string): string {
+  return quoteSystemdValue(word).replaceAll('$', () => '$$')
 }
 
-export function dockerfile(opts: { version: string; tarball?: string }): string {
+export function formatDockerfile(options: {
+  readonly version: string
+  readonly tarball?: string
+}): string {
   const install =
-    opts.tarball === undefined
-      ? `RUN npm i -g telegram-approval-bot@${opts.version}`
-      : `COPY ${basename(opts.tarball)} /tmp/pkg.tgz\nRUN npm i -g /tmp/pkg.tgz && rm /tmp/pkg.tgz`
+    options.tarball === undefined
+      ? `RUN npm i -g telegram-approval-bot@${options.version}`
+      : `COPY ${basename(options.tarball)} /tmp/pkg.tgz\nRUN npm i -g /tmp/pkg.tgz && rm /tmp/pkg.tgz`
   return `FROM node:24-slim
 ENV NODE_ENV=production APPROVAL_BOT_CONFIG=/data/config.json HOST=0.0.0.0
 ${install}
@@ -24,7 +27,7 @@ CMD ["telegram-approval-bot","start"]
 `
 }
 
-export function composeYaml(port: number): string {
+export function formatComposeYaml(port: number): string {
   return `name: telegram-approval-bot
 services:
   bot:
@@ -40,22 +43,33 @@ volumes:
 `
 }
 
-export function envFile(opts: { token: string; port: number; ownerId?: number }): string {
-  const lines = [`BOT_TOKEN=${opts.token}`, `PORT=${opts.port}`]
-  if (opts.ownerId !== undefined) lines.push(`OWNER_ID=${opts.ownerId}`)
+export function formatEnvFile(options: {
+  readonly token: string
+  readonly port: number
+  readonly ownerId?: number
+}): string {
+  const lines = [
+    `BOT_TOKEN=${options.token}`,
+    `PORT=${options.port}`,
+    ...(options.ownerId === undefined ? [] : [`OWNER_ID=${options.ownerId}`]),
+  ]
   return lines.join('\n') + '\n'
 }
 
-export function quadletContainer(opts: { version: string; port: number; envFile: string }): string {
+export function formatQuadletContainer(options: {
+  readonly version: string
+  readonly port: number
+  readonly envFile: string
+}): string {
   return `[Unit]
 Description=Telegram approval bot
 
 [Container]
-Image=localhost/telegram-approval-bot:${opts.version}
+Image=localhost/telegram-approval-bot:${options.version}
 ContainerName=telegram-approval-bot
 Volume=telegram-approval-bot-data:/data
-EnvironmentFile=${systemdQuote(opts.envFile)}
-PublishPort=127.0.0.1:${opts.port}:${opts.port}
+EnvironmentFile=${quoteSystemdValue(options.envFile)}
+PublishPort=127.0.0.1:${options.port}:${options.port}
 
 [Service]
 Restart=on-failure
@@ -65,15 +79,19 @@ WantedBy=default.target
 `
 }
 
-export function systemdUnit(opts: { node: string; cli: string; config: string }): string {
+export function formatSystemdUnit(options: {
+  readonly node: string
+  readonly cli: string
+  readonly config: string
+}): string {
   return `[Unit]
 Description=Telegram approval bot
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Environment=${systemdQuote(`APPROVAL_BOT_CONFIG=${opts.config}`)}
-ExecStart=${execWord(opts.node)} ${execWord(opts.cli)} start
+Environment=${quoteSystemdValue(`APPROVAL_BOT_CONFIG=${options.config}`)}
+ExecStart=${quoteExecWord(options.node)} ${quoteExecWord(options.cli)} start
 Restart=on-failure
 RestartSec=5
 

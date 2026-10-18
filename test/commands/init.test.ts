@@ -4,8 +4,10 @@ import { dirname, join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
 import { PromptAborted, runInit } from '../../src/commands/index.ts'
 import type { InitDeps } from '../../src/commands/index.ts'
-import { installPaths, readInstall, writeInstall } from '../../src/install/index.ts'
+import { resolveInstallPaths, readInstall, writeInstall } from '../../src/install/index.ts'
 import type { InstallPaths, Target, TargetName } from '../../src/install/index.ts'
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
 let tmp: string
 let paths: InstallPaths
@@ -14,12 +16,12 @@ let out: string[]
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'init-'))
-  paths = installPaths({ HOME: tmp, XDG_CONFIG_HOME: join(tmp, 'cfg') })
+  paths = resolveInstallPaths({ HOME: tmp, XDG_CONFIG_HOME: join(tmp, 'cfg') })
   order = []
   out = []
 })
 
-function fake(name: TargetName, ok = true, secrets = {}): Target {
+function fake(name: TargetName, ok = true, secrets = {}): Mutable<Target> {
   return {
     name,
     available: vi.fn(async () =>
@@ -37,7 +39,7 @@ function fake(name: TargetName, ok = true, secrets = {}): Target {
     clearOwner: vi.fn(),
     isRunning: vi.fn(async () => true),
     logsHint: vi.fn(() => `logs for ${name}`),
-  } as unknown as Target
+  } as unknown as Mutable<Target>
 }
 
 function deps(over: Partial<InitDeps> & { targets?: Record<TargetName, Target> } = {}): InitDeps {
@@ -50,7 +52,7 @@ function deps(over: Partial<InitDeps> & { targets?: Record<TargetName, Target> }
       select: vi.fn(async (_q, _o, initialValue) => initialValue),
     },
     validateToken: vi.fn(async () => 'mybot'),
-    portFree: vi.fn(async () => {
+    isPortFree: vi.fn(async () => {
       order.push('port')
       return true
     }),
@@ -99,7 +101,7 @@ test('declining replace changes nothing', async () => {
   const d = deps({
     targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
   })
-  d.prompt.confirm = vi.fn(async () => false)
+  vi.mocked(d.prompt.confirm).mockImplementation(async () => false)
   expect(await runInit({}, d)).toBe(0)
   expect(old.remove).not.toHaveBeenCalled()
   expect(old.readSecrets).not.toHaveBeenCalled()
@@ -144,7 +146,7 @@ test('invalid token reprompts without echoing Telegram errors', async () => {
     .mockResolvedValueOnce('bad-token-2')
     .mockResolvedValueOnce('good-token')
   const d = deps({ validateToken: validate })
-  d.prompt.password = secret
+  vi.mocked(d.prompt.password).mockImplementation(secret)
   // first call rejects: validateToken is documented to never throw, but be safe
   expect(await runInit({}, d)).toBe(0)
   expect(secret).toHaveBeenCalledTimes(3)
@@ -169,7 +171,7 @@ test('stored token invalid falls back to prompt', async () => {
 })
 
 test('port in use returns 1 before install', async () => {
-  const d = deps({ portFree: vi.fn(async () => false) })
+  const d = deps({ isPortFree: vi.fn(async () => false) })
   expect(await runInit({ port: 9999 }, d)).toBe(1)
   expect(out.join('\n')).toContain('Port 9999 is in use. Pick another with --port.')
   expect(d.targets.quadlet.install).not.toHaveBeenCalled()
@@ -184,7 +186,7 @@ test('interrupted wait returns 130 and leaves the service', async () => {
 })
 
 test('not-started and stopped return 1 with logs hint', async () => {
-  for (const r of ['not-started', 'stopped'] as const) {
+  for (const r of ['notStarted', 'stopped'] as const) {
     out = []
     const d = deps({ wait: vi.fn(async () => r) })
     expect(await runInit({}, d)).toBe(1)
@@ -222,7 +224,7 @@ test('passes tarball and signal through', async () => {
 
 test('Ctrl-C at target select returns 130, nothing installed', async () => {
   const d = deps()
-  d.prompt.select = vi.fn(async () => {
+  vi.mocked(d.prompt.select).mockImplementation(async () => {
     throw new PromptAborted()
   })
   expect(await runInit({}, d)).toBe(130)
@@ -233,7 +235,7 @@ test('Ctrl-C at Replace prompt returns 130 before any remove', async () => {
   seed('compose')
   const old = fake('compose', true, { token: 't' })
   const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
-  d.prompt.confirm = vi.fn(async () => {
+  vi.mocked(d.prompt.confirm).mockImplementation(async () => {
     throw new PromptAborted()
   })
   expect(await runInit({}, d)).toBe(130)
@@ -243,7 +245,7 @@ test('Ctrl-C at Replace prompt returns 130 before any remove', async () => {
 
 test('Ctrl-C at token prompt returns 130, no install', async () => {
   const d = deps()
-  d.prompt.password = vi.fn(async () => {
+  vi.mocked(d.prompt.password).mockImplementation(async () => {
     throw new PromptAborted()
   })
   expect(await runInit({}, d)).toBe(130)
@@ -253,7 +255,7 @@ test('Ctrl-C at token prompt returns 130, no install', async () => {
 test('EOF in token loop terminates', async () => {
   const d = deps({ validateToken: vi.fn(async () => undefined) })
   let n = 0
-  d.prompt.password = vi.fn(async () => {
+  vi.mocked(d.prompt.password).mockImplementation(async () => {
     if (++n > 1) throw new PromptAborted()
     return 'bad'
   })
@@ -271,7 +273,7 @@ test('aborted signal stops the token loop before prompting', async () => {
 
 test('install throwing returns 1 with generic message, no secrets', async () => {
   const d = deps()
-  d.targets.quadlet.install = vi.fn(async () => {
+  vi.mocked(d.targets.quadlet.install).mockImplementation(async () => {
     throw new Error('boom good-token')
   })
   expect(await runInit({}, d)).toBe(1)
@@ -296,7 +298,7 @@ test('target error message is shown with a reused token redacted', async () => {
   seed('compose')
   const old = fake('compose', true, { token: '123:SECRET' })
   const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
-  d.targets.quadlet.install = vi.fn(async () => {
+  vi.mocked(d.targets.quadlet.install).mockImplementation(async () => {
     throw new Error('npm install failed: bad url https://x/bot123:SECRET/getMe')
   })
   expect(await runInit({ target: 'quadlet' }, d)).toBe(1)
@@ -309,7 +311,7 @@ test('failure after removing the old target keeps install.json so a re-run reuse
   seed('compose')
   const old = fake('compose', true, { token: 'TOK1', ownerId: 42 })
   const targets = { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') }
-  const d1 = deps({ targets, portFree: vi.fn(async () => false) })
+  const d1 = deps({ targets, isPortFree: vi.fn(async () => false) })
   expect(await runInit({ target: 'quadlet' }, d1)).toBe(1)
   expect(old.remove).toHaveBeenCalledTimes(1)
   expect(readInstall(paths.installFile)).toEqual({
@@ -339,7 +341,7 @@ test('failure after removing the old target keeps install.json so a re-run reuse
 test('legacy install is recorded before removal so a failed run can be retried', async () => {
   mkdirSync(dirname(paths.systemdUnit), { recursive: true })
   writeFileSync(paths.systemdUnit, '[Service]\n')
-  const d = deps({ portFree: vi.fn(async () => false) })
+  const d = deps({ isPortFree: vi.fn(async () => false) })
   expect(await runInit({ target: 'systemd' }, d)).toBe(1)
   expect(readInstall(paths.installFile)).toEqual({
     target: 'systemd',
@@ -365,8 +367,8 @@ test('no install record: reuses a token and owner kept by uninstall, no replace 
 })
 
 test('no install record: leftover token from a container .env, rejected token prompts', async () => {
-  mkdirSync(paths.quadletDir, { recursive: true })
-  writeFileSync(join(paths.quadletDir, '.env'), 'BOT_TOKEN=stale\nPORT=1\nOWNER_ID=4\n')
+  mkdirSync(paths.quadletDirectory, { recursive: true })
+  writeFileSync(join(paths.quadletDirectory, '.env'), 'BOT_TOKEN=stale\nPORT=1\nOWNER_ID=4\n')
   const validate = vi.fn(async (t: string) => (t === 'stale' ? undefined : 'mybot'))
   const d = deps({ validateToken: validate })
   expect(await runInit({}, d)).toBe(0)

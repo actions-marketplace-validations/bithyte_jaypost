@@ -3,29 +3,29 @@ import net from 'node:net'
 import { LINGER_OFF_PATTERN, LINGER_ON_PATTERN, TOKEN_CHECK_TIMEOUT_SECONDS } from './constants.ts'
 import type { Exec } from './types.ts'
 
-export function portFree(port: number): Promise<boolean> {
+export function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const s = net.createServer()
-    s.once('error', () => resolve(false))
-    s.listen(port, '127.0.0.1', () => s.close(() => resolve(true)))
+    const server = net.createServer()
+    server.once('error', () => resolve(false))
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)))
   })
 }
 
 export async function ensureLinger(
   exec: Exec,
   user: string,
-  print: (s: string) => void,
+  print: (text: string) => void,
 ): Promise<void> {
-  const fallback = () =>
+  const printFallback = () =>
     print(`Run "loginctl enable-linger ${user}" so it keeps running after logout.`)
   try {
     const show = await exec('loginctl', ['show-user', user, '-p', 'Linger'])
     if (show.code === 0 && LINGER_ON_PATTERN.test(show.stdout)) return
     if (show.code === 0 && !LINGER_OFF_PATTERN.test(show.stdout)) return
-    const r = await exec('loginctl', ['enable-linger', user])
-    if (r.code !== 0) fallback()
+    const result = await exec('loginctl', ['enable-linger', user])
+    if (result.code !== 0) printFallback()
   } catch {
-    fallback()
+    printFallback()
   }
 }
 
@@ -33,8 +33,11 @@ export async function ensureLinger(
 export async function validateToken(token: string): Promise<string | undefined> {
   try {
     // Global fetch rather than grammY's bundled node-fetch.
-    const me = await new Api(token, { fetch, timeoutSeconds: TOKEN_CHECK_TIMEOUT_SECONDS }).getMe()
-    return me.username || undefined
+    const botUser = await new Api(token, {
+      fetch,
+      timeoutSeconds: TOKEN_CHECK_TIMEOUT_SECONDS,
+    }).getMe()
+    return botUser.username || undefined
   } catch {
     return undefined
   }

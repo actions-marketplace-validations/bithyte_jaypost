@@ -10,7 +10,7 @@ import type { PairResult } from './types.ts'
 
 export function generateCode(random: (max: number) => number = randomInt): string {
   let code = ''
-  for (let i = 0; i < PAIRING_CODE_LENGTH; i++)
+  for (let index = 0; index < PAIRING_CODE_LENGTH; index += 1)
     code += PAIRING_ALPHABET[random(PAIRING_ALPHABET.length)]
   return code
 }
@@ -19,7 +19,7 @@ export function formatCode(code: string): string {
   return `${code.slice(0, 4)}-${code.slice(4)}`
 }
 
-function normalize(text: string): string {
+function normalizeCode(text: string): string {
   return text
     .trim()
     .replace(START_COMMAND_PATTERN, '')
@@ -46,10 +46,10 @@ export class Pairing {
   }
 
   attempt(fromId: number, text: string): PairResult {
-    if (this.#code === undefined) return 'not-pairing'
+    if (this.#code === undefined) return 'notPairing'
     const failures = this.#failures.get(fromId) ?? 0
     if (failures >= this.#maxFailures) return 'blocked'
-    if (normalize(text) === this.#code) {
+    if (normalizeCode(text) === this.#code) {
       this.#code = undefined
       return 'paired'
     }

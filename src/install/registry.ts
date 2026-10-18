@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEFAULT_PORT, readConfigFile } from '../config/index.ts'
-import { composeTarget } from './compose.ts'
+import { createComposeTarget } from './compose.ts'
 import { INTEGER_PATTERN, TARGET_ORDER } from './constants.ts'
 import { readEnvFile } from './envfile.ts'
-import { quadletTarget } from './quadlet.ts'
+import { createQuadletTarget } from './quadlet.ts'
 import { readInstall } from './state.ts'
-import { defaultConfigFile, systemdTarget, unitConfigFile } from './systemd.ts'
+import { createSystemdTarget, findUnitConfigFile, resolveDefaultConfigFile } from './systemd.ts'
 import type {
   CliLocation,
   DetectedTarget,
@@ -18,34 +18,38 @@ import type {
   TargetName,
 } from './types.ts'
 
-export function makeTargets(deps: TargetDeps, cli: CliLocation): Record<TargetName, Target> {
+export function createTargets(
+  deps: TargetDeps,
+  cli: CliLocation,
+): Readonly<Record<TargetName, Target>> {
   return {
-    quadlet: quadletTarget(deps),
-    compose: composeTarget(deps),
-    systemd: systemdTarget(deps, cli),
+    quadlet: createQuadletTarget(deps),
+    compose: createComposeTarget(deps),
+    systemd: createSystemdTarget(deps, cli),
   }
 }
 
-export async function detect(targets: Record<TargetName, Target>): Promise<DetectedTarget[]> {
-  const out: DetectedTarget[] = []
+export async function detectTargets(
+  targets: Readonly<Record<TargetName, Target>>,
+): Promise<readonly DetectedTarget[]> {
+  const detected: DetectedTarget[] = []
   for (const name of TARGET_ORDER) {
-    const r = await targets[name].available()
-    out.push(r.ok ? { name, ok: true } : { name, ok: false, reason: r.reason })
+    detected.push({ name, ...(await targets[name].available()) })
   }
-  return out
+  return detected
 }
 
-export function defaultTarget(detected: DetectedTarget[]): TargetName | undefined {
-  return detected.find((d) => d.ok)?.name
+export function findDefaultTarget(detected: readonly DetectedTarget[]): TargetName | undefined {
+  return detected.find((candidate) => candidate.ok)?.name
 }
 
-export function findExisting(
+export function findExistingInstall(
   paths: InstallPaths,
-  _targets: Record<TargetName, Target>,
+  _targets: Readonly<Record<TargetName, Target>>,
   env: NodeJS.ProcessEnv = process.env,
 ): ExistingInstall | undefined {
-  const rec = readInstall(paths.installFile)
-  if (rec) return { rec, legacy: false }
+  const record = readInstall(paths.installFile)
+  if (record) return { record, legacy: false }
   let unit: string
   try {
     unit = readFileSync(paths.systemdUnit, 'utf8')
@@ -53,31 +57,35 @@ export function findExisting(
     return undefined
   }
   // The legacy unit may pin its own config path; prefer it over this shell's env.
-  const configFile = unitConfigFile(unit) ?? defaultConfigFile(paths, env)
+  const configFile = findUnitConfigFile(unit) ?? resolveDefaultConfigFile(paths, env)
   let port = DEFAULT_PORT
   try {
     port = readConfigFile(configFile).port ?? DEFAULT_PORT
   } catch {
     // Unreadable config: fall back to the default port.
   }
-  return { rec: { target: 'systemd', port, version: 'legacy', configFile }, legacy: true }
+  return { record: { target: 'systemd', port, version: 'legacy', configFile }, legacy: true }
 }
 
-function envSecrets(path: string): Secrets {
-  const e = readEnvFile(path)
-  const out: Secrets = {}
-  if (e.BOT_TOKEN) out.token = e.BOT_TOKEN
-  if (e.OWNER_ID && INTEGER_PATTERN.test(e.OWNER_ID)) out.ownerId = Number(e.OWNER_ID)
-  return out
+function readEnvSecrets(path: string): Secrets {
+  const values = readEnvFile(path)
+  return {
+    ...(values.BOT_TOKEN ? { token: values.BOT_TOKEN } : {}),
+    ...(values.OWNER_ID && INTEGER_PATTERN.test(values.OWNER_ID)
+      ? { ownerId: Number(values.OWNER_ID) }
+      : {}),
+  }
 }
 
-function configSecrets(path: string): Secrets {
+function readConfigSecrets(path: string): Secrets {
   try {
-    const c = readConfigFile(path)
-    const out: Secrets = {}
-    if (c.botToken) out.token = c.botToken
-    if (c.ownerId !== undefined && Number.isSafeInteger(c.ownerId)) out.ownerId = c.ownerId
-    return out
+    const config = readConfigFile(path)
+    return {
+      ...(config.botToken ? { token: config.botToken } : {}),
+      ...(config.ownerId !== undefined && Number.isSafeInteger(config.ownerId)
+        ? { ownerId: config.ownerId }
+        : {}),
+    }
   } catch {
     // Corrupt config: treat as nothing left over.
     return {}
@@ -93,13 +101,13 @@ export function findLeftoverSecrets(
   env: NodeJS.ProcessEnv = process.env,
 ): Secrets {
   const sources = [
-    () => envSecrets(join(paths.quadletDir, '.env')),
-    () => envSecrets(join(paths.composeDir, '.env')),
-    () => configSecrets(defaultConfigFile(paths, env)),
+    () => readEnvSecrets(join(paths.quadletDirectory, '.env')),
+    () => readEnvSecrets(join(paths.composeDirectory, '.env')),
+    () => readConfigSecrets(resolveDefaultConfigFile(paths, env)),
   ]
   for (const read of sources) {
-    const s = read()
-    if (s.token !== undefined) return s
+    const secrets = read()
+    if (secrets.token !== undefined) return secrets
   }
   return {}
 }

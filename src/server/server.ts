@@ -14,7 +14,7 @@ export function createApiServer(
 
   // Take the body as text whatever the content type, so bad JSON gets our own 400.
   app.removeAllContentTypeParsers()
-  app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => done(null, body))
+  app.addContentTypeParser('*', { parseAs: 'string' }, (_request, body, done) => done(null, body))
 
   app.setNotFoundHandler((request, reply) => {
     // Not new URL(): it throws on targets like '//'.
@@ -28,19 +28,19 @@ export function createApiServer(
     return reply.code(404).send({ error: 'not found' })
   })
 
-  app.setErrorHandler((err: FastifyError, request, reply) => {
-    if (err instanceof SendError) {
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    if (error instanceof SendError) {
       return reply.code(502).send({ error: 'failed to send Telegram message' })
     }
-    if (err.statusCode === 413) {
+    if (error.statusCode === 413) {
       // Drop the rest of the upload once the response is flushed.
       reply.raw.once('finish', () => request.raw.destroy())
       return reply.code(413).header('Connection', 'close').send({ error: 'request body too large' })
     }
-    if (err.statusCode !== undefined && err.statusCode < 500) {
-      return reply.code(err.statusCode).send({ error: err.message })
+    if (error.statusCode !== undefined && error.statusCode < 500) {
+      return reply.code(error.statusCode).send({ error: error.message })
     }
-    console.error('unexpected error handling /request', err)
+    console.error('unexpected error handling /request', error)
     return reply.code(500).send({ error: 'internal server error' })
   })
 
@@ -69,12 +69,12 @@ export function createApiServer(
     // The client may have gone while the body was being read, before 'close' was observed.
     if (reply.raw.destroyed) controller.abort()
 
-    const outcome = await service.request(parsed.value, controller.signal)
-    if (outcome === null) {
-      // Cancelled; normally because the client is gone, so this write is a no-op.
+    const result = await service.request(parsed.value, controller.signal)
+    if (result.kind === 'cancelled') {
+      // Normally because the client is gone, so this write is a no-op.
       return reply.code(500).send({ error: 'request was cancelled' })
     }
-    return outcome
+    return result.outcome
   })
 
   return app

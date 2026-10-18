@@ -1,21 +1,21 @@
-import { findExisting, removeInstall } from '../install/index.ts'
+import { findExistingInstall, removeInstall } from '../install/index.ts'
 import { PromptAborted } from './prompts.ts'
 import type { UninstallDeps } from './types.ts'
 
 export async function runUninstall(deps: UninstallDeps): Promise<number> {
   const { print } = deps
-  const existing = findExisting(deps.paths, deps.targets)
+  const existing = findExistingInstall(deps.paths, deps.targets)
   if (!existing) {
     print('Not installed.')
     return 0
   }
-  const { rec } = existing
+  const { record } = existing
   try {
     const purge = await deps.confirm('Also delete the bot token and paired owner?', false)
-    await deps.targets[rec.target].remove(rec, purge)
+    await deps.targets[record.target].remove(record, purge)
     removeInstall(deps.paths.installFile)
-  } catch (err) {
-    if (err instanceof PromptAborted || deps.signal?.aborted) {
+  } catch (error) {
+    if (error instanceof PromptAborted || deps.signal?.aborted) {
       print('')
       return 130
     }

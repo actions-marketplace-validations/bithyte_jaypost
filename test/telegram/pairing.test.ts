@@ -29,7 +29,7 @@ test('after pairing everything is not-pairing', () => {
   p.attempt(1, 'K7QM4XPD')
   expect(p.paired).toBe(true)
   expect(p.code).toBeUndefined()
-  expect(p.attempt(3, 'K7QM4XPD')).toBe('not-pairing')
+  expect(p.attempt(3, 'K7QM4XPD')).toBe('notPairing')
 })
 
 test('bare /start counts as wrong', () =>

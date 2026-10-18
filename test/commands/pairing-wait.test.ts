@@ -85,5 +85,5 @@ test('never answers returns not-started', async () => {
     fetchStatus: async () => undefined,
     print: () => {},
   })
-  expect(r).toBe('not-started')
+  expect(r).toBe('notStarted')
 })

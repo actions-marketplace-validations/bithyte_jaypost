@@ -1,5 +1,5 @@
 import { confirm, isCancel, password, select } from '@clack/prompts'
-import type { Prompts } from './types.ts'
+import type { Prompts, SelectOption } from './types.ts'
 
 export class PromptAborted extends Error {
   constructor() {
@@ -13,7 +13,7 @@ function requireTty(): void {
   if (!process.stdin.isTTY) throw new PromptAborted()
 }
 
-function orAbort<T>(value: T): Exclude<T, symbol> {
+function requireAnswer<T>(value: T): Exclude<T, symbol> {
   if (isCancel(value)) throw new PromptAborted()
   return value as Exclude<T, symbol>
 }
@@ -22,32 +22,34 @@ function orAbort<T>(value: T): Exclude<T, symbol> {
  * Clack-backed prompts. Each rejects with PromptAborted on Ctrl-C, when `signal` aborts, or when
  * stdin isn't a terminal.
  */
-export function clackPrompts(signal?: AbortSignal): Prompts {
+export function createClackPrompts(signal?: AbortSignal): Prompts {
   return {
     confirm: async (message, initialValue) => {
       requireTty()
-      return orAbort(await confirm({ message, initialValue, signal }))
+      return requireAnswer(await confirm({ message, initialValue, signal }))
     },
     password: async (message) => {
       requireTty()
-      return orAbort(await password({ message, signal })).trim()
+      return requireAnswer(await password({ message, signal })).trim()
     },
     select: async <T extends string>(
       message: string,
-      options: { value: T; label: string; disabled?: string }[],
+      options: readonly SelectOption<T>[],
       initialValue: T,
     ) => {
       requireTty()
       // select<string>: clack's Option<T> is a conditional type TS can't check against a generic T.
-      return orAbort(
+      return requireAnswer(
         await select<string>({
           message,
           initialValue,
           signal,
-          options: options.map((o) => ({
-            value: o.value,
-            label: o.disabled ? `${o.label} (unavailable: ${o.disabled})` : o.label,
-            disabled: o.disabled !== undefined,
+          options: options.map((option) => ({
+            value: option.value,
+            label: option.disabled
+              ? `${option.label} (unavailable: ${option.disabled})`
+              : option.label,
+            disabled: option.disabled !== undefined,
           })),
         }),
       ) as T

@@ -13,9 +13,9 @@ const approvalRequestSchema = z
     {
       text: z
         .string({ error: TEXT_ERROR })
-        .refine((t) => t.trim().length > 0, TEXT_ERROR)
+        .refine((text) => text.trim().length > 0, TEXT_ERROR)
         .refine(
-          (t) => t.length <= MAX_TEXT_LENGTH,
+          (text) => text.length <= MAX_TEXT_LENGTH,
           `text must be at most ${MAX_TEXT_LENGTH} characters`,
         ),
       options: z
@@ -29,13 +29,16 @@ const approvalRequestSchema = z
           },
         )
         .min(1, OPTIONS_ERROR)
-        .refine((o) => new Set(o).size === o.length, 'options must be unique'),
+        .refine((options) => new Set(options).size === options.length, 'options must be unique'),
       timeoutOption: z.string({ error: 'timeoutOption must be a string' }),
       timeout: z.number({ error: TIMEOUT_ERROR }).positive(TIMEOUT_ERROR).optional(),
     },
     { error: 'body must be a JSON object' },
   )
-  .refine((b) => b.options.includes(b.timeoutOption), 'timeoutOption must be one of options')
+  .refine(
+    (body) => body.options.includes(body.timeoutOption),
+    'timeoutOption must be one of options',
+  )
   .transform(({ text, options, timeoutOption, timeout }) => ({
     text,
     options,
@@ -44,7 +47,7 @@ const approvalRequestSchema = z
   }))
 
 export function parseApprovalRequest(body: unknown): ParseResult {
-  const r = approvalRequestSchema.safeParse(body)
-  if (r.success) return { ok: true, value: r.data }
-  return { ok: false, error: r.error.issues[0]?.message ?? 'invalid request' }
+  const result = approvalRequestSchema.safeParse(body)
+  if (result.success) return { ok: true, value: result.data }
+  return { ok: false, error: result.error.issues[0]?.message ?? 'invalid request' }
 }
