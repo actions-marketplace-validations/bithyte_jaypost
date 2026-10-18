@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -128,6 +128,26 @@ test('owner save failure is logged and pairing still completes', async () => {
     `paired with u1 but couldn't save the owner to ${configPath}; it'll be lost on restart`,
   )
   expect(await getStatus(url)).toEqual({ paired: true, provider: 'fakepair', displayName: 'fake' })
+})
+
+test('unparseable owner is logged and not saved', async () => {
+  const base = createPairingFakeProvider()
+  const provider = {
+    ...base,
+    settings: base.settings.map((setting) =>
+      setting.owner ? { ...setting, parse: () => undefined } : setting,
+    ),
+  }
+  const configPath = createConfigPath()
+  const log = vi.fn()
+  const { runtime } = await start(provider, { configPath, log })
+  expect(runtime.handlers?.pair?.('u1', 'K7QM4XPD')).toBe('paired')
+  expect(log).toHaveBeenCalledWith(
+    `paired with u1 but couldn't save the owner to ${configPath}; it'll be lost on restart`,
+  )
+  expect(existsSync(configPath) ? readFileSync(configPath, 'utf8') : '{}').not.toContain(
+    'fakeOwner',
+  )
 })
 
 test('rejected credentials throw with the provider reason', async () => {

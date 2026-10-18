@@ -78,7 +78,11 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
     const result = pairing?.attempt(senderId, text) ?? 'notPairing'
     if (result === 'paired' && ownerSetting !== undefined) {
       try {
-        updateConfigFile(configPath, { [ownerSetting.configKey]: ownerSetting.parse(senderId) })
+        const owner = ownerSetting.parse(senderId)
+        if (owner === undefined) {
+          throw new Error('owner not parseable')
+        }
+        updateConfigFile(configPath, { [ownerSetting.configKey]: owner })
       } catch {
         log(
           `paired with ${senderId} but couldn't save the owner to ${configPath}; it'll be lost on restart`,

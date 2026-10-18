@@ -98,7 +98,8 @@ export function loadConfig(
   )
   const settings: Record<string, SettingValue> = {}
   for (const setting of provider.settings) {
-    const raw = findEnvValue(env, setting.envVar) ?? file[setting.configKey]
+    const fileValue = file[setting.configKey]
+    const raw = findEnvValue(env, setting.envVar) ?? (fileValue === '' ? undefined : fileValue)
     if (raw === undefined) {
       if (setting.required) {
         throw new Error(`missing ${setting.description}; ${INIT_HINT} (or set ${setting.envVar})`)

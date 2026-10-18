@@ -101,6 +101,14 @@ test('empty-string env vars count as unset', () => {
   })
 })
 
+test('empty string in the file counts as missing', () => {
+  const file = join(dir, 'empty.json')
+  writeFileSync(file, JSON.stringify({ botToken: '' }))
+  expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: file, OWNER_ID: '1' })).toThrow(
+    'missing bot token; run `telegram-ask init` to set up the bot (or set BOT_TOKEN)',
+  )
+})
+
 test('missing token or non-integer OWNER_ID throws mentioning init', () => {
   const none = join(dir, 'none.json')
   expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: none, OWNER_ID: '1' })).toThrow(
