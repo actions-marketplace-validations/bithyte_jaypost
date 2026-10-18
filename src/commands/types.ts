@@ -23,7 +23,7 @@ export type Prompts = {
 export type WaitOptions = {
   readonly port: number
   readonly isRunning: () => Promise<boolean>
-  /** Shown when the service stops, or never starts, while waiting. */
+  /** Appended to the message when the service stops while waiting. */
   readonly logsHint: string
   readonly signal?: AbortSignal
   /** Injectable for tests; defaults to `defaultFetchStatus`. */

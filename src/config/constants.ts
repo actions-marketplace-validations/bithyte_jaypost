@@ -1,6 +1,6 @@
 import packageJson from '../../package.json' with { type: 'json' }
 
-/** Package version, read from package.json at build time. */
+/** Package version, read from package.json when the module loads. */
 export const VERSION: string = packageJson.version
 /** Port used when neither the env nor the config file sets one. */
 export const DEFAULT_PORT = 8787
