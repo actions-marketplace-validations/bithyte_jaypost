@@ -11,7 +11,7 @@ export interface WaitOptions {
   print?: (s: string) => void
 }
 
-async function defaultFetchStatus(port: number): Promise<StatusInfo | undefined> {
+export async function defaultFetchStatus(port: number): Promise<StatusInfo | undefined> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/status`, {
       signal: AbortSignal.timeout(2000),

@@ -1,4 +1,8 @@
-export async function runTest(port: number): Promise<number> {
+import { readInstall } from '../install/state.ts'
+
+/** Port from install.json when present, else the fallback. */
+export async function runTest(fallbackPort: number, installFile?: string): Promise<number> {
+  const port = (installFile ? readInstall(installFile)?.port : undefined) ?? fallbackPort
   try {
     const res = await fetch(`http://127.0.0.1:${port}/request`, {
       method: 'POST',

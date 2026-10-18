@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url'
 import { runInit } from './commands/init.ts'
 import type { InitArgs } from './commands/init.ts'
 import { runOwner } from './commands/owner.ts'
+import { runResetOwner } from './commands/reset-owner.ts'
+import { runStatus } from './commands/status.ts'
 import { runTest } from './commands/test.ts'
+import { runUninstall } from './commands/uninstall.ts'
 import { DEFAULT_PORT, loadConfig } from './config.ts'
 import { runService } from './service.ts'
 import { realExec } from './install/exec.ts'
@@ -14,7 +17,7 @@ import { installPaths } from './install/paths.ts'
 import { askSecret, ask, choose, closePrompts } from './install/prompt.ts'
 import { portFree, validateToken } from './install/system.ts'
 import { makeTargets } from './install/targets.ts'
-import { waitForPairing } from './install/wait.ts'
+import { defaultFetchStatus, waitForPairing } from './install/wait.ts'
 import { VERSION } from './version.ts'
 
 const USAGE = `Usage: telegram-approval-bot <command>
@@ -29,8 +32,6 @@ Commands:
   uninstall    remove the service
   --version    print the version
   --help       show this help`
-
-const NOT_BUILT = new Set(['status', 'reset-owner', 'uninstall'])
 
 function pickPort(): number {
   try {
@@ -70,15 +71,9 @@ async function initCommand(argv: string[]): Promise<number> {
     return 2
   }
   const paths = installPaths()
-  const targets = makeTargets(
-    { exec: realExec, paths, env: process.env, user: os.userInfo().username },
-    { selfPath: realpathSync(fileURLToPath(import.meta.url)), nodePath: process.execPath },
-  )
-  const ac = new AbortController()
-  const onSigint = () => ac.abort()
-  process.on('SIGINT', onSigint)
-  try {
-    return await runInit(args, {
+  const targets = realTargets(paths)
+  return withSigint((ac) =>
+    runInit(args, {
       targets,
       paths,
       prompt: {
@@ -93,11 +88,67 @@ async function initCommand(argv: string[]): Promise<number> {
       signal: ac.signal,
       closePrompts,
       version: VERSION,
-    })
+    }),
+  )
+}
+
+function realTargets(paths: ReturnType<typeof installPaths>) {
+  return makeTargets(
+    { exec: realExec, paths, env: process.env, user: os.userInfo().username },
+    { selfPath: realpathSync(fileURLToPath(import.meta.url)), nodePath: process.execPath },
+  )
+}
+
+async function withSigint(fn: (ac: AbortController) => Promise<number>): Promise<number> {
+  const ac = new AbortController()
+  const onSigint = () => ac.abort()
+  process.on('SIGINT', onSigint)
+  try {
+    return await fn(ac)
   } finally {
     process.off('SIGINT', onSigint)
     closePrompts()
   }
+}
+
+function statusCommand(): Promise<number> {
+  const paths = installPaths()
+  return runStatus({
+    targets: realTargets(paths),
+    paths,
+    fetchStatus: defaultFetchStatus,
+    print: (s) => console.log(s),
+  })
+}
+
+function resetOwnerCommand(): Promise<number> {
+  const paths = installPaths()
+  const targets = realTargets(paths)
+  return withSigint((ac) =>
+    runResetOwner({
+      targets,
+      paths,
+      ask: (q) => ask(q, ac.signal),
+      wait: waitForPairing,
+      print: (s) => console.log(s),
+      signal: ac.signal,
+      closePrompts,
+    }),
+  )
+}
+
+function uninstallCommand(): Promise<number> {
+  const paths = installPaths()
+  const targets = realTargets(paths)
+  return withSigint((ac) =>
+    runUninstall({
+      targets,
+      paths,
+      ask: (q) => ask(q, ac.signal),
+      print: (s) => console.log(s),
+      signal: ac.signal,
+    }),
+  )
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -114,13 +165,12 @@ export async function main(argv: string[]): Promise<number> {
     await runService()
     return 0
   }
-  if (cmd === 'test') return runTest(pickPort())
+  if (cmd === 'test') return runTest(pickPort(), installPaths().installFile)
   if (cmd === 'init') return initCommand(argv.slice(1))
   if (cmd === 'owner') return runOwner(argv.slice(1))
-  if (NOT_BUILT.has(cmd)) {
-    console.error('not implemented')
-    return 1
-  }
+  if (cmd === 'status') return statusCommand()
+  if (cmd === 'reset-owner') return resetOwnerCommand()
+  if (cmd === 'uninstall') return uninstallCommand()
   console.error(`Unknown command: ${cmd}\n\n${USAGE}`)
   return 2
 }
