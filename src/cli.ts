@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runOwner } from './commands/owner.ts'
 import { runTest } from './commands/test.ts'
 import { DEFAULT_PORT, loadConfig } from './config.ts'
 import { runService } from './service.ts'
@@ -16,7 +17,7 @@ Commands:
   --version    print the version
   --help       show this help`
 
-const NOT_BUILT = new Set(['init', 'status', 'reset-owner', 'uninstall', 'owner'])
+const NOT_BUILT = new Set(['init', 'status', 'reset-owner', 'uninstall'])
 
 function pickPort(): number {
   try {
@@ -42,6 +43,7 @@ export async function main(argv: string[]): Promise<number> {
     return 0
   }
   if (cmd === 'test') return runTest(pickPort())
+  if (cmd === 'owner') return runOwner(argv.slice(1))
   if (NOT_BUILT.has(cmd)) {
     console.error('not implemented')
     return 1
