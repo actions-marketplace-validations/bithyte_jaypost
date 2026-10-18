@@ -130,7 +130,7 @@ export function createQuadletTarget(deps: TargetDeps): Target {
       const isVolumeRemoved = await step('podman volume rm', ['volume', 'rm', VOLUME_NAME])
       await step('podman rmi', ['rmi', formatImageTag(record.version)])
       if (isVolumeRemoved) rmSync(paths.quadletDirectory, { recursive: true, force: true })
-      if (failures.length > 0) throw new Error(`Purge incomplete; ${failures.join('; ')}`)
+      if (failures.length > 0) throw new Error(`purge incomplete: ${failures.join('; ')}`)
     },
     async restart() {
       const result = await systemctl('restart', SERVICE_NAME)
@@ -155,7 +155,7 @@ export function createQuadletTarget(deps: TargetDeps): Target {
         'clear',
       ])
       if (result.code !== 0)
-        throw new Error(`Couldn't clear the owner in the container: ${result.stderr.trim()}`)
+        throw new Error(`couldn't clear the owner in the container: ${result.stderr.trim()}`)
     },
     async isRunning() {
       return (await systemctl('is-active', '--quiet', SERVICE_NAME)).code === 0

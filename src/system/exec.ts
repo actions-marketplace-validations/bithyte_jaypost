@@ -4,7 +4,7 @@ import type { Exec } from './types.ts'
 export class MissingCommandError extends Error {
   readonly command: string
   constructor(command: string) {
-    super(`Command not found: ${command}`)
+    super(`command ${JSON.stringify(command)} not found`)
     this.name = 'MissingCommandError'
     this.command = command
   }

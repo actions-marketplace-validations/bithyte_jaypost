@@ -17,7 +17,7 @@ export async function runTest(fallbackPort: number, installFile?: string): Promi
     return response.status === 200 ? 0 : 1
   } catch (error) {
     console.error(
-      `Could not reach the service on port ${port} (is it running? try telegram-approval-bot status): ${error instanceof Error ? error.message : String(error)}`,
+      `could not reach the service on port ${port} (is it running? try telegram-approval-bot status): ${error instanceof Error ? error.message : String(error)}`,
     )
     return 1
   }

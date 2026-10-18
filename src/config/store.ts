@@ -43,12 +43,14 @@ export function readConfigFile(path: string): FileConfig {
     parsed = JSON.parse(text)
   } catch {
     // Don't include the parser's message: V8 can quote part of the file, which may hold the bot token.
-    throw new Error(`Config file ${path} contains invalid JSON; ${INIT_HINT}`)
+    throw new Error(`config file ${JSON.stringify(path)} contains invalid JSON; ${INIT_HINT}`)
   }
   const result = fileConfigSchema.safeParse(parsed)
   // Don't include zod's issues either; keep the token out of error output.
   if (!result.success) {
-    throw new Error(`Config file ${path} has invalid or missing fields; ${INIT_HINT}`)
+    throw new Error(
+      `config file ${JSON.stringify(path)} has invalid or missing fields; ${INIT_HINT}`,
+    )
   }
   return result.data
 }
@@ -63,17 +65,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const file = readConfigFile(resolveConfigPath(env))
   const botToken = findEnvValue(env, 'BOT_TOKEN') ?? file.botToken
   if (typeof botToken !== 'string' || botToken === '') {
-    throw new Error(`Missing bot token; ${INIT_HINT} (or set BOT_TOKEN)`)
+    throw new Error(`missing bot token; ${INIT_HINT} (or set BOT_TOKEN)`)
   }
   const rawOwnerId = findEnvValue(env, 'OWNER_ID') ?? file.ownerId
   const ownerId = rawOwnerId === undefined ? undefined : toInteger(rawOwnerId)
   if (rawOwnerId !== undefined && (ownerId === undefined || !Number.isSafeInteger(ownerId))) {
-    throw new Error(`Invalid owner id; ${INIT_HINT} (or set OWNER_ID)`)
+    throw new Error(`invalid owner id; ${INIT_HINT} (or set OWNER_ID)`)
   }
   const rawPort = findEnvValue(env, 'PORT') ?? file.port ?? DEFAULT_PORT
   const port = toInteger(rawPort)
   if (port === undefined || port < 1 || port > 65535) {
-    throw new Error(`Invalid port ${String(rawPort)}; must be an integer 1-65535`)
+    throw new Error(`invalid port ${JSON.stringify(String(rawPort))}: must be an integer 1-65535`)
   }
   return { botToken, ownerId, port, host: findEnvValue(env, 'HOST') ?? DEFAULT_HOST }
 }

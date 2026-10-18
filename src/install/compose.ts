@@ -106,7 +106,7 @@ export function createComposeTarget(deps: TargetDeps): Target {
         'clear',
       ])
       if (result.code !== 0)
-        throw new Error(`Couldn't clear the owner in the container: ${result.stderr.trim()}`)
+        throw new Error(`couldn't clear the owner in the container: ${result.stderr.trim()}`)
     },
     async isRunning() {
       const result = await compose(['ps', '--status', 'running', '-q', 'bot'])
