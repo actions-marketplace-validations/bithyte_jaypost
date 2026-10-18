@@ -2,10 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
-import { readConfigFile } from '../../src/config.ts'
-import type { Exec } from '../../src/install/exec.ts'
-import { installPaths } from '../../src/install/paths.ts'
-import { systemdTarget, unitConfigFile } from '../../src/install/systemd.ts'
+import { readConfigFile } from '../../src/config/index.ts'
+import { installPaths, systemdTarget, unitConfigFile } from '../../src/install/index.ts'
+import type { Exec } from '../../src/system/index.ts'
 
 let tmp: string
 let calls: [string, string[]][]

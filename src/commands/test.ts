@@ -1,4 +1,4 @@
-import { readInstall } from '../install/state.ts'
+import { readInstall } from '../install/index.ts'
 
 /** Port from install.json when present, else the fallback. */
 export async function runTest(fallbackPort: number, installFile?: string): Promise<number> {

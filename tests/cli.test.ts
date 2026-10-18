@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import { main } from '../src/cli.ts'
-import { VERSION } from '../src/version.ts'
+import { VERSION } from '../src/config/index.ts'
 
 test('unknown command returns 2', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)

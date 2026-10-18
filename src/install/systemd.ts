@@ -1,14 +1,23 @@
 import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
-import { readConfigFile, updateConfigFile } from '../config.ts'
-import type { InstallPaths } from './paths.ts'
-import type { InstallRecord } from './state.ts'
-import { ensureLinger } from './system.ts'
-import type { InstallOptions, Secrets, Target, TargetDeps } from './target.ts'
+import { readConfigFile, updateConfigFile } from '../config/index.ts'
+import { ensureLinger } from '../system/index.ts'
+import {
+  ENVIRONMENT_LINE_PATTERN,
+  ESCAPED_CHAR_PATTERN,
+  PACKAGE_NAME,
+  SERVICE_NAME,
+} from './constants.ts'
 import { systemdUnit } from './templates.ts'
-
-const SERVICE = 'telegram-approval-bot'
-const PKG = 'telegram-approval-bot'
+import type {
+  CliLocation,
+  InstallOptions,
+  InstallPaths,
+  InstallRecord,
+  Secrets,
+  Target,
+  TargetDeps,
+} from './types.ts'
 
 function isUnder(file: string, root: string): boolean {
   return root !== '' && file.startsWith(root.endsWith(sep) ? root : root + sep)
@@ -31,11 +40,11 @@ export function defaultConfigFile(paths: InstallPaths, env: NodeJS.ProcessEnv): 
 /** Best-effort read of the APPROVAL_BOT_CONFIG value from a unit's Environment= lines. */
 export function unitConfigFile(unit: string): string | undefined {
   for (const line of unit.split('\n')) {
-    const m = /^\s*Environment=(.*)$/.exec(line)
+    const m = ENVIRONMENT_LINE_PATTERN.exec(line)
     if (!m) continue
     let v = m[1]!.trim()
     if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
-      v = v.slice(1, -1).replace(/\\(.)/g, '$1')
+      v = v.slice(1, -1).replace(ESCAPED_CHAR_PATTERN, '$1')
     }
     v = v.replaceAll('%%', '%')
     const key = 'APPROVAL_BOT_CONFIG='
@@ -44,10 +53,7 @@ export function unitConfigFile(unit: string): string | undefined {
   return undefined
 }
 
-export function systemdTarget(
-  deps: TargetDeps,
-  cli: { selfPath: string; nodePath: string },
-): Target {
+export function systemdTarget(deps: TargetDeps, cli: CliLocation): Target {
   const { exec, paths, env, user } = deps
   const ctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
   // The unit always pins APPROVAL_BOT_CONFIG to this absolute path, and install.json records it,
@@ -66,7 +72,7 @@ export function systemdTarget(
       opts.print(`Using the installed CLI at ${cli.selfPath}`)
       return cli.selfPath
     }
-    const spec = opts.tarball ?? `${PKG}@${opts.version}`
+    const spec = opts.tarball ?? `${PACKAGE_NAME}@${opts.version}`
     const prefix = (await exec('npm', ['prefix', '-g'])).stdout.trim()
     let installRoot: string
     let args: string[]
@@ -82,7 +88,7 @@ export function systemdTarget(
     }
     const r = await exec('npm', args)
     if (r.code !== 0) throw new Error(`npm install failed: ${r.stderr.trim()}`)
-    return join(installRoot, PKG, 'dist', 'cli.js')
+    return join(installRoot, PACKAGE_NAME, 'dist', 'cli.js')
   }
 
   return {
@@ -106,7 +112,7 @@ export function systemdTarget(
         paths.systemdUnit,
         systemdUnit({ node: cli.nodePath, cli: cliPath, config: configFile }),
       )
-      for (const args of [['daemon-reload'], ['enable', '--now', SERVICE]]) {
+      for (const args of [['daemon-reload'], ['enable', '--now', SERVICE_NAME]]) {
         const r = await ctl(...args)
         if (r.code !== 0) throw new Error(`systemctl ${args.join(' ')} failed: ${r.stderr.trim()}`)
       }
@@ -121,7 +127,7 @@ export function systemdTarget(
       }
     },
     async remove(rec, purge) {
-      await ctl('disable', '--now', SERVICE)
+      await ctl('disable', '--now', SERVICE_NAME)
       rmSync(paths.systemdUnit, { force: true })
       await ctl('daemon-reload')
       if (purge) {
@@ -130,21 +136,23 @@ export function systemdTarget(
           rec.cliPath !== undefined && isUnder(rec.cliPath, fallbackRoot)
             ? `--prefix ${paths.userNpmPrefix} `
             : ''
-        console.log(`The npm package was left in place; remove it with: npm rm -g ${prefix}${PKG}`)
+        console.log(
+          `The npm package was left in place; remove it with: npm rm -g ${prefix}${PACKAGE_NAME}`,
+        )
       }
     },
     async restart() {
-      const r = await ctl('restart', SERVICE)
+      const r = await ctl('restart', SERVICE_NAME)
       if (r.code !== 0) throw new Error(`systemctl restart failed (exit ${r.code})`)
     },
     async clearOwner(rec) {
       updateConfigFile(fileOf(rec), { ownerId: null })
     },
     async isRunning() {
-      return (await ctl('is-active', '--quiet', SERVICE)).code === 0
+      return (await ctl('is-active', '--quiet', SERVICE_NAME)).code === 0
     },
     logsHint() {
-      return `journalctl --user -u ${SERVICE} -f`
+      return `journalctl --user -u ${SERVICE_NAME} -f`
     },
   }
 }

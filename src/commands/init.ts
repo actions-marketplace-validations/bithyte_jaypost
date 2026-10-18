@@ -1,39 +1,15 @@
-import { PromptAborted } from '../install/prompt.ts'
-import type { Prompts } from '../install/prompt.ts'
-import type { InstallPaths } from '../install/paths.ts'
-import { writeInstall } from '../install/state.ts'
-import type { InstallRecord, TargetName } from '../install/state.ts'
-import type { Secrets, Target } from '../install/target.ts'
-import { defaultTarget, detect, findExisting, findLeftoverSecrets } from '../install/targets.ts'
-import type { waitForPairing } from '../install/wait.ts'
-
-export interface InitDeps {
-  targets: Record<TargetName, Target>
-  paths: InstallPaths
-  prompt: Prompts
-  validateToken: (token: string) => Promise<string | undefined>
-  portFree: (port: number) => Promise<boolean>
-  wait: typeof waitForPairing
-  print: (s: string) => void
-  signal?: AbortSignal
-  version: string
-  /** Defaults to process.env; used to find the systemd config file. */
-  env?: NodeJS.ProcessEnv
-}
-
-export interface InitArgs {
-  target?: TargetName
-  port?: number
-  tarball?: string
-}
-
-const DEFAULT_PORT = 8787
-
-const LABELS: Record<TargetName, string> = {
-  quadlet: 'Podman Quadlet (user service)',
-  compose: 'Docker Compose',
-  systemd: 'systemd user service (npm)',
-}
+import { DEFAULT_PORT } from '../config/index.ts'
+import {
+  defaultTarget,
+  detect,
+  findExisting,
+  findLeftoverSecrets,
+  writeInstall,
+} from '../install/index.ts'
+import type { InstallRecord, Secrets, TargetName } from '../install/index.ts'
+import { TARGET_LABELS } from './constants.ts'
+import { PromptAborted } from './prompts.ts'
+import type { InitArgs, InitDeps } from './types.ts'
 
 async function safeValidate(deps: InitDeps, token: string): Promise<string | undefined> {
   try {
@@ -92,7 +68,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
       'Where should the bot run?',
       detected.map((d) => ({
         value: d.name,
-        label: LABELS[d.name],
+        label: TARGET_LABELS[d.name],
         ...(d.ok ? {} : { disabled: d.reason ?? 'unavailable' }),
       })),
       def,

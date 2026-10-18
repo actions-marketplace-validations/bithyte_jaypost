@@ -2,14 +2,9 @@ import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
-import { runResetOwner } from '../../src/commands/reset-owner.ts'
-import { runStatus } from '../../src/commands/status.ts'
-import { runUninstall } from '../../src/commands/uninstall.ts'
-import { installPaths } from '../../src/install/paths.ts'
-import type { InstallPaths } from '../../src/install/paths.ts'
-import { writeInstall } from '../../src/install/state.ts'
-import type { TargetName } from '../../src/install/state.ts'
-import type { Target } from '../../src/install/target.ts'
+import { runResetOwner, runStatus, runUninstall } from '../../src/commands/index.ts'
+import { installPaths, writeInstall } from '../../src/install/index.ts'
+import type { InstallPaths, Target, TargetName } from '../../src/install/index.ts'
 
 let tmp: string
 let paths: InstallPaths
@@ -153,7 +148,7 @@ test('reset-owner failure prints generic error and returns 1', async () => {
 
 test('reset-owner prompt abort -> 130', async () => {
   seed()
-  const { PromptAborted } = await import('../../src/install/prompt.ts')
+  const { PromptAborted } = await import('../../src/commands/index.ts')
   const d = {
     ...base({
       confirm: vi.fn(async () => {
@@ -210,7 +205,7 @@ test('uninstall failure: generic error, 1, install.json kept', async () => {
 })
 
 test('test command takes port from install.json first', async () => {
-  const { runTest } = await import('../../src/commands/test.ts')
+  const { runTest } = await import('../../src/commands/index.ts')
   seed()
   const f = vi.fn(async (_url: string) => new Response('ok', { status: 200 }))
   vi.stubGlobal('fetch', f)

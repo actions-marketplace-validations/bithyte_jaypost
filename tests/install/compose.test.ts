@@ -2,9 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
-import { composeTarget } from '../../src/install/compose.ts'
-import type { Exec } from '../../src/install/exec.ts'
-import { installPaths } from '../../src/install/paths.ts'
+import { composeTarget, installPaths } from '../../src/install/index.ts'
+import type { Exec } from '../../src/system/index.ts'
 
 let tmp: string
 let calls: [string, string[]][]

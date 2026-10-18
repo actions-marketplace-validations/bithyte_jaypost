@@ -6,7 +6,7 @@ import {
   quadletContainer,
   systemdQuote,
   systemdUnit,
-} from '../../src/install/templates.ts'
+} from '../../src/install/index.ts'
 
 test('dockerfile pins version', () =>
   expect(dockerfile({ version: '0.1.0' })).toContain('npm i -g telegram-approval-bot@0.1.0'))

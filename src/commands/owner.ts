@@ -1,4 +1,4 @@
-import { configPath, readConfigFile, updateConfigFile } from '../config.ts'
+import { configPath, readConfigFile, updateConfigFile } from '../config/index.ts'
 
 /** Hidden helper; runs inside containers so the CLI can read/clear the owner in the data volume. */
 export function runOwner(args: string[], env: NodeJS.ProcessEnv = process.env): number {

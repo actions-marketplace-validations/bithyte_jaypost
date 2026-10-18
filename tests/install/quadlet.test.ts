@@ -2,9 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from '
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
-import type { Exec } from '../../src/install/exec.ts'
-import { installPaths } from '../../src/install/paths.ts'
-import { quadletTarget } from '../../src/install/quadlet.ts'
+import { installPaths, quadletTarget } from '../../src/install/index.ts'
+import type { Exec } from '../../src/system/index.ts'
 
 let tmp: string
 let calls: [string, string[]][]

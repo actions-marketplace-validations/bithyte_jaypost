@@ -1,12 +1,10 @@
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import type { Exec } from './exec.ts'
+import type { Exec } from '../system/index.ts'
+import { DOCKERIGNORE, INTEGER_PATTERN, PACKAGE_NAME } from './constants.ts'
 import { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
-import type { InstallRecord } from './state.ts'
-import type { Secrets, Target, TargetDeps } from './target.ts'
-import { composeYaml, DOCKERIGNORE, dockerfile, envFile } from './templates.ts'
-
-const PKG = 'telegram-approval-bot'
+import { composeYaml, dockerfile, envFile } from './templates.ts'
+import type { InstallRecord, Secrets, Target, TargetDeps } from './types.ts'
 
 async function tryExec(exec: Exec, cmd: string, args: string[]) {
   try {
@@ -63,13 +61,13 @@ export function composeTarget(deps: TargetDeps): Target {
       const e = readEnvFile(envPath)
       const out: Secrets = {}
       if (e.BOT_TOKEN) out.token = e.BOT_TOKEN
-      if (e.OWNER_ID && /^-?\d+$/.test(e.OWNER_ID)) {
+      if (e.OWNER_ID && INTEGER_PATTERN.test(e.OWNER_ID)) {
         out.ownerId = Number(e.OWNER_ID)
         return out
       }
-      const r = await dc(['run', '--rm', '--no-deps', 'bot', PKG, 'owner', 'get'])
+      const r = await dc(['run', '--rm', '--no-deps', 'bot', PACKAGE_NAME, 'owner', 'get'])
       const t = r.stdout.trim()
-      if (r.code === 0 && /^-?\d+$/.test(t)) out.ownerId = Number(t)
+      if (r.code === 0 && INTEGER_PATTERN.test(t)) out.ownerId = Number(t)
       return out
     },
     async remove(_rec, purge) {
@@ -83,7 +81,7 @@ export function composeTarget(deps: TargetDeps): Target {
     },
     async clearOwner() {
       removeEnvKey(envPath, 'OWNER_ID')
-      const r = await dc(['run', '--rm', '--no-deps', 'bot', PKG, 'owner', 'clear'])
+      const r = await dc(['run', '--rm', '--no-deps', 'bot', PACKAGE_NAME, 'owner', 'clear'])
       if (r.code !== 0)
         throw new Error(`Couldn't clear the owner in the container: ${r.stderr.trim()}`)
     },

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync, existsSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vite-plus/test'
-import { readInstall, removeInstall, writeInstall } from '../../src/install/state.ts'
+import { readInstall, removeInstall, writeInstall } from '../../src/install/index.ts'
 
 let dir: string
 beforeEach(() => {

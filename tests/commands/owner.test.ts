@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
-import { runOwner } from '../../src/commands/owner.ts'
+import { runOwner } from '../../src/commands/index.ts'
 
 let file: string
 let env: NodeJS.ProcessEnv

@@ -4,23 +4,23 @@ import { realpathSync } from 'node:fs'
 import os from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { runInit } from './commands/init.ts'
-import type { InitArgs } from './commands/init.ts'
-import { runOwner } from './commands/owner.ts'
-import { runResetOwner } from './commands/reset-owner.ts'
-import { runStatus } from './commands/status.ts'
-import { runTest } from './commands/test.ts'
-import { runUninstall } from './commands/uninstall.ts'
-import { DEFAULT_PORT, loadConfig } from './config.ts'
-import { runService } from './service.ts'
-import { realExec } from './install/exec.ts'
-import { installPaths } from './install/paths.ts'
-import { clackPrompts } from './install/prompt.ts'
-import type { TargetName } from './install/state.ts'
-import { portFree, validateToken } from './install/system.ts'
-import { makeTargets, TARGET_ORDER } from './install/targets.ts'
-import { defaultFetchStatus, waitForPairing } from './install/wait.ts'
-import { VERSION } from './version.ts'
+import {
+  clackPrompts,
+  defaultFetchStatus,
+  runInit,
+  runOwner,
+  runResetOwner,
+  runStatus,
+  runTest,
+  runUninstall,
+  waitForPairing,
+} from './commands/index.ts'
+import type { InitArgs } from './commands/index.ts'
+import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
+import { runService } from './daemon/index.ts'
+import { installPaths, makeTargets, TARGET_ORDER } from './install/index.ts'
+import type { InstallPaths, TargetName } from './install/index.ts'
+import { portFree, realExec, validateToken } from './system/index.ts'
 
 function pickPort(): number {
   try {
@@ -57,7 +57,7 @@ function initCommand(args: InitArgs): Promise<number> {
   )
 }
 
-function realTargets(paths: ReturnType<typeof installPaths>) {
+function realTargets(paths: InstallPaths) {
   return makeTargets(
     { exec: realExec, paths, env: process.env, user: os.userInfo().username },
     { selfPath: realpathSync(fileURLToPath(import.meta.url)), nodePath: process.execPath },

@@ -1,17 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { configDir } from '../config.ts'
-
-export interface InstallPaths {
-  configDir: string
-  configFile: string
-  installFile: string
-  composeDir: string
-  quadletDir: string
-  systemdUnit: string
-  quadletUnit: string
-  userNpmPrefix: string
-}
+import { configDir } from '../config/index.ts'
+import type { InstallPaths } from './types.ts'
 
 function nonEmpty(v: string | undefined): string | undefined {
   return v === undefined || v === '' ? undefined : v

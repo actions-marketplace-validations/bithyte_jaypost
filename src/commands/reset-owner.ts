@@ -1,19 +1,6 @@
-import { PromptAborted } from '../install/prompt.ts'
-import type { Prompts } from '../install/prompt.ts'
-import type { InstallPaths } from '../install/paths.ts'
-import type { TargetName } from '../install/state.ts'
-import type { Target } from '../install/target.ts'
-import { findExisting } from '../install/targets.ts'
-import type { waitForPairing } from '../install/wait.ts'
-
-export interface ResetOwnerDeps {
-  targets: Record<TargetName, Target>
-  paths: InstallPaths
-  confirm: Prompts['confirm']
-  wait: typeof waitForPairing
-  print: (s: string) => void
-  signal?: AbortSignal
-}
+import { findExisting } from '../install/index.ts'
+import { PromptAborted } from './prompts.ts'
+import type { ResetOwnerDeps, WaitResult } from './types.ts'
 
 export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
   const { print } = deps
@@ -36,7 +23,7 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
     print(`Reset failed. ${target.logsHint(rec)}`)
     return 1
   }
-  let result: Awaited<ReturnType<typeof deps.wait>>
+  let result: WaitResult
   try {
     result = await deps.wait({
       port: rec.port,

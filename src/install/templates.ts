@@ -9,8 +9,6 @@ export function execWord(s: string): string {
   return systemdQuote(s).replaceAll('$', () => '$$')
 }
 
-export const DOCKERIGNORE = '.env\n'
-
 export function dockerfile(opts: { version: string; tarball?: string }): string {
   const install =
     opts.tarball === undefined

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vite-plus/test'
-import { readEnvFile, removeEnvKey, writeEnvFile } from '../../src/install/envfile.ts'
+import { readEnvFile, removeEnvKey, writeEnvFile } from '../../src/install/index.ts'
 
 const dir = () => mkdtempSync(join(tmpdir(), 'env-'))
 

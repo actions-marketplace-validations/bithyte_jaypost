@@ -1,15 +1,6 @@
-import type { StatusInfo } from '../http.ts'
-import type { InstallPaths } from '../install/paths.ts'
-import type { TargetName } from '../install/state.ts'
-import type { Target } from '../install/target.ts'
-import { findExisting } from '../install/targets.ts'
-
-export interface StatusDeps {
-  targets: Record<TargetName, Target>
-  paths: InstallPaths
-  fetchStatus: (port: number) => Promise<StatusInfo | undefined>
-  print: (s: string) => void
-}
+import { findExisting } from '../install/index.ts'
+import { CODE_DASH_PATTERN } from './constants.ts'
+import type { StatusDeps } from './types.ts'
 
 export async function runStatus(deps: StatusDeps): Promise<number> {
   const { print } = deps
@@ -39,7 +30,7 @@ export async function runStatus(deps: StatusDeps): Promise<number> {
   } else if (status.paired) {
     print('Pairing: paired')
   } else {
-    const raw = status.code.replace(/-/g, '')
+    const raw = status.code.replace(CODE_DASH_PATTERN, '')
     print(
       `Pairing: not paired\nPairing code: ${status.code}\nSend "/start ${status.code}" to @${status.bot}, or open https://t.me/${status.bot}?start=${raw}`,
     )

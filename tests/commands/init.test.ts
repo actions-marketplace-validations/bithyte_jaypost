@@ -2,14 +2,10 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
-import { runInit } from '../../src/commands/init.ts'
-import type { InitDeps } from '../../src/commands/init.ts'
-import { PromptAborted } from '../../src/install/prompt.ts'
-import { installPaths } from '../../src/install/paths.ts'
-import type { InstallPaths } from '../../src/install/paths.ts'
-import { readInstall, writeInstall } from '../../src/install/state.ts'
-import type { TargetName } from '../../src/install/state.ts'
-import type { Target } from '../../src/install/target.ts'
+import { PromptAborted, runInit } from '../../src/commands/index.ts'
+import type { InitDeps } from '../../src/commands/index.ts'
+import { installPaths, readInstall, writeInstall } from '../../src/install/index.ts'
+import type { InstallPaths, Target, TargetName } from '../../src/install/index.ts'
 
 let tmp: string
 let paths: InstallPaths

@@ -1,18 +1,6 @@
-import { PromptAborted } from '../install/prompt.ts'
-import type { Prompts } from '../install/prompt.ts'
-import type { InstallPaths } from '../install/paths.ts'
-import { removeInstall } from '../install/state.ts'
-import type { TargetName } from '../install/state.ts'
-import type { Target } from '../install/target.ts'
-import { findExisting } from '../install/targets.ts'
-
-export interface UninstallDeps {
-  targets: Record<TargetName, Target>
-  paths: InstallPaths
-  confirm: Prompts['confirm']
-  print: (s: string) => void
-  signal?: AbortSignal
-}
+import { findExisting, removeInstall } from '../install/index.ts'
+import { PromptAborted } from './prompts.ts'
+import type { UninstallDeps } from './types.ts'
 
 export async function runUninstall(deps: UninstallDeps): Promise<number> {
   const { print } = deps
