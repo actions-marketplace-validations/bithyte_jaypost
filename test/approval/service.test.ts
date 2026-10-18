@@ -83,6 +83,15 @@ test('tap resolves request and finalizes message', async () => {
   ])
 })
 
+test('final text keeps the project line', async () => {
+  const { m, svc } = setup()
+  const r = svc.request({ ...req, text: '[api]\n\nDeploy?' })
+  await flush()
+  expect(svc.tap('id1', 0)).toBe('accepted')
+  await r
+  expect(m.finalized[0]?.text.startsWith('[api]\n\nDeploy?\n\n')).toBe(true)
+})
+
 test('timeout returns timeoutOption, timedOut true', async () => {
   const { m, svc } = setup()
   const r = svc.request(req)

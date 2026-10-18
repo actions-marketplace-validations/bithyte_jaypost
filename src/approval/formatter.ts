@@ -29,3 +29,8 @@ export function formatResultLine(settlement: Settlement, at: Date): string {
 export function formatFinalText(original: string, settlement: Settlement, at: Date): string {
   return `${original}\n\n${formatResultLine(settlement, at)}`
 }
+
+/** The project name in brackets on its own first line, a blank line, then the text. */
+export function formatProjectText(project: string, text: string): string {
+  return `[${project}]\n\n${text}`
+}

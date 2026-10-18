@@ -263,6 +263,25 @@ test('POST /status is 405 with Allow: GET', async () => {
   expect(res.headers.get('allow')).toBe('GET')
 })
 
+test('project is folded into the request text', async () => {
+  const request = vi.fn<RequestFn>(async () => ({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  }))
+  const url = await start(request)
+  const res = await post(url, JSON.stringify({ ...valid, project: 'api' }))
+  expect(res.status).toBe(200)
+  expect(request.mock.calls[0]?.[0].text).toBe('[api]\n\nDeploy?')
+})
+
+test('project is folded into the notification text', async () => {
+  const notify = vi.fn<NotifyFn>(async () => {})
+  const url = await start(vi.fn<RequestFn>(), undefined, notify)
+  const res = await postNotify(url, JSON.stringify({ text: 'hi', project: 'api' }))
+  expect(res.status).toBe(200)
+  expect(notify).toHaveBeenCalledWith({ text: '[api]\n\nhi' })
+})
+
 test('POST /notify returns ok once sent', async () => {
   const notify = vi.fn<NotifyFn>(async () => {})
   const url = await start(vi.fn<RequestFn>(), undefined, notify)

@@ -104,12 +104,13 @@ Earlier versions used `npm run onboard` and `deploy/install-service.sh`. `init` 
 
 `POST /request` on `127.0.0.1:<port>`, JSON body:
 
-| Field           | Type     | Required | Notes                                                  |
-| --------------- | -------- | -------- | ------------------------------------------------------ |
-| `text`          | string   | yes      | Question shown in Telegram. Non-empty, max 3900 chars. |
-| `options`       | string[] | yes      | Button labels. Non-empty, unique, non-empty strings.   |
-| `timeoutOption` | string   | yes      | Answer returned on timeout. Must be one of `options`.  |
-| `timeout`       | number   | no       | Seconds. Default and max 300. Must be positive.        |
+| Field           | Type     | Required | Notes                                                                                   |
+| --------------- | -------- | -------- | --------------------------------------------------------------------------------------- |
+| `text`          | string   | yes      | Question shown in Telegram. Non-empty, max 3900 chars.                                  |
+| `options`       | string[] | yes      | Button labels. Non-empty, unique, non-empty strings.                                    |
+| `timeoutOption` | string   | yes      | Answer returned on timeout. Must be one of `options`.                                   |
+| `timeout`       | number   | no       | Seconds. Default and max 300. Must be positive.                                         |
+| `project`       | string   | no       | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900. |
 
 The request stays open until you tap a button or the timeout fires, then returns `200`:
 
@@ -142,9 +143,10 @@ If the caller disconnects early, the request is dropped and the Telegram message
 
 `POST /notify` sends a message that doesn't need an answer, e.g. from n8n when someone joins a game server. JSON body:
 
-| Field  | Type   | Required | Notes                                                     |
-| ------ | ------ | -------- | --------------------------------------------------------- |
-| `text` | string | yes      | Shown in Telegram. Non-empty, max 3900 chars. Plain text. |
+| Field     | Type   | Required | Notes                                                                                   |
+| --------- | ------ | -------- | --------------------------------------------------------------------------------------- |
+| `text`    | string | yes      | Shown in Telegram. Non-empty, max 3900 chars. Plain text.                               |
+| `project` | string | no       | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900. |
 
 It returns `200 { "ok": true }` as soon as Telegram accepts the message. The message has a Dismiss button that deletes it, and it's deleted automatically after 8 hours.
 

@@ -62,3 +62,29 @@ test('text limit comes from the caller', () => {
     error: 'text must be at most 10 characters',
   })
 })
+
+test('project goes on its own first line, trimmed', () =>
+  expect(parseApprovalRequest({ ...base, project: ' api ' }, 3900)).toEqual({
+    ok: true,
+    value: { ...base, text: '[api]\n\nThis is a test', timeoutSeconds: 300 },
+  }))
+test('project counts toward the text limit', () => {
+  expect(parseApprovalRequest({ ...base, text: 'xxxx', project: 'ab' }, 10).ok).toBe(true)
+  expect(parseApprovalRequest({ ...base, text: 'xxxxx', project: 'ab' }, 10)).toEqual({
+    ok: false,
+    error: 'text must be at most 4 characters',
+  })
+})
+test.each([5, '', '   '])('bad project %s', (project) =>
+  expect(parseApprovalRequest({ ...base, project }, 3900)).toEqual({
+    ok: false,
+    error: 'project must be a non-empty string',
+  }),
+)
+test('project length limit', () => {
+  expect(parseApprovalRequest({ ...base, project: 'x'.repeat(100) }, 3900).ok).toBe(true)
+  expect(parseApprovalRequest({ ...base, project: 'x'.repeat(101) }, 3900)).toEqual({
+    ok: false,
+    error: 'project must be at most 100 characters',
+  })
+})
