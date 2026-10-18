@@ -18,5 +18,8 @@ export type PairingMessage = {
   readonly text: string
 }
 
-/** Records an answer for request `id`; 'expired' when it is unknown or already settled. */
+/**
+ * Records an answer for request `id`; 'expired' when it is unknown, already settled, or the option
+ * index is invalid.
+ */
 export type Tap = (id: string, optionIndex: number) => 'accepted' | 'expired'

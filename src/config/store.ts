@@ -17,7 +17,10 @@ function findEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
   return value === undefined || value === '' ? undefined : value
 }
 
-/** Path of config.json: $APPROVAL_BOT_CONFIG, else under $XDG_CONFIG_HOME or ~/.config. Empty env values count as unset. */
+/**
+ * Path of config.json: $APPROVAL_BOT_CONFIG, else under $XDG_CONFIG_HOME or ~/.config. Empty env
+ * values count as unset.
+ */
 export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = findEnvValue(env, 'APPROVAL_BOT_CONFIG')
   if (explicit) {
@@ -36,7 +39,7 @@ export function resolveConfigDirectory(env: NodeJS.ProcessEnv = process.env): st
 
 /**
  * Returns {} when the file is missing. Throws on invalid JSON or fields, without quoting the file,
- * since it may hold the bot token.
+ * since it may hold the bot token. Read errors other than a missing file are rethrown.
  */
 export function readConfigFile(path: string): FileConfig {
   let text: string
@@ -52,7 +55,8 @@ export function readConfigFile(path: string): FileConfig {
   try {
     parsed = JSON.parse(text)
   } catch {
-    // Don't include the parser's message: V8 can quote part of the file, which may hold the bot token.
+    // Don't include the parser's message: V8 can quote part of the file, which may hold the bot
+    // token.
     throw new Error(`config file ${JSON.stringify(path)} contains invalid JSON; ${INIT_HINT}`)
   }
   const result = fileConfigSchema.safeParse(parsed)
@@ -77,7 +81,8 @@ function toInteger(value: unknown): number | undefined {
 
 /**
  * Env vars (BOT_TOKEN, OWNER_ID, PORT, HOST) override the config file. Throws a user-facing error
- * on a missing token or invalid owner id or port.
+ * on a missing token or invalid owner id or port; read errors other than a missing config file
+ * are rethrown.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const file = readConfigFile(resolveConfigPath(env))
