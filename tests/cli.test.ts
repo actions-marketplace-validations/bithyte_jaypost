@@ -15,5 +15,12 @@ test('--version prints VERSION', async () => {
 
 test('unbuilt subcommand returns 1', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
-  expect(await main(['init'])).toBe(1)
+  expect(await main(['status'])).toBe(1)
+})
+
+test('init rejects bad port and unknown target with 2', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(await main(['init', '--port', 'abc'])).toBe(2)
+  expect(await main(['init', '--port', '70000'])).toBe(2)
+  expect(await main(['init', 'nope'])).toBe(2)
 })
