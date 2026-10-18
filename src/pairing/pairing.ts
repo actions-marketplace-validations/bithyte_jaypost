@@ -4,7 +4,6 @@ import {
   DEFAULT_MAX_FAILURES,
   PAIRING_ALPHABET,
   PAIRING_CODE_LENGTH,
-  START_COMMAND_PATTERN,
 } from './constants.ts'
 import type { PairResult } from './types.ts'
 
@@ -23,11 +22,7 @@ export function formatCode(code: string): string {
 }
 
 function normalizeCode(text: string): string {
-  return text
-    .trim()
-    .replace(START_COMMAND_PATTERN, '')
-    .toUpperCase()
-    .replace(CODE_SEPARATOR_PATTERN, '')
+  return text.trim().toUpperCase().replace(CODE_SEPARATOR_PATTERN, '')
 }
 
 /**
@@ -37,7 +32,7 @@ function normalizeCode(text: string): string {
 export class Pairing {
   #code: string | undefined
   #maxFailures: number
-  #failures = new Map<number, number>()
+  #failures = new Map<string, number>()
 
   constructor(code: string, maxFailures = DEFAULT_MAX_FAILURES) {
     this.#code = code.toUpperCase()
@@ -54,14 +49,14 @@ export class Pairing {
   }
 
   /**
-   * Compares `text` (case, dashes and a leading /start ignored) to the code. Wrong guesses are
+   * Compares `text` (case and dashes ignored) to the code. Wrong guesses are
    * counted per sender and block at the limit.
    */
-  attempt(fromId: number, text: string): PairResult {
+  attempt(senderId: string, text: string): PairResult {
     if (this.#code === undefined) {
       return 'notPairing'
     }
-    const failures = this.#failures.get(fromId) ?? 0
+    const failures = this.#failures.get(senderId) ?? 0
     if (failures >= this.#maxFailures) {
       return 'blocked'
     }
@@ -69,7 +64,7 @@ export class Pairing {
       this.#code = undefined
       return 'paired'
     }
-    this.#failures.set(fromId, failures + 1)
+    this.#failures.set(senderId, failures + 1)
     return 'wrong'
   }
 }

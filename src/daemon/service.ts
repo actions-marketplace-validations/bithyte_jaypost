@@ -3,13 +3,11 @@ import { ApprovalService } from '../approval/index.ts'
 import { loadConfig, resolveConfigPath } from '../config/index.ts'
 import type { Config } from '../config/index.ts'
 import { NotificationService } from '../notify/index.ts'
+import { formatCode, generateCode, Pairing } from '../pairing/index.ts'
 import { createApiServer } from '../server/index.ts'
 import {
   createOnPaired,
   createTelegramMessenger,
-  formatCode,
-  generateCode,
-  Pairing,
   registerPairingHandler,
   registerTapHandler,
 } from '../telegram/index.ts'

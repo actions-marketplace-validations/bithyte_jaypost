@@ -6,11 +6,6 @@ export type Owner = {
 /** What happened to a button tap: not from the owner, handled, or no longer valid. */
 export type TapRoute = 'ignored' | 'accepted' | 'expired'
 
-/**
- * Outcome of one pairing attempt; `blocked` after too many wrong guesses, `notPairing` once paired.
- */
-export type PairResult = 'paired' | 'wrong' | 'blocked' | 'notPairing'
-
 /** The parts of an incoming Telegram message that pairing looks at. */
 export type PairingMessage = {
   readonly fromId: number

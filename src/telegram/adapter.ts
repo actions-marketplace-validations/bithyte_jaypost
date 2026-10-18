@@ -2,8 +2,13 @@ import type { Bot } from 'grammy'
 import type { MessageReference, Messenger } from '../approval/index.ts'
 import { updateConfigFile } from '../config/index.ts'
 import type { Notifier } from '../notify/index.ts'
-import { CALLBACK_DATA_PATTERN, DISMISS_DATA_PATTERN, DISMISS_LABEL } from './constants.ts'
-import type { Pairing } from './pairing.ts'
+import type { Pairing } from '../pairing/index.ts'
+import {
+  CALLBACK_DATA_PATTERN,
+  DISMISS_DATA_PATTERN,
+  DISMISS_LABEL,
+  START_COMMAND_PATTERN,
+} from './constants.ts'
 import type { Dismiss, Owner, PairingMessage, Tap, TapRoute } from './types.ts'
 
 /** Button payload `<id>:<optionIndex>`; `routeTap` parses it. */
@@ -130,7 +135,10 @@ export function handlePairingMessage(
   if (message.chatType !== 'private') {
     return undefined
   }
-  const result = pairing.attempt(message.fromId, message.text)
+  const result = pairing.attempt(
+    String(message.fromId),
+    message.text.trim().replace(START_COMMAND_PATTERN, ''),
+  )
   if (result === 'paired') {
     onPaired(message.fromId)
     return 'Paired. Approval requests will appear here.'

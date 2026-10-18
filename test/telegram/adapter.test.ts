@@ -10,12 +10,12 @@ import {
   createTelegramMessenger,
   handlePairingMessage,
   createOnPaired,
-  Pairing,
   registerPairingHandler,
   registerTapHandler,
   routeTap,
 } from '../../src/telegram/index.ts'
 import type { Owner } from '../../src/telegram/index.ts'
+import { Pairing } from '../../src/pairing/index.ts'
 
 test('formatCallbackData format', () => expect(formatCallbackData('abc', 1)).toBe('abc:1'))
 
@@ -241,6 +241,20 @@ test('pairing: right code replies and calls onPaired', () => {
   expect(onPaired).toHaveBeenCalledWith(9)
 })
 
+test.each(['/start K7QM-4XPD', '/start@my_bot k7qm4xpd'])(
+  'handlePairingMessage strips /start and /start@bot: %s',
+  (text) => {
+    const onPaired = vi.fn()
+    const reply = handlePairingMessage(
+      { fromId: 42, chatType: 'private', text },
+      new Pairing('K7QM4XPD'),
+      onPaired,
+    )
+    expect(reply).toBe('Paired. Approval requests will appear here.')
+    expect(onPaired).toHaveBeenCalledWith(42)
+  },
+)
+
 test('pairing: wrong code gets the hint, onPaired not called', () => {
   const onPaired = vi.fn()
   const reply = handlePairingMessage(
@@ -269,7 +283,7 @@ test('pairing: blocked sender gets no reply', () => {
 
 test('after pairing, strangers and old codes get no reply', () => {
   const p = new Pairing('K7QM4XPD')
-  p.attempt(1, 'K7QM4XPD')
+  p.attempt('1', 'K7QM4XPD')
   const onPaired = vi.fn()
   expect(
     handlePairingMessage({ fromId: 2, chatType: 'private', text: '/start' }, p, onPaired),
