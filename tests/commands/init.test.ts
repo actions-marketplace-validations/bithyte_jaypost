@@ -293,3 +293,17 @@ test('old remove throwing returns 1, no install', async () => {
   expect(await runInit({}, d)).toBe(1)
   expect(d.targets.quadlet.install).not.toHaveBeenCalled()
 })
+
+test('prompts are closed right before wait', async () => {
+  const d = deps({
+    closePrompts: () => {
+      order.push('close')
+    },
+    wait: vi.fn(async () => {
+      order.push('wait')
+      return 'paired' as const
+    }),
+  })
+  expect(await runInit({}, d)).toBe(0)
+  expect(order).toEqual(['port', 'install:quadlet', 'close', 'wait'])
+})

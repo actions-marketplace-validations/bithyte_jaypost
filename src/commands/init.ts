@@ -23,6 +23,8 @@ export interface InitDeps {
   wait: typeof waitForPairing
   print: (s: string) => void
   signal?: AbortSignal
+  /** Releases stdin (restores cooked mode) so Ctrl-C reaches the SIGINT handler while waiting. */
+  closePrompts?: () => void
   version: string
 }
 
@@ -143,6 +145,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps): Promise<number> {
   })
   writeInstall(deps.paths.installFile, installed)
 
+  deps.closePrompts?.()
   const result = await deps.wait({
     port,
     isRunning: () => target.isRunning(installed),

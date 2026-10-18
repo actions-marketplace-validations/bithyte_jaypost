@@ -91,6 +91,7 @@ async function initCommand(argv: string[]): Promise<number> {
       wait: waitForPairing,
       print: (s) => console.log(s),
       signal: ac.signal,
+      closePrompts,
       version: VERSION,
     })
   } finally {
