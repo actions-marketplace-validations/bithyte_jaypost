@@ -1,4 +1,5 @@
 import { PromptAborted } from '../install/prompt.ts'
+import type { Prompts } from '../install/prompt.ts'
 import type { InstallPaths } from '../install/paths.ts'
 import { writeInstall } from '../install/state.ts'
 import type { InstallRecord, TargetName } from '../install/state.ts'
@@ -9,22 +10,12 @@ import type { waitForPairing } from '../install/wait.ts'
 export interface InitDeps {
   targets: Record<TargetName, Target>
   paths: InstallPaths
-  prompt: {
-    ask: (q: string) => Promise<string>
-    askSecret: (q: string) => Promise<string>
-    choose: <T extends string>(
-      q: string,
-      options: { value: T; label: string; disabled?: string }[],
-      def: T,
-    ) => Promise<T>
-  }
+  prompt: Prompts
   validateToken: (token: string) => Promise<string | undefined>
   portFree: (port: number) => Promise<boolean>
   wait: typeof waitForPairing
   print: (s: string) => void
   signal?: AbortSignal
-  /** Releases stdin (restores cooked mode) so Ctrl-C reaches the SIGINT handler while waiting. */
-  closePrompts?: () => void
   version: string
   /** Defaults to process.env; used to find the systemd config file. */
   env?: NodeJS.ProcessEnv
@@ -97,7 +88,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
       for (const d of detected) print(`  ${d.name}: ${d.reason}`)
       return 1
     }
-    name = await prompt.choose(
+    name = await prompt.select(
       'Where should the bot run?',
       detected.map((d) => ({
         value: d.name,
@@ -118,8 +109,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
       `Found an existing ${rec.target} install (version ${rec.version}, port ${rec.port}).` +
         (existing.legacy ? ' It looks like a legacy install from an older setup.' : ''),
     )
-    const answer = (await prompt.ask('Replace it? [Y/n] ')).trim().toLowerCase()
-    if (answer === 'n' || answer === 'no') return 0
+    if (!(await prompt.confirm('Replace it?', true))) return 0
     const old = deps.targets[rec.target]
     secrets = await old.readSecrets(rec)
     if (secrets.token) seen.push(secrets.token)
@@ -146,7 +136,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
   }
   while (token === undefined) {
     if (deps.signal?.aborted) throw new Aborted()
-    const candidate = await prompt.askSecret('Bot token (input hidden): ')
+    const candidate = await prompt.password('Bot token')
     seen.push(candidate)
     if (candidate !== '' && (await safeValidate(deps, candidate))) token = candidate
     else print('Telegram rejected that token (or could not be reached). Try again.')
@@ -168,7 +158,6 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
   })
   writeInstall(deps.paths.installFile, installed)
 
-  deps.closePrompts?.()
   const result = await deps.wait({
     port,
     isRunning: () => target.isRunning(installed),

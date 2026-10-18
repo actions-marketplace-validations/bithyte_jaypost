@@ -1,4 +1,5 @@
 import { PromptAborted } from '../install/prompt.ts'
+import type { Prompts } from '../install/prompt.ts'
 import type { InstallPaths } from '../install/paths.ts'
 import { removeInstall } from '../install/state.ts'
 import type { TargetName } from '../install/state.ts'
@@ -8,7 +9,7 @@ import { findExisting } from '../install/targets.ts'
 export interface UninstallDeps {
   targets: Record<TargetName, Target>
   paths: InstallPaths
-  ask: (q: string) => Promise<string>
+  confirm: Prompts['confirm']
   print: (s: string) => void
   signal?: AbortSignal
 }
@@ -22,10 +23,7 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
   }
   const { rec } = existing
   try {
-    const answer = (await deps.ask('Also delete the bot token and paired owner? [y/N] '))
-      .trim()
-      .toLowerCase()
-    const purge = answer === 'y' || answer === 'yes'
+    const purge = await deps.confirm('Also delete the bot token and paired owner?', false)
     await deps.targets[rec.target].remove(rec, purge)
     removeInstall(deps.paths.installFile)
   } catch (err) {

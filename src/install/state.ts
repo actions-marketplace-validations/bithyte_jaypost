@@ -1,18 +1,18 @@
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { z } from 'zod'
 
-export type TargetName = 'systemd' | 'compose' | 'quadlet'
-
-export interface InstallRecord {
-  target: TargetName
-  port: number
-  version: string
-  cliPath?: string
+const installRecordSchema = z.object({
+  target: z.enum(['systemd', 'compose', 'quadlet']),
+  port: z.number(),
+  version: z.string(),
+  cliPath: z.string().optional(),
   /** Absolute config.json path the systemd unit was installed with. */
-  configFile?: string
-}
+  configFile: z.string().optional(),
+})
 
-const TARGETS: readonly string[] = ['systemd', 'compose', 'quadlet']
+export type InstallRecord = z.infer<typeof installRecordSchema>
+export type TargetName = InstallRecord['target']
 
 export function readInstall(file: string): InstallRecord | undefined {
   let parsed: unknown
@@ -21,19 +21,8 @@ export function readInstall(file: string): InstallRecord | undefined {
   } catch {
     return undefined
   }
-  if (typeof parsed !== 'object' || parsed === null) return undefined
-  const r = parsed as Record<string, unknown>
-  if (typeof r.target !== 'string' || !TARGETS.includes(r.target)) return undefined
-  if (typeof r.port !== 'number' || typeof r.version !== 'string') return undefined
-  if (r.cliPath !== undefined && typeof r.cliPath !== 'string') return undefined
-  if (r.configFile !== undefined && typeof r.configFile !== 'string') return undefined
-  return {
-    target: r.target as TargetName,
-    port: r.port,
-    version: r.version,
-    ...(r.cliPath === undefined ? {} : { cliPath: r.cliPath }),
-    ...(r.configFile === undefined ? {} : { configFile: r.configFile }),
-  }
+  const r = installRecordSchema.safeParse(parsed)
+  return r.success ? r.data : undefined
 }
 
 export function writeInstall(file: string, rec: InstallRecord): void {

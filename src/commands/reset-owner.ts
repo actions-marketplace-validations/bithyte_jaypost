@@ -1,4 +1,5 @@
 import { PromptAborted } from '../install/prompt.ts'
+import type { Prompts } from '../install/prompt.ts'
 import type { InstallPaths } from '../install/paths.ts'
 import type { TargetName } from '../install/state.ts'
 import type { Target } from '../install/target.ts'
@@ -8,12 +9,10 @@ import type { waitForPairing } from '../install/wait.ts'
 export interface ResetOwnerDeps {
   targets: Record<TargetName, Target>
   paths: InstallPaths
-  ask: (q: string) => Promise<string>
+  confirm: Prompts['confirm']
   wait: typeof waitForPairing
   print: (s: string) => void
   signal?: AbortSignal
-  /** Releases stdin (restores cooked mode) so Ctrl-C reaches the SIGINT handler while waiting. */
-  closePrompts?: () => void
 }
 
 export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
@@ -26,10 +25,7 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
   const { rec } = existing
   const target = deps.targets[rec.target]
   try {
-    const answer = (await deps.ask('This unlinks your Telegram account. Continue? [y/N] '))
-      .trim()
-      .toLowerCase()
-    if (answer !== 'y' && answer !== 'yes') return 0
+    if (!(await deps.confirm('This unlinks your Telegram account. Continue?', false))) return 0
     await target.clearOwner(rec)
     await target.restart(rec)
   } catch (err) {
@@ -40,7 +36,6 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
     print(`Reset failed. ${target.logsHint(rec)}`)
     return 1
   }
-  deps.closePrompts?.()
   let result: Awaited<ReturnType<typeof deps.wait>>
   try {
     result = await deps.wait({

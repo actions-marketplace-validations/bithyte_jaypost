@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { Argument, Command, CommanderError, InvalidArgumentError, Option } from 'commander'
 import { realpathSync } from 'node:fs'
 import os from 'node:os'
 import { resolve } from 'node:path'
@@ -14,24 +15,12 @@ import { DEFAULT_PORT, loadConfig } from './config.ts'
 import { runService } from './service.ts'
 import { realExec } from './install/exec.ts'
 import { installPaths } from './install/paths.ts'
-import { askSecret, ask, choose, closePrompts } from './install/prompt.ts'
+import { clackPrompts } from './install/prompt.ts'
+import type { TargetName } from './install/state.ts'
 import { portFree, validateToken } from './install/system.ts'
-import { makeTargets } from './install/targets.ts'
+import { makeTargets, TARGET_ORDER } from './install/targets.ts'
 import { defaultFetchStatus, waitForPairing } from './install/wait.ts'
 import { VERSION } from './version.ts'
-
-const USAGE = `Usage: telegram-approval-bot <command>
-
-Commands:
-  init [systemd|compose|quadlet] [--port N]
-               set up the bot token and install the service
-  start        run the service in the foreground
-  status       show service and pairing state
-  test         send a test approval request
-  reset-owner  clear the paired owner so a new one can pair
-  uninstall    remove the service
-  --version    print the version
-  --help       show this help`
 
 function pickPort(): number {
   try {
@@ -42,51 +31,27 @@ function pickPort(): number {
   }
 }
 
-const INIT_USAGE = 'Usage: telegram-approval-bot init [systemd|compose|quadlet] [--port N]'
-
-export function parseInitArgs(argv: string[]): InitArgs | undefined {
-  const out: InitArgs = {}
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!
-    if (a === '--port') {
-      const v = argv[++i]
-      const n = v !== undefined && /^\d+$/.test(v) ? Number(v) : NaN
-      if (!Number.isInteger(n) || n < 1 || n > 65535) return undefined
-      out.port = n
-    } else if (a === '--tarball') {
-      const v = argv[++i]
-      if (!v) return undefined
-      out.tarball = resolve(v)
-    } else if ((a === 'systemd' || a === 'compose' || a === 'quadlet') && !out.target) {
-      out.target = a
-    } else return undefined
+function parsePort(v: string): number {
+  const n = /^\d+$/.test(v) ? Number(v) : NaN
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new InvalidArgumentError('must be an integer 1-65535')
   }
-  return out
+  return n
 }
 
-async function initCommand(argv: string[]): Promise<number> {
-  const args = parseInitArgs(argv)
-  if (!args) {
-    console.error(INIT_USAGE)
-    return 2
-  }
+function initCommand(args: InitArgs): Promise<number> {
   const paths = installPaths()
   const targets = realTargets(paths)
   return withSigint((ac) =>
     runInit(args, {
       targets,
       paths,
-      prompt: {
-        ask: (q) => ask(q, ac.signal),
-        askSecret: (q) => askSecret(q, ac.signal),
-        choose: (q, o, d) => choose(q, o, d, ac.signal),
-      },
+      prompt: clackPrompts(ac.signal),
       validateToken,
       portFree,
       wait: waitForPairing,
       print: (s) => console.log(s),
       signal: ac.signal,
-      closePrompts,
       version: VERSION,
     }),
   )
@@ -107,7 +72,6 @@ async function withSigint(fn: (ac: AbortController) => Promise<number>): Promise
     return await fn(ac)
   } finally {
     process.off('SIGINT', onSigint)
-    closePrompts()
   }
 }
 
@@ -128,11 +92,10 @@ function resetOwnerCommand(): Promise<number> {
     runResetOwner({
       targets,
       paths,
-      ask: (q) => ask(q, ac.signal),
+      confirm: clackPrompts(ac.signal).confirm,
       wait: waitForPairing,
       print: (s) => console.log(s),
       signal: ac.signal,
-      closePrompts,
     }),
   )
 }
@@ -144,7 +107,7 @@ function uninstallCommand(): Promise<number> {
     runUninstall({
       targets,
       paths,
-      ask: (q) => ask(q, ac.signal),
+      confirm: clackPrompts(ac.signal).confirm,
       print: (s) => console.log(s),
       signal: ac.signal,
     }),
@@ -152,27 +115,67 @@ function uninstallCommand(): Promise<number> {
 }
 
 export async function main(argv: string[]): Promise<number> {
-  const [cmd] = argv
-  if (cmd === undefined || cmd === '--help' || cmd === '-h' || cmd === 'help') {
-    console.log(USAGE)
-    return 0
+  let code = 0
+  const program = new Command('telegram-approval-bot')
+    .version(VERSION, '-v, --version')
+    .exitOverride()
+  program
+    .command('init')
+    .description('set up the bot token and install the service')
+    .addArgument(new Argument('[target]').choices(TARGET_ORDER))
+    .option('--port <n>', "API port (default 8787, or the existing install's)", parsePort)
+    // Installs an unpublished build; for testing.
+    .addOption(new Option('--tarball <path>').hideHelp())
+    .action(async (target: TargetName | undefined, opts: { port?: number; tarball?: string }) => {
+      code = await initCommand({
+        ...(target ? { target } : {}),
+        ...(opts.port === undefined ? {} : { port: opts.port }),
+        ...(opts.tarball === undefined ? {} : { tarball: resolve(opts.tarball) }),
+      })
+    })
+  program
+    .command('start')
+    .description('run the service in the foreground')
+    .action(() => runService())
+  program
+    .command('status')
+    .description('show service and pairing state')
+    .action(async () => {
+      code = await statusCommand()
+    })
+  program
+    .command('test')
+    .description('send a test approval request')
+    .action(async () => {
+      code = await runTest(pickPort(), installPaths().installFile)
+    })
+  program
+    .command('reset-owner')
+    .description('clear the paired owner so a new one can pair')
+    .action(async () => {
+      code = await resetOwnerCommand()
+    })
+  program
+    .command('uninstall')
+    .description('remove the service')
+    .action(async () => {
+      code = await uninstallCommand()
+    })
+  // Runs inside containers to read or clear the owner in the data volume.
+  program
+    .command('owner', { hidden: true })
+    .argument('[args...]')
+    .action((args: string[]) => {
+      code = runOwner(args)
+    })
+  try {
+    await program.parseAsync(argv.length === 0 ? ['--help'] : argv, { from: 'user' })
+  } catch (err) {
+    if (!(err instanceof CommanderError)) throw err
+    // Help and version exit 0; usage errors (already printed) exit 2.
+    return err.exitCode === 0 ? 0 : 2
   }
-  if (cmd === '--version' || cmd === '-v') {
-    console.log(VERSION)
-    return 0
-  }
-  if (cmd === 'start') {
-    await runService()
-    return 0
-  }
-  if (cmd === 'test') return runTest(pickPort(), installPaths().installFile)
-  if (cmd === 'init') return initCommand(argv.slice(1))
-  if (cmd === 'owner') return runOwner(argv.slice(1))
-  if (cmd === 'status') return statusCommand()
-  if (cmd === 'reset-owner') return resetOwnerCommand()
-  if (cmd === 'uninstall') return uninstallCommand()
-  console.error(`Unknown command: ${cmd}\n\n${USAGE}`)
-  return 2
+  return code
 }
 
 if (import.meta.main) {

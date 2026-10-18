@@ -17,8 +17,11 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "commander": "^15.0.0",
     "fastify": "^5.12.7",
-    "grammy": "^1.46.0"
+    "grammy": "^1.46.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

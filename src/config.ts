@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { z } from 'zod'
 
 export interface Config {
   botToken: string
@@ -9,11 +10,14 @@ export interface Config {
   host: string
 }
 
-export interface FileConfig {
-  botToken?: string
-  ownerId?: number
-  port?: number
-}
+// Loose: unknown keys survive updateConfigFile's read-modify-write.
+const fileConfigSchema = z.looseObject({
+  botToken: z.string().optional(),
+  ownerId: z.number().optional(),
+  port: z.number().optional(),
+})
+
+export type FileConfig = z.infer<typeof fileConfigSchema>
 
 export const DEFAULT_PORT = 8787
 
@@ -46,10 +50,10 @@ export function readConfigFile(path: string): FileConfig {
     // Don't include the parser's message: V8 can quote part of the file, which may hold the bot token.
     throw new Error(`Config file ${path} contains invalid JSON; ${INIT_HINT}`)
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Config file ${path} must contain a JSON object; ${INIT_HINT}`)
-  }
-  return parsed as FileConfig
+  const r = fileConfigSchema.safeParse(parsed)
+  // Don't include zod's issues either; keep the token out of error output.
+  if (!r.success) throw new Error(`Config file ${path} has invalid or missing fields; ${INIT_HINT}`)
+  return r.data
 }
 
 function toInt(v: unknown): number | undefined {

@@ -61,7 +61,7 @@ function base(over = {}) {
     targets: targets(),
     paths,
     print: (s: string) => out.push(s),
-    ask: vi.fn(async () => 'y'),
+    confirm: vi.fn(async () => true),
     ...over,
   }
 }
@@ -110,25 +110,22 @@ test('reset-owner not installed -> 1', async () => {
 
 test('reset-owner declined: no clearOwner', async () => {
   seed()
-  const d = { ...base({ ask: vi.fn(async () => '') }), wait: vi.fn() }
+  const d = { ...base({ confirm: vi.fn(async () => false) }), wait: vi.fn() }
   expect(await runResetOwner(d)).toBe(0)
   expect(d.targets.systemd.clearOwner).not.toHaveBeenCalled()
   expect(d.wait).not.toHaveBeenCalled()
 })
 
-test('reset-owner yes: clearOwner, restart, close prompts, wait', async () => {
+test('reset-owner yes: clearOwner, restart, wait', async () => {
   seed()
   const wait = vi.fn(async () => {
     order.push('wait')
     return 'paired' as const
   })
-  const closePrompts = vi.fn(() => {
-    order.push('close')
-  })
-  const d = { ...base(), wait, closePrompts }
+  const d = { ...base(), wait }
   expect(await runResetOwner(d)).toBe(0)
-  expect(d.ask).toHaveBeenCalledWith('This unlinks your Telegram account. Continue? [y/N] ')
-  expect(order).toEqual(['clearOwner', 'restart', 'close', 'wait'])
+  expect(d.confirm).toHaveBeenCalledWith('This unlinks your Telegram account. Continue?', false)
+  expect(order).toEqual(['clearOwner', 'restart', 'wait'])
 })
 
 test('reset-owner wait exit codes', async () => {
@@ -159,7 +156,7 @@ test('reset-owner prompt abort -> 130', async () => {
   const { PromptAborted } = await import('../../src/install/prompt.ts')
   const d = {
     ...base({
-      ask: vi.fn(async () => {
+      confirm: vi.fn(async () => {
         throw new PromptAborted()
       }),
     }),
@@ -175,14 +172,13 @@ test('uninstall not installed -> 0', async () => {
 
 test('uninstall passes purge answer through and removes install.json', async () => {
   for (const [ans, purge] of [
-    ['y', true],
-    ['n', false],
-    ['', false],
+    [true, true],
+    [false, false],
   ] as const) {
     seed('compose')
-    const d = base({ ask: vi.fn(async () => ans) })
+    const d = base({ confirm: vi.fn(async () => ans) })
     expect(await runUninstall(d)).toBe(0)
-    expect(d.ask).toHaveBeenCalledWith('Also delete the bot token and paired owner? [y/N] ')
+    expect(d.confirm).toHaveBeenCalledWith('Also delete the bot token and paired owner?', false)
     expect(d.targets.compose.remove).toHaveBeenCalledWith(
       { target: 'compose', port: 9000, version: '1.0.0' },
       purge,

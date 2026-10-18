@@ -1,6 +1,4 @@
-import { createInterface } from 'node:readline/promises'
-import type { Interface } from 'node:readline/promises'
-import { Writable } from 'node:stream'
+import { confirm, isCancel, password, select } from '@clack/prompts'
 
 export class PromptAborted extends Error {
   constructor() {
@@ -9,84 +7,60 @@ export class PromptAborted extends Error {
   }
 }
 
-let muted = false
-let rl: Interface | undefined
+/** The prompts the commands use; injectable so tests can fake them. */
+export interface Prompts {
+  confirm: (message: string, initialValue: boolean) => Promise<boolean>
+  password: (message: string) => Promise<string>
+  select: <T extends string>(
+    message: string,
+    options: { value: T; label: string; disabled?: string }[],
+    initialValue: T,
+  ) => Promise<T>
+}
 
-function getRl(): Interface {
-  if (rl) return rl
-  const output = new Writable({
-    write(chunk, _enc, cb) {
-      if (!muted) process.stdout.write(chunk)
-      cb()
+// Clack never settles on a closed or piped stdin, so refuse up front.
+function requireTty(): void {
+  if (!process.stdin.isTTY) throw new PromptAborted()
+}
+
+function orAbort<T>(value: T): Exclude<T, symbol> {
+  if (isCancel(value)) throw new PromptAborted()
+  return value as Exclude<T, symbol>
+}
+
+/**
+ * Clack-backed prompts. Each rejects with PromptAborted on Ctrl-C, when `signal` aborts, or when
+ * stdin isn't a terminal.
+ */
+export function clackPrompts(signal?: AbortSignal): Prompts {
+  return {
+    confirm: async (message, initialValue) => {
+      requireTty()
+      return orAbort(await confirm({ message, initialValue, signal }))
     },
-  })
-  rl = createInterface({ input: process.stdin, output, terminal: process.stdin.isTTY })
-  rl.on('close', () => (rl = undefined))
-  return rl
-}
-
-/** Rejects with PromptAborted on signal abort, Ctrl-C, or input closing (EOF) before an answer. */
-async function question(q: string, signal?: AbortSignal): Promise<string> {
-  if (signal?.aborted) throw new PromptAborted()
-  const r = getRl()
-  const ac = new AbortController()
-  let onClose: () => void = () => {}
-  let onAbort: () => void = () => {}
-  const aborted = new Promise<never>((_, reject) => {
-    onClose = () => reject(new PromptAborted())
-    onAbort = () => reject(new PromptAborted())
-    r.once('close', onClose)
-    r.once('SIGINT', onAbort)
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
-  try {
-    return (await Promise.race([r.question(q, { signal: ac.signal }), aborted])).trim()
-  } finally {
-    ac.abort()
-    r.off('close', onClose)
-    r.off('SIGINT', onAbort)
-    signal?.removeEventListener('abort', onAbort)
-    aborted.catch(() => {})
+    password: async (message) => {
+      requireTty()
+      return orAbort(await password({ message, signal })).trim()
+    },
+    select: async <T extends string>(
+      message: string,
+      options: { value: T; label: string; disabled?: string }[],
+      initialValue: T,
+    ) => {
+      requireTty()
+      // select<string>: clack's Option<T> is a conditional type TS can't check against a generic T.
+      return orAbort(
+        await select<string>({
+          message,
+          initialValue,
+          signal,
+          options: options.map((o) => ({
+            value: o.value,
+            label: o.disabled ? `${o.label} (unavailable: ${o.disabled})` : o.label,
+            disabled: o.disabled !== undefined,
+          })),
+        }),
+      ) as T
+    },
   }
-}
-
-export async function ask(q: string, signal?: AbortSignal): Promise<string> {
-  return question(q, signal)
-}
-
-export async function askSecret(q: string, signal?: AbortSignal): Promise<string> {
-  process.stdout.write(q)
-  muted = true
-  try {
-    return await question('', signal)
-  } finally {
-    muted = false
-    process.stdout.write('\n')
-  }
-}
-
-export async function choose<T extends string>(
-  q: string,
-  options: { value: T; label: string; disabled?: string }[],
-  def: T,
-  signal?: AbortSignal,
-): Promise<T> {
-  console.log(q)
-  options.forEach((o, i) => {
-    console.log(`  ${i + 1}) ${o.label}${o.disabled ? ` (unavailable: ${o.disabled})` : ''}`)
-  })
-  const defIdx = options.findIndex((o) => o.value === def) + 1
-  for (;;) {
-    const a = await ask(`Choice [${defIdx}]: `, signal)
-    const n = a === '' ? defIdx : Number(a)
-    const picked = Number.isInteger(n) ? options[n - 1] : undefined
-    if (!picked) console.log('Pick one of the numbers above.')
-    else if (picked.disabled) console.log(`Unavailable: ${picked.disabled}`)
-    else return picked.value
-  }
-}
-
-export function closePrompts(): void {
-  rl?.close()
-  rl = undefined
 }

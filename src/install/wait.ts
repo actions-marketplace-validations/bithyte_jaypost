@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises'
+import { statusInfoSchema } from '../http.ts'
 import type { StatusInfo } from '../http.ts'
 
 export interface WaitOptions {
@@ -16,8 +18,8 @@ export async function defaultFetchStatus(port: number): Promise<StatusInfo | und
     const res = await fetch(`http://127.0.0.1:${port}/status`, {
       signal: AbortSignal.timeout(2000),
     })
-    const body = (await res.json()) as StatusInfo
-    if (body && typeof body === 'object' && typeof body.paired === 'boolean') return body
+    const body = statusInfoSchema.safeParse(await res.json())
+    if (body.success) return body.data
   } catch {
     // not up yet
   }
@@ -25,17 +27,8 @@ export async function defaultFetchStatus(port: number): Promise<StatusInfo | und
 }
 
 function abortableSleep(signal?: AbortSignal): (ms: number) => Promise<void> {
-  return (ms) =>
-    new Promise((resolve) => {
-      if (signal?.aborted) return resolve()
-      const done = () => {
-        clearTimeout(t)
-        signal?.removeEventListener('abort', done)
-        resolve()
-      }
-      const t = setTimeout(done, ms)
-      signal?.addEventListener('abort', done, { once: true })
-    })
+  // Rejects on abort; the loop checks the signal right after.
+  return (ms) => delay(ms, undefined, { signal }).catch(() => {})
 }
 
 export async function waitForPairing(

@@ -1,3 +1,4 @@
+import { Api } from 'grammy'
 import net from 'node:net'
 import type { Exec } from './exec.ts'
 
@@ -30,12 +31,9 @@ export async function ensureLinger(
 /** Returns the bot username, or undefined on any failure. Never exposes the token or error text. */
 export async function validateToken(token: string): Promise<string | undefined> {
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
-      signal: AbortSignal.timeout(10000),
-    })
-    const body = (await res.json()) as { ok?: boolean; result?: { username?: string } }
-    const name = body?.ok ? body.result?.username : undefined
-    return typeof name === 'string' && name !== '' ? name : undefined
+    // Global fetch rather than grammY's bundled node-fetch.
+    const me = await new Api(token, { fetch, timeoutSeconds: 10 }).getMe()
+    return me.username || undefined
   } catch {
     return undefined
   }

@@ -1,14 +1,18 @@
 import Fastify from 'fastify'
 import type { FastifyError, FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import { SendError } from './approvals.ts'
 import type { ApprovalService } from './approvals.ts'
 import { parseApprovalRequest } from './validate.ts'
 
 const MAX_BODY_BYTES = 65536
 
-export type StatusInfo =
-  | { paired: true; bot: string }
-  | { paired: false; code: string; bot: string }
+export const statusInfoSchema = z.discriminatedUnion('paired', [
+  z.object({ paired: z.literal(true), bot: z.string() }),
+  z.object({ paired: z.literal(false), code: z.string(), bot: z.string() }),
+])
+
+export type StatusInfo = z.infer<typeof statusInfoSchema>
 
 export function createApiServer(
   service: Pick<ApprovalService, 'request'>,

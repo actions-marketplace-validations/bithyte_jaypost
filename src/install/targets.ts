@@ -59,8 +59,7 @@ export function findExisting(
   const configFile = unitConfigFile(unit) ?? defaultConfigFile(paths, env)
   let port = DEFAULT_PORT
   try {
-    const p = readConfigFile(configFile).port
-    if (typeof p === 'number') port = p
+    port = readConfigFile(configFile).port ?? DEFAULT_PORT
   } catch {
     // Unreadable config: fall back to the default port.
   }
@@ -79,8 +78,8 @@ function configSecrets(path: string): Secrets {
   try {
     const c = readConfigFile(path)
     const out: Secrets = {}
-    if (typeof c.botToken === 'string' && c.botToken !== '') out.token = c.botToken
-    if (typeof c.ownerId === 'number' && Number.isSafeInteger(c.ownerId)) out.ownerId = c.ownerId
+    if (c.botToken) out.token = c.botToken
+    if (c.ownerId !== undefined && Number.isSafeInteger(c.ownerId)) out.ownerId = c.ownerId
     return out
   } catch {
     // Corrupt config: treat as nothing left over.
