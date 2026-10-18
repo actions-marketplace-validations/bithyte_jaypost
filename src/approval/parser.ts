@@ -7,17 +7,20 @@ const OPTIONS_ERROR = 'options must be a non-empty array'
 const OPTION_ERROR = `options must contain only non-empty strings of at most ${MAX_OPTION_LENGTH} characters`
 const TIMEOUT_ERROR = 'timeout must be a finite positive number'
 
+/** Non-empty (after trim) text up to `MAX_TEXT_LENGTH`; shared by /request and /notify. */
+export const requestTextSchema = z
+  .string({ error: TEXT_ERROR })
+  .refine((text) => text.trim().length > 0, TEXT_ERROR)
+  .refine(
+    (text) => text.length <= MAX_TEXT_LENGTH,
+    `text must be at most ${MAX_TEXT_LENGTH} characters`,
+  )
+
 // Messages are part of the API (README error table); only the first issue is reported.
 const approvalRequestSchema = z
   .object(
     {
-      text: z
-        .string({ error: TEXT_ERROR })
-        .refine((text) => text.trim().length > 0, TEXT_ERROR)
-        .refine(
-          (text) => text.length <= MAX_TEXT_LENGTH,
-          `text must be at most ${MAX_TEXT_LENGTH} characters`,
-        ),
+      text: requestTextSchema,
       options: z
         .array(
           z
