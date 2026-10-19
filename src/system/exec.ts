@@ -20,8 +20,11 @@ export const realExec: Exec = (command, args, options = {}) =>
     })
     let stdout = ''
     let stderr = ''
-    child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
-    child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
+    // A string decoder holds back a multi-byte character split across chunks until it's whole.
+    child.stdout?.setEncoding('utf8')
+    child.stderr?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string) => (stdout += chunk))
+    child.stderr?.on('data', (chunk: string) => (stderr += chunk))
     child.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') {
         reject(new MissingCommandError(command))

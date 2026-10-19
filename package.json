@@ -1,6 +1,6 @@
 {
   "name": "telegram-ask",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local HTTP API that asks you a question on Telegram with inline buttons and returns your answer",
   "keywords": [
     "approval",
