@@ -11,13 +11,22 @@ export type NotifyParseResult =
   | { readonly ok: true; readonly value: NotifyRequest }
   | { readonly ok: false; readonly error: string }
 
+/** How a notification is delivered; `silent` suppresses the sound and vibration. */
+export type SendNotificationOptions = {
+  readonly silent: boolean
+}
+
 /**
  * Optional messenger part for notifications. Without `deleteMessage` there's no dismiss button and
  * no expiry.
  */
 export type Notifier = {
   /** Send `text` to the owner with a dismiss control carrying `id`, if the messenger can delete. */
-  readonly sendNotification: (id: string, text: string) => Promise<MessageReference>
+  readonly sendNotification: (
+    id: string,
+    text: string,
+    options: SendNotificationOptions,
+  ) => Promise<MessageReference>
   readonly deleteMessage?: (reference: MessageReference) => Promise<void>
 }
 
@@ -27,8 +36,18 @@ export type NotificationStore = {
   readonly removeNotification: (id: string) => void
 }
 
-/** Optional collaborators of `NotificationService`; `now` is the wall clock in epoch ms. */
+/** Where quiet periods come from; `QuietService` satisfies it structurally. */
+export type QuietSource = {
+  /** When the current quiet period ends, or undefined when not quiet. */
+  readonly quietUntil: () => Date | undefined
+}
+
+/**
+ * Optional collaborators of `NotificationService`; `now` is the wall clock in epoch ms. Without
+ * `quiet` it's never quiet.
+ */
 export type NotificationServiceOptions = {
+  readonly quiet?: QuietSource
   readonly store?: NotificationStore
   readonly now?: () => number
 }

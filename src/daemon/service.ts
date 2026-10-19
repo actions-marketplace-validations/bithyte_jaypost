@@ -7,6 +7,7 @@ import { formatCode, generateCode as generateDefaultCode, Pairing } from '../pai
 import type { PairResult } from '../pairing/index.ts'
 import { findOwnerSetting } from '../provider/index.ts'
 import type { RuntimeHandlers } from '../provider/index.ts'
+import { QUIET_COMMANDS, QuietService } from '../quiet/index.ts'
 import { createApiServer } from '../server/index.ts'
 import type { StatusInfo } from '../server/index.ts'
 import { resolveStatePath, StateStore } from '../state/index.ts'
@@ -45,6 +46,11 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   const store = new StateStore(resolveStatePath(configPath), provider.name, log)
   const saved = store.load()
   const service = new ApprovalService(runtime, undefined, undefined, { store })
+  const quiet = new QuietService((patch) => updateConfigFile(configPath, patch), {
+    ...(config.quietHours === undefined ? {} : { quietHours: config.quietHours }),
+    ...(config.mutedUntil === undefined ? {} : { mutedUntil: config.mutedUntil }),
+    log,
+  })
   const sendNotification = runtime.sendNotification
   const notifications =
     sendNotification === undefined
@@ -53,7 +59,7 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
           { sendNotification, deleteMessage: runtime.deleteMessage },
           undefined,
           log,
-          { store },
+          { store, quiet },
         )
   let recovery: Promise<void> | undefined
   // Deferred to the caller so a second instance that fails to bind its port has no side effects.
@@ -119,12 +125,12 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   const handlers: RuntimeHandlers = {
     answer: (id, optionIndex) => service.tap(id, optionIndex),
     dismiss: (id) => notifications?.dismiss(id) ?? false,
-    commands: OWNER_COMMANDS,
+    commands: [...OWNER_COMMANDS, ...QUIET_COMMANDS],
     command: (name, argument) =>
       runOwnerCommand(service, name, argument, {
         now: () => new Date(),
         maxTextLength: provider.maxTextLength,
-      }),
+      }) ?? quiet.handleCommand(name, argument),
     fatal: options.fatal,
     ...(pairing === undefined ? {} : { pair }),
   }

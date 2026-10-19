@@ -92,6 +92,28 @@ test('formatEnvFile works for any provider', () =>
       auth: NO_AUTH,
     }),
   ).toBe('PROVIDER=fake\nFAKE_KEY=k\nPORT=1\n'))
+test('formatEnvFile ends with TZ when a zone is given', () =>
+  expect(
+    formatEnvFile({
+      provider: telegramProvider,
+      port: 8787,
+      settings: { botToken: 't', ownerId: 42 },
+      auth: NO_AUTH,
+      timeZone: 'Europe/Bucharest',
+    }),
+  ).toBe('PROVIDER=telegram\nBOT_TOKEN=t\nPORT=8787\nOWNER_ID=42\nTZ=Europe/Bucharest\n'))
+test('formatEnvFile rejects a zone with a line break', () => {
+  const format = () =>
+    formatEnvFile({
+      provider: telegramProvider,
+      port: 1,
+      settings: { botToken: 't' },
+      auth: NO_AUTH,
+      timeZone: 'UTC\nPORT=1',
+    })
+  expect(format).toThrow(RangeError)
+  expect(format).toThrow('time zone contains a line break')
+})
 test('formatEnvFile rejects a value with a newline', () => {
   for (const botToken of ['a\nOWNER_ID=1', 'a\rb']) {
     const format = () =>

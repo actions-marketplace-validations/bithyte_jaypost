@@ -1,15 +1,21 @@
 import type { z } from 'zod'
 import type { ApiAuth } from '../auth/index.ts'
+import type { QuietHours } from '../quiet/index.ts'
 import type { Provider, SettingValues } from '../provider/index.ts'
 import type { fileConfigSchema } from './schema.ts'
 
-/** Resolved settings; the owner setting is absent until someone has paired. */
+/**
+ * Resolved settings; the owner setting is absent until someone has paired. `quietHours` and
+ * `mutedUntil` are omitted when unset.
+ */
 export type Config = {
   readonly provider: Provider
   readonly settings: SettingValues
   readonly port: number
   readonly host: string
   readonly auth: ApiAuth
+  readonly quietHours?: QuietHours
+  readonly mutedUntil?: Date
 }
 
 /** Shape of config.json; every field is optional and unknown keys are kept. */

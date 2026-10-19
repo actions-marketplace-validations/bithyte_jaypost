@@ -71,6 +71,8 @@ export type InitDeps = {
   readonly version: string
   /** Defaults to process.env; used to find the systemd config file. */
   readonly env?: NodeJS.ProcessEnv
+  /** IANA zone passed to container installs as `TZ`; omitted when unknown. */
+  readonly timeZone?: string
 }
 
 /** Parsed `init` flags; absent fields mean the user didn't pass them. */

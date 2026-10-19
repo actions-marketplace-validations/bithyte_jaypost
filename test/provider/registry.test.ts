@@ -22,6 +22,10 @@ test('no provider uses a reserved key or env var', () => {
   }
 })
 
+test('TZ is reserved', () => {
+  expect(RESERVED_ENV_VARS).toContain('TZ')
+})
+
 test('each provider has at most one owner setting, and an owner setting iff resetOwnerWarning', () => {
   for (const provider of PROVIDERS) {
     const owners = provider.settings.filter((setting) => setting.owner)
@@ -37,4 +41,8 @@ test('telegram is registered and is the default', () => {
 test('the api token key and env var are reserved', () => {
   expect(RESERVED_CONFIG_KEYS).toContain('apiToken')
   expect(RESERVED_ENV_VARS).toContain('TELEGRAM_ASK_TOKEN')
+})
+
+test('the quiet settings keys are reserved', () => {
+  expect(RESERVED_CONFIG_KEYS).toEqual(expect.arrayContaining(['quietHours', 'mutedUntil']))
 })

@@ -3,6 +3,8 @@ import { NO_AUTH, parseToken, TOKEN_ENV_VAR } from '../auth/index.ts'
 import type { ApiAuth } from '../auth/index.ts'
 import { DEFAULT_PROVIDER, PROVIDERS, requireProvider } from '../provider/index.ts'
 import type { Provider, SettingValue } from '../provider/index.ts'
+import { parseQuietHours } from '../quiet/index.ts'
+import type { QuietHours } from '../quiet/index.ts'
 import { isMissingFileError, writeFileAtomic } from '../system/index.ts'
 import {
   DEFAULT_HOST,
@@ -69,18 +71,50 @@ function resolveAuth(env: NodeJS.ProcessEnv, file: FileConfig): ApiAuth {
   return { kind: 'token', token }
 }
 
+function resolveQuietHours(file: FileConfig): QuietHours | undefined {
+  const raw = file.quietHours
+  if (raw === undefined || raw.trim() === '') {
+    return undefined
+  }
+  const result = parseQuietHours(raw)
+  if (!result.ok) {
+    throw new Error(`invalid quiet hours ${JSON.stringify(raw)}: ${result.error}`)
+  }
+  return result.value
+}
+
+function resolveMutedUntil(
+  file: FileConfig,
+  path: string,
+  log: (line: string) => void,
+): Date | undefined {
+  const raw = file.mutedUntil
+  if (raw === undefined) {
+    return undefined
+  }
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) {
+    log(`ignoring invalid mutedUntil ${JSON.stringify(raw)} in ${JSON.stringify(path)}`)
+    return undefined
+  }
+  return date
+}
+
 /**
  * Provider (PROVIDER env, else the file, else telegram), its settings, port and host. Env vars
  * (e.g. PROVIDER, PORT, HOST) override the config file. Throws a user-facing error on an unknown
  * provider, a missing required setting, or an invalid setting, port or api token
  * (TELEGRAM_ASK_TOKEN, else apiToken in the file; the message never quotes it); read errors other
- * than a missing config file are rethrown.
+ * than a missing config file are rethrown. quietHours (HH:MM-HH:MM; empty means off) throws when
+ * invalid; an unparseable mutedUntil is dropped and reported through `log`.
  */
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
   providers: readonly Provider[] = PROVIDERS,
+  log: (line: string) => void = console.error,
 ): Config {
-  const file = readConfigFile(resolveConfigPath(env))
+  const path = resolveConfigPath(env)
+  const file = readConfigFile(path)
   const provider = requireProvider(
     providers,
     findEnvValue(env, 'PROVIDER') ?? file.provider ?? DEFAULT_PROVIDER,
@@ -107,7 +141,17 @@ export function loadConfig(
     throw new Error(`invalid port ${JSON.stringify(String(rawPort))}: must be an integer 1-65535`)
   }
   const auth = resolveAuth(env, file)
-  return { provider, settings, port, host: findEnvValue(env, 'HOST') ?? DEFAULT_HOST, auth }
+  const quietHours = resolveQuietHours(file)
+  const mutedUntil = resolveMutedUntil(file, path, log)
+  return {
+    provider,
+    settings,
+    port,
+    host: findEnvValue(env, 'HOST') ?? DEFAULT_HOST,
+    auth,
+    ...(quietHours === undefined ? {} : { quietHours }),
+    ...(mutedUntil === undefined ? {} : { mutedUntil }),
+  }
 }
 
 /** Merges `patch` into the file's JSON object; a `null` value deletes that key. */

@@ -114,6 +114,7 @@ function runOpenApiCommand(file: string | undefined, flagPort: number | undefine
 function runInitCommand(args: InitArgs): Promise<number> {
   const paths = resolveInstallPaths()
   const targets = createRealTargets(paths)
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   return runWithSignals((controller) =>
     runInit(args, {
       targets,
@@ -125,6 +126,7 @@ function runInitCommand(args: InitArgs): Promise<number> {
       print: (text) => console.log(text),
       signal: controller.signal,
       version: VERSION,
+      ...(timeZone && timeZone !== 'Etc/Unknown' ? { timeZone } : {}),
     }),
   )
 }

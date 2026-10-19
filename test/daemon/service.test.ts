@@ -5,10 +5,12 @@ import { dirname, join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { OWNER_COMMANDS } from '../../src/approval/index.ts'
 import { NO_AUTH } from '../../src/auth/index.ts'
+import { loadConfig } from '../../src/config/index.ts'
 import type { Config } from '../../src/config/index.ts'
 import { startService } from '../../src/daemon/index.ts'
 import type { RunningService } from '../../src/daemon/index.ts'
 import type { Provider } from '../../src/provider/index.ts'
+import { QUIET_COMMANDS } from '../../src/quiet/index.ts'
 import { createFakeProvider, createPairingFakeProvider } from '../provider/fake.ts'
 import type { FakeRuntime } from '../provider/fake.ts'
 
@@ -32,10 +34,10 @@ function createConfigPath(): string {
 
 async function start(
   provider: Provider & { readonly runtimes: FakeRuntime[] },
-  options: { configPath?: string; log?: (line: string) => void } = {},
+  options: { configPath?: string; log?: (line: string) => void; config?: Config } = {},
 ): Promise<{ url: string; runtime: FakeRuntime }> {
   running = await startService({
-    config: createConfig(provider),
+    config: options.config ?? createConfig(provider),
     configPath: options.configPath ?? createConfigPath(),
     fatal: vi.fn(),
     log: options.log ?? vi.fn(),
@@ -224,11 +226,75 @@ test('cancel command answers a pending request with its timeout option', async (
   expect(await result.json()).toEqual({ answer: 'Decline', timedOut: false })
 })
 
-test('handlers carry the owner commands and stay silent for unknown ones', async () => {
+test('handlers carry the owner and quiet commands and stay silent for unknown ones', async () => {
   const { runtime } = await start(createFakeProvider())
-  expect(runtime.handlers?.commands).toEqual(OWNER_COMMANDS)
+  expect(runtime.handlers?.commands).toEqual([...OWNER_COMMANDS, ...QUIET_COMMANDS])
   expect(runtime.handlers?.command('nope', '')).toBeUndefined()
   expect(runtime.handlers?.command('pending', '')).toBe('Nothing pending.')
+})
+
+function createSilentProvider() {
+  const silent: boolean[] = []
+  const provider = createFakeProvider({
+    runtime: {
+      sendNotification: async (_id, _text, options) => {
+        silent.push(options.silent)
+        return { n: 1 }
+      },
+    },
+  })
+  return { provider, silent }
+}
+
+test('notifications go out silently while muted and ping again after /unmute', async () => {
+  const { provider, silent } = createSilentProvider()
+  const { url, runtime } = await start(provider)
+  await post(url, '/notify', { text: 'a' })
+  runtime.handlers?.command('mute', '2h')
+  await post(url, '/notify', { text: 'b' })
+  runtime.handlers?.command('unmute', '')
+  await post(url, '/notify', { text: 'c' })
+  expect(silent).toEqual([false, true, false])
+})
+
+test('/mute is saved and a restarted service is still muted', async () => {
+  const configPath = createConfigPath()
+  const { provider, silent } = createSilentProvider()
+  const first = await start(provider, { configPath })
+  expect(first.runtime.handlers?.command('mute', '2h')).toMatch(/^Muted until /)
+  const saved = JSON.parse(readFileSync(configPath, 'utf8'))
+  const drift = new Date(saved.mutedUntil).getTime() - (Date.now() + 2 * 3_600_000)
+  expect(Math.abs(drift)).toBeLessThan(60_000)
+  await running?.stop()
+  running = undefined
+  const config = loadConfig({ TELEGRAM_ASK_CONFIG: configPath, PROVIDER: 'fake', FAKE_KEY: 'k' }, [
+    provider,
+  ])
+  const second = await start(provider, { configPath, config })
+  expect(second.runtime.handlers?.command('quiet', '')).toContain('Muted until')
+  await post(second.url, '/notify', { text: 'x' })
+  expect(silent).toEqual([true])
+})
+
+test('/quiet off removes quietHours from the config file', async () => {
+  const configPath = createConfigPath()
+  writeFileSync(configPath, JSON.stringify({ port: 1234 }))
+  const { runtime } = await start(createSilentProvider().provider, { configPath })
+  runtime.handlers?.command('quiet', '23-8')
+  expect(JSON.parse(readFileSync(configPath, 'utf8')).quietHours).toBeDefined()
+  runtime.handlers?.command('quiet', 'off')
+  expect(JSON.parse(readFileSync(configPath, 'utf8'))).toEqual({ port: 1234 })
+})
+
+test("an unwritable config still mutes and says it won't last", async () => {
+  const configPath = createConfigPath()
+  mkdirSync(configPath)
+  const { provider, silent } = createSilentProvider()
+  const { url, runtime } = await start(provider, { configPath })
+  const reply = runtime.handlers?.command('mute', '2h')
+  expect(reply).toMatch(/Couldn't save this; it resets on restart\.$/)
+  await post(url, '/notify', { text: 'x' })
+  expect(silent).toEqual([true])
 })
 
 test('a request pending at stop is expired by the next start', async () => {

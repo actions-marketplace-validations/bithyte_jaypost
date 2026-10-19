@@ -2,7 +2,12 @@ import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
 import { SendError } from '../../src/approval/index.ts'
 import type { MessageReference } from '../../src/approval/index.ts'
 import { NOTIFICATION_TTL_MS, NotificationService } from '../../src/notify/index.ts'
-import type { Notifier, NotificationServiceOptions } from '../../src/notify/index.ts'
+import type {
+  Notifier,
+  NotificationServiceOptions,
+  QuietSource,
+  SendNotificationOptions,
+} from '../../src/notify/index.ts'
 import type { NotificationRecord } from '../../src/state/index.ts'
 
 const NOW = 1_792_400_000_000
@@ -10,16 +15,22 @@ const REFERENCE: MessageReference = { chatId: 1, messageId: 9 }
 
 class FakeNotifier implements Notifier {
   sent: { id: string; text: string }[] = []
+  silent: boolean[] = []
   deleted: MessageReference[] = []
   sendError: Error | undefined
   deleteError: Error | undefined
   #nextMessageId = 1
 
-  async sendNotification(id: string, text: string): Promise<MessageReference> {
+  async sendNotification(
+    id: string,
+    text: string,
+    options: SendNotificationOptions,
+  ): Promise<MessageReference> {
     if (this.sendError) {
       throw this.sendError
     }
     this.sent.push({ id, text })
+    this.silent.push(options.silent)
     const messageId = this.#nextMessageId
     this.#nextMessageId += 1
     return { chatId: 1, messageId }
@@ -61,6 +72,12 @@ function setup(m: Notifier = new FakeNotifier(), options: NotificationServiceOpt
     options,
   )
   return { svc, log }
+}
+
+const HOUR_MS = 3_600_000
+
+function quietUntil(offsetMs: number): QuietSource {
+  return { quietUntil: vi.fn(() => new Date(NOW + offsetMs)) }
 }
 
 beforeEach(() => {
@@ -145,7 +162,7 @@ test('without deleteMessage no timer is started', async () => {
   const sendNotification = vi.fn(async () => ({ chatId: 1, messageId: 1 }))
   const { svc } = setup({ sendNotification })
   await svc.notify({ text: 'hi' })
-  expect(sendNotification).toHaveBeenCalledWith('id1', 'hi')
+  expect(sendNotification).toHaveBeenCalledWith('id1', 'hi', { silent: false })
   expect(svc.size).toBe(0)
 })
 
@@ -277,4 +294,57 @@ test('stop clears the timers', async () => {
   await vi.advanceTimersByTimeAsync(NOTIFICATION_TTL_MS)
   expect(m.deleted).toEqual([])
   expect(store.removed).toEqual([])
+})
+
+test('not quiet: sent with a ping and expires after 8h', async () => {
+  const m = new FakeNotifier()
+  const store = createStore()
+  const { svc } = setup(m, { store, now: () => NOW })
+  await svc.notify({ text: 'hi' })
+  expect(m.silent).toEqual([false])
+  expect(store.added.map((record) => record.expiresAtMs)).toEqual([NOW + NOTIFICATION_TTL_MS])
+})
+
+test('quiet: sent silently and expires 8h after the quiet period ends', async () => {
+  const m = new FakeNotifier()
+  const store = createStore()
+  const { svc } = setup(m, { store, now: () => NOW, quiet: quietUntil(9 * HOUR_MS) })
+  await svc.notify({ text: 'hi' })
+  expect(m.silent).toEqual([true])
+  expect(store.added.map((record) => record.expiresAtMs)).toEqual([NOW + 17 * HOUR_MS])
+  await vi.advanceTimersByTimeAsync(17 * HOUR_MS - 1)
+  expect(m.deleted).toEqual([])
+  await vi.advanceTimersByTimeAsync(1)
+  expect(m.deleted).toEqual([{ chatId: 1, messageId: 1 }])
+})
+
+test('quiet: no expiry when it would pass 47h after the send', async () => {
+  const m = new FakeNotifier()
+  const store = createStore()
+  const { svc } = setup(m, { store, now: () => NOW, quiet: quietUntil(39 * HOUR_MS + 1) })
+  await svc.notify({ text: 'hi' })
+  expect(m.silent).toEqual([true])
+  expect(store.added).toEqual([])
+  expect(svc.size).toBe(0)
+  await vi.advanceTimersByTimeAsync(49 * HOUR_MS)
+  expect(m.deleted).toEqual([])
+})
+
+test('quiet: an expiry of exactly 47h is still scheduled', async () => {
+  const store = createStore()
+  const { svc } = setup(new FakeNotifier(), {
+    store,
+    now: () => NOW,
+    quiet: quietUntil(39 * HOUR_MS),
+  })
+  await svc.notify({ text: 'hi' })
+  expect(store.added.map((record) => record.expiresAtMs)).toEqual([NOW + 47 * HOUR_MS])
+  expect(svc.size).toBe(1)
+})
+
+test('quietUntil is read once per notify', async () => {
+  const quiet = quietUntil(HOUR_MS)
+  const { svc } = setup(new FakeNotifier(), { now: () => NOW, quiet })
+  await svc.notify({ text: 'hi' })
+  expect(quiet.quietUntil).toHaveBeenCalledTimes(1)
 })

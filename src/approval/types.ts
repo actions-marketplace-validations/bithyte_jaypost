@@ -96,7 +96,7 @@ export type PendingSummary = {
 
 /** A command the owner can send to the bot; `description` is its menu text. */
 export type OwnerCommand = {
-  readonly name: 'pending' | 'cancel' | 'history'
+  readonly name: 'pending' | 'cancel' | 'history' | 'mute' | 'unmute' | 'quiet'
   readonly description: string
 }
 

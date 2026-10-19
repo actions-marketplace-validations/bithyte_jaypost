@@ -92,11 +92,12 @@ export function createTelegramMessenger(
         reply_markup: { inline_keyboard: [] },
       })
     },
-    async sendNotification(id, text): Promise<MessageReference> {
+    async sendNotification(id, text, options): Promise<MessageReference> {
       if (owner.id === undefined) {
         throw new Error('bot is not paired yet')
       }
       const sent = await bot.api.sendMessage(owner.id, text, {
+        disable_notification: options.silent,
         reply_markup: {
           inline_keyboard: [[{ text: DISMISS_LABEL, callback_data: formatDismissData(id) }]],
         },

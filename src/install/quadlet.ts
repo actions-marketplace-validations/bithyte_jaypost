@@ -75,6 +75,7 @@ export function createQuadletTarget(deps: TargetDeps): Target {
           port: options.port,
           settings: options.settings,
           auth: options.auth,
+          ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
         }),
       )
       const build = await exec(

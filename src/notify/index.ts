@@ -7,4 +7,6 @@ export type {
   Notifier,
   NotifyParseResult,
   NotifyRequest,
+  QuietSource,
+  SendNotificationOptions,
 } from './types.ts'

@@ -240,3 +240,56 @@ test('an invalid api token throws without quoting it', () => {
   expect(fromFile).toThrow(message)
   expect(fromFile).not.toThrow(/short-secret/)
 })
+
+test('quietHours and mutedUntil round-trip through the config file', () => {
+  updateConfigFile(file, {
+    botToken: 't',
+    quietHours: '23:00-08:00',
+    mutedUntil: '2026-07-15T13:00:00.000Z',
+  })
+  const config = loadConfig({ TELEGRAM_ASK_CONFIG: file })
+  expect(config.quietHours).toEqual({ startMinute: 1380, endMinute: 480 })
+  expect(config.mutedUntil?.toISOString()).toBe('2026-07-15T13:00:00.000Z')
+})
+
+test('quiet settings are omitted when absent', () => {
+  updateConfigFile(file, { botToken: 't' })
+  const config = loadConfig({ TELEGRAM_ASK_CONFIG: file })
+  expect(Object.hasOwn(config, 'quietHours')).toBe(false)
+  expect(Object.hasOwn(config, 'mutedUntil')).toBe(false)
+})
+
+test('hand-written quiet hours are normalized and empty means off', () => {
+  updateConfigFile(file, { botToken: 't', quietHours: '23-8' })
+  expect(loadConfig({ TELEGRAM_ASK_CONFIG: file }).quietHours).toEqual({
+    startMinute: 1380,
+    endMinute: 480,
+  })
+  updateConfigFile(file, { quietHours: '' })
+  expect(Object.hasOwn(loadConfig({ TELEGRAM_ASK_CONFIG: file }), 'quietHours')).toBe(false)
+})
+
+test('whitespace-only quiet hours means off', () => {
+  updateConfigFile(file, { botToken: 't', quietHours: '   ' })
+  expect(Object.hasOwn(loadConfig({ TELEGRAM_ASK_CONFIG: file }), 'quietHours')).toBe(false)
+})
+
+test('invalid quiet hours fail with the value quoted', () => {
+  updateConfigFile(file, { botToken: 't', quietHours: '25:00-08:00' })
+  expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: file })).toThrow(
+    'invalid quiet hours "25:00-08:00": expected HH:MM-HH:MM',
+  )
+})
+
+test('an invalid mutedUntil is ignored and logged', () => {
+  updateConfigFile(file, { botToken: 't', mutedUntil: 'soon' })
+  const lines: string[] = []
+  const config = loadConfig({ TELEGRAM_ASK_CONFIG: file }, PROVIDERS, (line) => lines.push(line))
+  expect(Object.hasOwn(config, 'mutedUntil')).toBe(false)
+  expect(lines).toEqual([`ignoring invalid mutedUntil "soon" in ${JSON.stringify(file)}`])
+})
+
+test('a non-string quietHours is an invalid field', () => {
+  updateConfigFile(file, { botToken: 't', quietHours: 2300 })
+  expect(() => loadConfig({ TELEGRAM_ASK_CONFIG: file })).toThrow('has invalid or missing fields')
+})

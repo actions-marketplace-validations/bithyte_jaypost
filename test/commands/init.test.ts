@@ -121,6 +121,21 @@ test('fresh install: default target, default port, writes install record', async
   expect(out.join('\n')).toContain('Done. Try it: telegram-ask test')
 })
 
+test('passes the time zone to the target install when given', async () => {
+  const d = deps({ timeZone: 'Europe/Bucharest' })
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ timeZone: 'Europe/Bucharest' }),
+  )
+})
+
+test('leaves timeZone out of the install options without one', async () => {
+  const d = deps()
+  expect(await runInit({}, d)).toBe(0)
+  const [options] = vi.mocked(d.targets.quadlet.install).mock.calls[0]!
+  expect(Object.hasOwn(options, 'timeZone')).toBe(false)
+})
+
 test('replace: reads secrets, removes old without purge, checks port after removal, reuses token and owner', async () => {
   seed('compose')
   const old = fake('compose', true, saved({ botToken: 't', ownerId: 42 }))

@@ -307,6 +307,7 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     provider,
     settings,
     auth,
+    ...(deps.timeZone === undefined ? {} : { timeZone: deps.timeZone }),
     ...(args.tarball === undefined ? {} : { tarball: args.tarball }),
     print,
   })

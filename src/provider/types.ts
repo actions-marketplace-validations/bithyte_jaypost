@@ -1,5 +1,6 @@
 import type { MessageEnding, MessageReference, OwnerCommand } from '../approval/index.ts'
 import type { PairResult } from '../pairing/index.ts'
+import type { SendNotificationOptions } from '../notify/index.ts'
 
 export type SettingValue = string | number
 
@@ -67,7 +68,11 @@ export type ProviderRuntime = {
     ending: MessageEnding,
   ) => Promise<void>
   /** The returned reference must be JSON-serializable (it's saved to the state file). */
-  readonly sendNotification?: (id: string, text: string) => Promise<MessageReference>
+  readonly sendNotification?: (
+    id: string,
+    text: string,
+    options: SendNotificationOptions,
+  ) => Promise<MessageReference>
   readonly deleteMessage?: (reference: MessageReference) => Promise<void>
   /** Present iff the provider pairs; `code` is raw (no dash). */
   readonly pairingInstructions?: (code: string) => string

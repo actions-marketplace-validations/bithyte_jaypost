@@ -254,6 +254,19 @@ test('restart throws on a non-zero exit', async () => {
   await expect(t.restart(rec)).rejects.toThrow('docker compose up failed (exit 1)')
 })
 
+test('install writes TZ into .env when a time zone is given', async () => {
+  const { t, paths } = make()
+  await t.install({ ...base, timeZone: 'Europe/Bucharest' })
+  const lines = readFileSync(join(paths.composeDirectory, '.env'), 'utf8').split('\n')
+  expect(lines).toContain('TZ=Europe/Bucharest')
+})
+
+test('install writes no TZ line without a time zone', async () => {
+  const { t, paths } = make()
+  await t.install(base)
+  expect(readFileSync(join(paths.composeDirectory, '.env'), 'utf8')).not.toContain('TZ=')
+})
+
 test('install writes the api token into .env and keeps it out of the Dockerfile', async () => {
   const { t, paths } = make()
   await t.install({ ...base, auth: { kind: 'token', token: TOKEN } })

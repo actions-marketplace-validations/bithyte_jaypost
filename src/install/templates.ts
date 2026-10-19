@@ -56,13 +56,15 @@ volumes:
 /**
  * KEY=VALUE lines for the container: `PROVIDER`, then each known setting in declaration order with
  * `PORT` after the first, and the api token (when set) right after `PORT`. Throws a RangeError for
- * a value with a line break, which would inject lines.
+ * a value with a line break, which would inject lines. `TZ` is the last line when a time zone is
+ * given.
  */
 export function formatEnvFile(options: {
   readonly provider: Provider
   readonly port: number
   readonly settings: SettingValues
   readonly auth: ApiAuth
+  readonly timeZone?: string
 }): string {
   const settingLines = options.provider.settings.flatMap((setting) => {
     const value = options.settings[setting.configKey]
@@ -75,12 +77,16 @@ export function formatEnvFile(options: {
     }
     return [`${setting.envVar}=${text}`]
   })
+  if (options.timeZone !== undefined && LINE_BREAK_PATTERN.test(options.timeZone)) {
+    throw new RangeError('time zone contains a line break')
+  }
   const lines = [
     `PROVIDER=${options.provider.name}`,
     ...settingLines.slice(0, 1),
     `PORT=${options.port}`,
     ...(options.auth.kind === 'token' ? [`${TOKEN_ENV_VAR}=${options.auth.token}`] : []),
     ...settingLines.slice(1),
+    ...(options.timeZone === undefined ? [] : [`TZ=${options.timeZone}`]),
   ]
   return lines.join('\n') + '\n'
 }

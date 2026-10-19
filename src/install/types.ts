@@ -42,6 +42,8 @@ export type InstallOptions = {
   readonly settings: SettingValues
   /** The token the service enforces; `none` leaves the service without one. */
   readonly auth: ApiAuth
+  /** IANA zone written as `TZ` into container env files; systemd ignores it. */
+  readonly timeZone?: string
   readonly tarball?: string
   readonly print: (text: string) => void
 }

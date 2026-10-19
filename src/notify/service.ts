@@ -1,21 +1,27 @@
 import { SendError } from '../approval/index.ts'
 import type { MessageReference } from '../approval/index.ts'
 import type { NotificationRecord } from '../state/index.ts'
-import { MAX_TIMER_DELAY_MS, NOTIFICATION_TTL_MS } from './constants.ts'
+import { MAX_NOTIFICATION_TTL_MS, MAX_TIMER_DELAY_MS, NOTIFICATION_TTL_MS } from './constants.ts'
 import type {
   NotificationServiceOptions,
   NotificationStore,
   Notifier,
   NotifyRequest,
+  QuietSource,
 } from './types.ts'
 
-/** Sends notifications and deletes each one after `NOTIFICATION_TTL_MS` unless dismissed first. */
+/**
+ * Sends notifications and deletes each one after `NOTIFICATION_TTL_MS` unless dismissed first.
+ * While quiet they're sent silently and the expiry starts when the quiet period ends; if that would
+ * pass `MAX_NOTIFICATION_TTL_MS` after the send, they're left until dismissed.
+ */
 export class NotificationService {
   #notifier: Notifier
   #newId: () => string
   #log: (line: string) => void
   #store: NotificationStore | undefined
   #now: () => number
+  #quiet: QuietSource | undefined
   #timers = new Map<string, ReturnType<typeof setTimeout>>()
   #overdue = new Map<string, MessageReference>()
 
@@ -30,6 +36,7 @@ export class NotificationService {
     this.#log = log
     this.#store = options.store
     this.#now = options.now ?? Date.now
+    this.#quiet = options.quiet
   }
 
   /** Live notifications with a pending expiry, plus restored ones waiting for `deleteOverdue`. */
@@ -43,21 +50,26 @@ export class NotificationService {
    */
   async notify(request: NotifyRequest): Promise<void> {
     const id = this.#newId()
+    const quietEnd = this.#quiet?.quietUntil()
     let reference
     try {
-      reference = await this.#notifier.sendNotification(id, request.text)
+      reference = await this.#notifier.sendNotification(id, request.text, {
+        silent: quietEnd !== undefined,
+      })
     } catch (cause) {
       throw new SendError('failed to send notification', { cause })
     }
     if (this.#notifier.deleteMessage === undefined) {
       return
     }
-    this.#store?.addNotification({
-      id,
-      reference,
-      expiresAtMs: this.#now() + NOTIFICATION_TTL_MS,
-    })
-    this.#schedule(id, reference, NOTIFICATION_TTL_MS)
+    const now = this.#now()
+    const ttlMs =
+      quietEnd === undefined ? NOTIFICATION_TTL_MS : quietEnd.getTime() - now + NOTIFICATION_TTL_MS
+    if (ttlMs > MAX_NOTIFICATION_TTL_MS) {
+      return
+    }
+    this.#store?.addNotification({ id, reference, expiresAtMs: now + ttlMs })
+    this.#schedule(id, reference, ttlMs)
   }
 
   /**

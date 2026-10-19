@@ -65,6 +65,7 @@ export function createComposeTarget(deps: TargetDeps): Target {
           port: options.port,
           settings: options.settings,
           auth: options.auth,
+          ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
         }),
       )
       const result = await compose(['up', '-d', '--build'], { inherit: true })

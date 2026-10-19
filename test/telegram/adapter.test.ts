@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vite-plus/test'
-import { GrammyError } from 'grammy'
-import type { Bot } from 'grammy'
+import { Bot, GrammyError } from 'grammy'
+import type { UserFromGetMe } from 'grammy/types'
 import { OWNER_COMMANDS } from '../../src/approval/index.ts'
 import {
   formatCallbackData,
@@ -19,6 +19,7 @@ import {
 } from '../../src/telegram/index.ts'
 import type { Owner } from '../../src/telegram/index.ts'
 import { Pairing } from '../../src/pairing/index.ts'
+import { QUIET_COMMANDS } from '../../src/quiet/index.ts'
 
 const attempt = (pairing: Pairing) => (senderId: string, text: string) =>
   pairing.attempt(senderId, text)
@@ -197,18 +198,41 @@ test("dismiss and approval payloads don't overlap", () => {
 test('sendNotification sends text with one Dismiss button', async () => {
   const sendMessage = vi.fn(async () => ({ message_id: 5, chat: { id: 42 } }))
   const bot = { api: { sendMessage } } as unknown as Bot
-  const ref = await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', 'hi')
+  const ref = await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', 'hi', {
+    silent: false,
+  })
   expect(ref).toEqual({ chatId: 42, messageId: 5 })
   expect(sendMessage).toHaveBeenCalledWith(42, 'hi', {
+    disable_notification: false,
     reply_markup: { inline_keyboard: [[{ text: 'Dismiss', callback_data: 'dismiss/id1' }]] },
   })
+})
+
+test('sendNotification sets disable_notification when silent', async () => {
+  const sendMessage = vi.fn(async (_chatId: number, _text: string, _other: object) => ({
+    message_id: 5,
+    chat: { id: 42 },
+  }))
+  const bot = { api: { sendMessage } } as unknown as Bot
+  await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', 'hi', { silent: true })
+  expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({ disable_notification: true })
+})
+
+test('sendRequest never sets disable_notification', async () => {
+  const sendMessage = vi.fn(async (_chatId: number, _text: string, _other: object) => ({
+    message_id: 5,
+    chat: { id: 42 },
+  }))
+  const bot = { api: { sendMessage } } as unknown as Bot
+  await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'hi', ['Yes', 'No'])
+  expect(Object.hasOwn(sendMessage.mock.calls[0]?.[2] ?? {}, 'disable_notification')).toBe(false)
 })
 
 test('sendNotification throws when unpaired', async () => {
   const sendMessage = vi.fn()
   const bot = { api: { sendMessage } } as unknown as Bot
   await expect(
-    createTelegramMessenger(bot, { id: undefined }).sendNotification('id1', 'hi'),
+    createTelegramMessenger(bot, { id: undefined }).sendNotification('id1', 'hi', { silent: true }),
   ).rejects.toThrow()
   expect(sendMessage).not.toHaveBeenCalled()
 })
@@ -484,4 +508,98 @@ test('setCommandMenu survives a synchronous throw', async () => {
   })
   expect(() => setCommandMenu(createMenuBot(setMyCommands), 9, OWNER_COMMANDS, log)).not.toThrow()
   await vi.waitFor(() => expect(log).toHaveBeenCalledWith('failed to set bot commands'))
+})
+
+const BOT_INFO = {
+  id: 1,
+  is_bot: true,
+  first_name: 'My Bot',
+  username: 'mybot',
+  can_join_groups: true,
+  can_read_all_group_messages: false,
+  supports_inline_queries: false,
+  can_connect_to_business: false,
+  has_main_web_app: false,
+} as UserFromGetMe
+
+function createDispatchBot() {
+  const calls: { method: string; payload: unknown }[] = []
+  const bot = new Bot(TOKEN, { botInfo: BOT_INFO })
+  bot.api.config.use((_previous, method, payload) => {
+    calls.push({ method, payload })
+    return Promise.resolve({
+      ok: true,
+      result:
+        method === 'sendMessage'
+          ? { message_id: 1, date: 0, chat: { id: 9, type: 'private', first_name: 'O' } }
+          : true,
+    }) as never
+  })
+  return { bot, calls }
+}
+
+function textUpdate(text: string, fromId = 9, chatType = 'private') {
+  const commandLength = text.split(' ')[0]?.length ?? 0
+  return {
+    update_id: 1,
+    message: {
+      message_id: 1,
+      date: 0,
+      chat: { id: fromId, type: chatType, first_name: 'O' },
+      from: { id: fromId, is_bot: false, first_name: 'O' },
+      text,
+      entities: text.startsWith('/')
+        ? [{ type: 'bot_command', offset: 0, length: commandLength }]
+        : [],
+    },
+  } as never
+}
+
+function registerDispatchHandlers(
+  bot: Bot,
+  owner: Owner,
+  command: (name: string, argument: string) => string | undefined,
+  pair: (senderId: string, text: string) => 'paired' | 'wrong' | 'blocked' | 'notPairing',
+  onPaired: (id: number) => void,
+): void {
+  registerCommandHandler(bot, owner, [...OWNER_COMMANDS, ...QUIET_COMMANDS], command)
+  registerPairingHandler(bot, pair, onPaired)
+}
+
+test('/mute@mybot reaches the core with its argument', async () => {
+  const { bot, calls } = createDispatchBot()
+  const command = vi.fn(() => 'ok')
+  registerDispatchHandlers(bot, { id: 9 }, command, vi.fn(), vi.fn())
+  await bot.handleUpdate(textUpdate('/mute@mybot 2h'))
+  expect(command).toHaveBeenCalledWith('mute', '2h')
+  expect(calls.map((call) => call.method)).toEqual(['sendMessage'])
+  expect(calls[0]?.payload).toMatchObject({ text: 'ok' })
+})
+
+test('quiet commands from strangers, groups or while unpaired get nothing and never reach pairing', async () => {
+  const { bot, calls } = createDispatchBot()
+  const command = vi.fn(() => 'ok')
+  const pair = vi.fn(() => 'wrong' as const)
+  registerDispatchHandlers(bot, { id: 9 }, command, pair, vi.fn())
+  await bot.handleUpdate(textUpdate('/mute 2h', 8))
+  await bot.handleUpdate(textUpdate('/quiet off', 9, 'group'))
+  const unpaired = createDispatchBot()
+  registerDispatchHandlers(unpaired.bot, { id: undefined }, command, pair, vi.fn())
+  await unpaired.bot.handleUpdate(textUpdate('/mute'))
+  expect(command).not.toHaveBeenCalled()
+  expect(pair).not.toHaveBeenCalled()
+  expect(calls).toEqual([])
+  expect(unpaired.calls).toEqual([])
+})
+
+test('/start CODE still pairs with the command handler registered', async () => {
+  const { bot, calls } = createDispatchBot()
+  const pairing = new Pairing('K7QM4XPD')
+  const onPaired = vi.fn()
+  registerDispatchHandlers(bot, { id: undefined }, vi.fn(), attempt(pairing), onPaired)
+  await bot.handleUpdate(textUpdate('/start K7QM4XPD'))
+  expect(onPaired).toHaveBeenCalledWith(9)
+  expect(calls.map((call) => call.payload)).toMatchObject([
+    { text: 'Paired. Approval requests will appear here.' },
+  ])
 })
