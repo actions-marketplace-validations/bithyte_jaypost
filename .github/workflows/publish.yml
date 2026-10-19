@@ -1,19 +1,104 @@
 name: publish
 
+# The npm trusted publisher for telegram-ask is tied to this file name; renaming it breaks publishing.
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
 
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
-  publish:
+  # "version" when changesets are pending, "publish" when package.json's version isn't on npm yet
+  select-mode:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.select-mode.outputs.mode }}
+      publish-plan-artifact-id: ${{ steps.select-mode.outputs.publish-plan-artifact-id }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      - id: select-mode
+        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+
+  # Opens or updates the release PR
+  version:
+    if: needs.select-mode.outputs.mode == 'version'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      - uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          script: npm run version-packages
+          commit-message: 'chore: release'
+          pr-title: 'chore: release'
+
+  pack:
+    if: needs.select-mode.outputs.mode == 'publish'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      pack-dir-artifact-id: ${{ steps.pack.outputs.pack-dir-artifact-id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      - run: npm run check
+
+      - run: npm test
+
+      # npm pack runs prepack, which builds dist
+      - id: pack
+        uses: changesets/action/pack@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          publish-plan-artifact-id: ${{ needs.select-mode.outputs.publish-plan-artifact-id }}
+
+  # Publishes the packed tarball, pushes the vX.Y.Z tag and creates the GitHub Release
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v5
         with:
@@ -30,21 +115,6 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run check
-
-      - run: npm test
-
-      - name: Verify tag matches package version
-        id: version
-        run: |
-          version="$(node --print 'require("./package.json").version')"
-          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
-            echo "tag ${GITHUB_REF_NAME} doesn't match package version ${version}" >&2
-            exit 1
-          fi
-          case "${version}" in
-            *-*) echo "dist_tag=next" >> "${GITHUB_OUTPUT}" ;;
-            *) echo "dist_tag=latest" >> "${GITHUB_OUTPUT}" ;;
-          esac
-
-      - run: npm publish --tag "${{ steps.version.outputs.dist_tag }}"
+      - uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}

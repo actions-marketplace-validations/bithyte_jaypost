@@ -308,3 +308,9 @@ Earlier versions used `npm run onboard` and `deploy/install-service.sh`. `init` 
 ## Security
 
 There's no auth. The API is meant for localhost only; don't expose it. The container targets publish the port on `127.0.0.1` only; keep it that way.
+
+## Releasing
+
+When a change matters to users, run `npm run changeset` on its branch, pick patch, minor or major, write a line or two for the changelog, and commit the generated `.changeset/*.md` file with the change. Internal changes (refactors, tests, docs) don't need one.
+
+After a PR with a changeset is merged into `main`, the `publish` workflow opens or updates a `chore: release` PR that bumps the version, writes `CHANGELOG.md` and regenerates `docs/openapi.yaml`. Merging that PR is the release: the workflow runs the checks and tests, publishes to npm, pushes the `vX.Y.Z` tag and creates the GitHub Release. Nothing needs to be run locally.
