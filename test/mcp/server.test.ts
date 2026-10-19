@@ -7,7 +7,6 @@ import type { FastifyInstance } from 'fastify'
 import { afterEach, expect, test } from 'vite-plus/test'
 import { ApprovalService } from '../../src/approval/index.ts'
 import type { MessageReference, Messenger, Settlement } from '../../src/approval/index.ts'
-import { toFetchTimeoutMs } from '../../src/mcp/index.ts'
 import { NotificationService } from '../../src/notify/index.ts'
 import type { Notifier } from '../../src/notify/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
@@ -144,12 +143,6 @@ test('ask on timeout returns the timeout option', async () => {
     content: [{ type: 'text', text: 'Decline (timed out, no answer from the user)' }],
     structuredContent: { answer: 'Decline', timed_out: true },
   })
-})
-
-test('timeout above 300 is capped', () => {
-  expect(toFetchTimeoutMs(900)).toBe(330_000)
-  expect(toFetchTimeoutMs(undefined)).toBe(330_000)
-  expect(toFetchTimeoutMs(10)).toBe(40_000)
 })
 
 test('service 400 text reaches the agent', async () => {

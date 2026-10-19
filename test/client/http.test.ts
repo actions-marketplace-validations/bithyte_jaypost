@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import type { RequestListener, Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
-import { postApi } from '../../src/mcp/index.ts'
+import { postApi, toFetchTimeoutMs } from '../../src/client/index.ts'
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -151,4 +151,10 @@ test('does not use global fetch', async () => {
   vi.stubGlobal('fetch', () => Promise.reject(new Error('fetch must not be used')))
   const port = await startStub(reply(200, '{"ok":true}'))
   expect(await postApi(port, '/notify', {}, options())).toEqual({ kind: 'ok', body: { ok: true } })
+})
+
+test('timeout above 300 is capped', () => {
+  expect(toFetchTimeoutMs(900)).toBe(330_000)
+  expect(toFetchTimeoutMs(undefined)).toBe(330_000)
+  expect(toFetchTimeoutMs(10)).toBe(40_000)
 })

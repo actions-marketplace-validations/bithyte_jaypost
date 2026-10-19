@@ -3,9 +3,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { MAX_OPTION_LENGTH, MAX_PROJECT_LENGTH, MAX_TIMEOUT_SECONDS } from '../approval/index.ts'
+import { FETCH_GRACE_MS, isOutcome, postApi, toFetchTimeoutMs } from '../client/index.ts'
 import { VERSION } from '../config/constants.ts'
-import { isOutcome, postApi } from './client.ts'
-import { FETCH_GRACE_MS } from './constants.ts'
 
 const ASK_DESCRIPTION = [
   'Ask the user a question on their phone and wait for them to tap one of the options.',
@@ -25,13 +24,6 @@ const projectNameSchema = z
   .describe('Short name of the project you are working in, shown as [name] above the message')
 
 const textSchema = z.string().min(1).describe('Message to show the user')
-
-/** HTTP timeout for a /request call: the capped approval timeout plus a grace period. */
-export function toFetchTimeoutMs(timeoutSeconds: number | undefined): number {
-  return (
-    Math.min(timeoutSeconds ?? MAX_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000 + FETCH_GRACE_MS
-  )
-}
 
 /** MCP server with ask_for_permission and notify_user; aborting `signal` cancels every call. */
 export function createMcpServer(port: number, signal: AbortSignal): McpServer {

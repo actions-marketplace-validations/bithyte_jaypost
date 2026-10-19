@@ -1,6 +1,8 @@
 import { request as httpRequest } from 'node:http'
+import { MAX_TIMEOUT_SECONDS } from '../approval/constants.ts'
 import {
   CANCELLED_MESSAGE,
+  FETCH_GRACE_MS,
   HOST,
   NOT_PAIRED_MESSAGE,
   NOT_SUPPORTED_MESSAGE,
@@ -23,7 +25,7 @@ export async function postApi(
   const signal = AbortSignal.any([options.signal, timeout])
   let response: RawResponse
   try {
-    response = await send(port, path, JSON.stringify(body), signal)
+    response = await send(options.host ?? HOST, port, path, JSON.stringify(body), signal)
   } catch {
     return { kind: 'failed', message: describeTransportFailure(port, options, timeout) }
   }
@@ -33,10 +35,18 @@ export async function postApi(
   return { kind: 'failed', message: describeStatus(response.status, path, response.text) }
 }
 
+/** HTTP timeout for a /request call: the capped approval timeout plus a grace period. */
+export function toFetchTimeoutMs(timeoutSeconds: number | undefined): number {
+  return (
+    Math.min(timeoutSeconds ?? MAX_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000 + FETCH_GRACE_MS
+  )
+}
+
 type RawResponse = { readonly status: number; readonly text: string }
 
 /** Rejects on connection errors, resets and aborts; an abort destroys the socket. */
 function send(
+  host: string,
   port: number,
   path: ApiPath,
   payload: string,
@@ -45,7 +55,7 @@ function send(
   return new Promise((resolve, reject) => {
     const request = httpRequest(
       {
-        host: HOST,
+        host,
         port,
         path,
         method: 'POST',
@@ -83,7 +93,7 @@ function describeTransportFailure(port: number, options: ApiOptions, timeout: Ab
   if (timeout.aborted) {
     return `telegram-ask service didn't answer within ${options.timeoutMs / 1000} s`
   }
-  return `telegram-ask service not reachable on ${HOST}:${port} (run telegram-ask status)`
+  return `telegram-ask service not reachable on ${options.host ?? HOST}:${port} (run telegram-ask status)`
 }
 
 /** True for a /request answer body: `{ answer, timedOut }`. */

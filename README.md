@@ -103,6 +103,25 @@ telegram-ask send notify 'backup finished' --project nas
 
 `send request` prints the answer on stdout (the timeout option on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button. `send notify` prints nothing and exits 0 once sent. Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
 
+### From Node
+
+`npm i telegram-ask` and use the `Client`, which wraps the same two endpoints:
+
+```ts
+import { Client } from 'telegram-ask'
+
+const client = new Client({ project: 'deploy' })
+const { answer, timedOut } = await client.request({
+  text: 'Deploy?',
+  options: ['Approve', 'Decline'],
+  timeoutOption: 'Decline',
+  timeout: 60,
+})
+await client.notify({ text: 'backup finished' })
+```
+
+`new Client()` takes optional `host` (default `127.0.0.1`), `port` (default 8787) and `project`, which every call sends unless it passes its own. `request` takes the [`/request` fields](#ask-a-question) plus an optional `signal`; aborting it cancels the question and rejects with the signal's reason. Failures (service down, a 400, a send error) throw a `TelegramAskError` with the same message the CLI prints. A timeout isn't a failure: it resolves with `timeoutOption` and `timedOut: true`.
+
 ### Ask a question
 
 ```

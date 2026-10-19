@@ -1,0 +1,74 @@
+import { DEFAULT_PORT } from '../config/constants.ts'
+import { FETCH_GRACE_MS, HOST } from './constants.ts'
+import { isOutcome, postApi, toFetchTimeoutMs } from './http.ts'
+import type { Answer, ApiPath, AskRequest, ClientOptions, Notification } from './types.ts'
+
+/** Thrown by `Client` when the service is unreachable, rejects the input or can't send. */
+export class TelegramAskError extends Error {
+  override name = 'TelegramAskError'
+}
+
+/** Asks questions and sends notifications through a running telegram-ask service. */
+export class Client {
+  #host: string
+  #port: number
+  #project: string | undefined
+
+  constructor(options: ClientOptions = {}) {
+    this.#host = options.host ?? HOST
+    this.#port = options.port ?? DEFAULT_PORT
+    this.#project = options.project
+  }
+
+  /**
+   * Resolves once the user taps a button or the timeout fires (then with `timeoutOption`). Throws
+   * `TelegramAskError` on failure, or the signal's reason if aborted.
+   */
+  async request(request: AskRequest): Promise<Answer> {
+    const body = await this.#post(
+      '/request',
+      {
+        text: request.text,
+        options: request.options,
+        timeoutOption: request.timeoutOption,
+        ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
+      },
+      request,
+      toFetchTimeoutMs(request.timeout),
+    )
+    if (!isOutcome(body)) {
+      throw new TelegramAskError(
+        `telegram-ask service sent an unreadable answer: ${JSON.stringify(body)}`,
+      )
+    }
+    return { answer: body.answer, timedOut: body.timedOut }
+  }
+
+  /** Resolves once Telegram accepts the message. Throws like `request`. */
+  async notify(notification: Notification): Promise<void> {
+    await this.#post('/notify', { text: notification.text }, notification, FETCH_GRACE_MS)
+  }
+
+  async #post(
+    path: ApiPath,
+    body: object,
+    call: { readonly project?: string; readonly signal?: AbortSignal },
+    timeoutMs: number,
+  ): Promise<unknown> {
+    const project = call.project ?? this.#project
+    const signal = call.signal ?? new AbortController().signal
+    const result = await postApi(
+      this.#port,
+      path,
+      { ...body, ...(project === undefined ? {} : { project }) },
+      { signal, timeoutMs, host: this.#host },
+    )
+    if (signal.aborted) {
+      throw signal.reason
+    }
+    if (result.kind === 'failed') {
+      throw new TelegramAskError(result.message)
+    }
+    return result.body
+  }
+}

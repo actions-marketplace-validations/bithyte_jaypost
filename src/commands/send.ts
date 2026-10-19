@@ -1,4 +1,4 @@
-import { FETCH_GRACE_MS, isOutcome, postApi, toFetchTimeoutMs } from '../mcp/index.ts'
+import { FETCH_GRACE_MS, isOutcome, postApi, toFetchTimeoutMs } from '../client/index.ts'
 import type { SendDeps, SendNotifyArgs, SendRequestArgs } from './types.ts'
 
 /**
