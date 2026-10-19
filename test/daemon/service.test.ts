@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
+import { NO_AUTH } from '../../src/auth/index.ts'
 import type { Config } from '../../src/config/index.ts'
 import { startService } from '../../src/daemon/index.ts'
 import type { RunningService } from '../../src/daemon/index.ts'
@@ -21,7 +22,7 @@ afterEach(async () => {
 })
 
 function createConfig(provider: Provider, settings = { fakeKey: 'k' }): Config {
-  return { provider, settings, port: 0, host: '127.0.0.1' }
+  return { provider, settings, port: 0, host: '127.0.0.1', auth: NO_AUTH }
 }
 
 function createConfigPath(): string {
@@ -174,4 +175,24 @@ test('owner setting without pairing support is refused at start', async () => {
       log: vi.fn(),
     }),
   ).rejects.toThrow('provider "fake" has an owner setting but no pairing support')
+})
+
+test('the service puts the configured token on the api', async () => {
+  const token = 'a'.repeat(43)
+  const provider = createFakeProvider()
+  running = await startService({
+    config: { ...createConfig(provider), auth: { kind: 'token', token } },
+    configPath: createConfigPath(),
+    fatal: vi.fn(),
+    log: vi.fn(),
+  })
+  await running.server.listen({ port: 0, host: '127.0.0.1' })
+  const { port } = running.server.server.address() as AddressInfo
+  const url = `http://127.0.0.1:${port}`
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect((await fetch(`${url}/status`)).status).toBe(401)
+  error.mockRestore()
+  expect(
+    (await fetch(`${url}/status`, { headers: { authorization: `Bearer ${token}` } })).status,
+  ).toBe(200)
 })

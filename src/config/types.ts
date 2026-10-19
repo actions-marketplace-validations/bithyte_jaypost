@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import type { ApiAuth } from '../auth/index.ts'
 import type { Provider, SettingValues } from '../provider/index.ts'
 import type { fileConfigSchema } from './schema.ts'
 
@@ -8,6 +9,7 @@ export type Config = {
   readonly settings: SettingValues
   readonly port: number
   readonly host: string
+  readonly auth: ApiAuth
 }
 
 /** Shape of config.json; every field is optional and unknown keys are kept. */

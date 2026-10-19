@@ -7,8 +7,11 @@ import {
   quoteSystemdValue,
   formatSystemdUnit,
 } from '../../src/install/index.ts'
+import { NO_AUTH } from '../../src/auth/index.ts'
 import { telegramProvider } from '../../src/telegram/index.ts'
 import { createFakeProvider } from '../provider/fake.ts'
+
+const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 
 test('formatDockerfile pins version', () =>
   expect(formatDockerfile({ version: '0.1.0' })).toContain('npm i -g telegram-ask@0.1.0'))
@@ -57,20 +60,42 @@ test('formatEnvFile writes the provider, its settings and the port', () =>
       provider: telegramProvider,
       port: 8787,
       settings: { botToken: 't', ownerId: 42 },
+      auth: NO_AUTH,
     }),
   ).toBe('PROVIDER=telegram\nBOT_TOKEN=t\nPORT=8787\nOWNER_ID=42\n'))
+test('formatEnvFile writes the api token right after PORT', () =>
+  expect(
+    formatEnvFile({
+      provider: telegramProvider,
+      port: 8787,
+      settings: { botToken: 't', ownerId: 42 },
+      auth: { kind: 'token', token: TOKEN },
+    }),
+  ).toBe(`PROVIDER=telegram\nBOT_TOKEN=t\nPORT=8787\nTELEGRAM_ASK_TOKEN=${TOKEN}\nOWNER_ID=42\n`))
+test('formatDockerfile never carries the token', () =>
+  expect(formatDockerfile({ version: '0.1.0' })).not.toContain('TELEGRAM_ASK_TOKEN'))
 test('formatEnvFile omits OWNER_ID when unknown', () =>
   expect(
-    formatEnvFile({ provider: telegramProvider, port: 8787, settings: { botToken: 't' } }),
+    formatEnvFile({
+      provider: telegramProvider,
+      port: 8787,
+      settings: { botToken: 't' },
+      auth: NO_AUTH,
+    }),
   ).toBe('PROVIDER=telegram\nBOT_TOKEN=t\nPORT=8787\n'))
 test('formatEnvFile works for any provider', () =>
   expect(
-    formatEnvFile({ provider: createFakeProvider(), port: 1, settings: { fakeKey: 'k' } }),
+    formatEnvFile({
+      provider: createFakeProvider(),
+      port: 1,
+      settings: { fakeKey: 'k' },
+      auth: NO_AUTH,
+    }),
   ).toBe('PROVIDER=fake\nFAKE_KEY=k\nPORT=1\n'))
 test('formatEnvFile rejects a value with a newline', () => {
   for (const botToken of ['a\nOWNER_ID=1', 'a\rb']) {
     const format = () =>
-      formatEnvFile({ provider: telegramProvider, port: 1, settings: { botToken } })
+      formatEnvFile({ provider: telegramProvider, port: 1, settings: { botToken }, auth: NO_AUTH })
     expect(format).toThrow(RangeError)
     expect(format).toThrow('setting "botToken" contains a line break')
   }

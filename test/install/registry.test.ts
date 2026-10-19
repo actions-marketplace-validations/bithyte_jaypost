@@ -197,3 +197,6 @@ test('leftover needs every required secret', () => {
     settings: { fakeKey: 'k' },
   })
 })
+
+test('resolveInstallPaths locates the token file next to the config', () =>
+  expect(resolveInstallPaths({ HOME: '/h' }).tokenFile).toBe('/h/.config/telegram-ask/token'))

@@ -152,6 +152,7 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
         provider: options.provider.name,
         port: options.port,
         ...options.settings,
+        apiToken: options.auth.kind === 'token' ? options.auth.token : null,
       })
       mkdirSync(dirname(paths.systemdUnit), { recursive: true })
       writeFileSync(

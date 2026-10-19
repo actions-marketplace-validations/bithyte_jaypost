@@ -1,4 +1,6 @@
 import { basename } from 'node:path'
+import { TOKEN_ENV_VAR } from '../auth/index.ts'
+import type { ApiAuth } from '../auth/index.ts'
 import type { Provider, SettingValues } from '../provider/index.ts'
 import { LINE_BREAK_PATTERN } from './constants.ts'
 
@@ -53,13 +55,14 @@ volumes:
 
 /**
  * KEY=VALUE lines for the container: `PROVIDER`, then each known setting in declaration order with
- * `PORT` after the first. Throws a RangeError for a value with a line break, which would inject
- * lines.
+ * `PORT` after the first, and the api token (when set) right after `PORT`. Throws a RangeError for
+ * a value with a line break, which would inject lines.
  */
 export function formatEnvFile(options: {
   readonly provider: Provider
   readonly port: number
   readonly settings: SettingValues
+  readonly auth: ApiAuth
 }): string {
   const settingLines = options.provider.settings.flatMap((setting) => {
     const value = options.settings[setting.configKey]
@@ -76,6 +79,7 @@ export function formatEnvFile(options: {
     `PROVIDER=${options.provider.name}`,
     ...settingLines.slice(0, 1),
     `PORT=${options.port}`,
+    ...(options.auth.kind === 'token' ? [`${TOKEN_ENV_VAR}=${options.auth.token}`] : []),
     ...settingLines.slice(1),
   ]
   return lines.join('\n') + '\n'

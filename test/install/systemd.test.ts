@@ -9,6 +9,7 @@ import {
   findUnitConfigFile,
 } from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
+import { NO_AUTH } from '../../src/auth/index.ts'
 import { telegramProvider } from '../../src/telegram/index.ts'
 import { createFakeProvider } from '../provider/fake.ts'
 
@@ -51,11 +52,13 @@ function make(env: NodeJS.ProcessEnv = {}, selfPath = '/src/dist/cli.js') {
   return { t, paths }
 }
 
+const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 const base = {
   version: '0.1.0',
   port: 8787,
   provider: telegramProvider,
   settings: { botToken: 't' },
+  auth: NO_AUTH,
   print: () => {},
 }
 
@@ -278,4 +281,12 @@ test('findUnitConfigFile parses quoted and unquoted Environment lines', () => {
   )
   expect(findUnitConfigFile('Environment="FOO=bar"\nExecStart=x\n')).toBeUndefined()
   expect(findUnitConfigFile('[Unit]\n')).toBeUndefined()
+})
+
+test('install writes apiToken, and a later install without a token deletes it', async () => {
+  const { t, paths } = make()
+  await t.install({ ...base, auth: { kind: 'token', token: TOKEN } })
+  expect(readConfigFile(paths.configFile).apiToken).toBe(TOKEN)
+  await t.install({ ...base, auth: NO_AUTH })
+  expect('apiToken' in readConfigFile(paths.configFile)).toBe(false)
 })

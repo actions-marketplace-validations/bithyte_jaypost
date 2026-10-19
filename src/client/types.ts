@@ -6,6 +6,11 @@ export type ClientOptions = {
   readonly port?: number
   /** Shown as `[project]` on the first line of every message, unless a call sets its own. */
   readonly project?: string
+  /**
+   * Sent as a bearer token. Default: `TELEGRAM_ASK_TOKEN`, else `~/.config/telegram-ask/token`,
+   * looked up on every call. Throws a `RangeError` at construction if it isn't a valid token.
+   */
+  readonly token?: string
 }
 
 /** A question with buttons; `timeout` in seconds, default and max 300. */
@@ -44,4 +49,6 @@ export type ApiOptions = {
   readonly timeoutMs: number
   /** Default `127.0.0.1`. */
   readonly host?: string
+  /** Sent as `authorization: Bearer <token>` when set. */
+  readonly token?: string
 }

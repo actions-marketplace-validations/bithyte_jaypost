@@ -10,6 +10,7 @@ export { runUninstall } from './uninstall.ts'
 export type {
   InitArgs,
   InitDeps,
+  FetchStatus,
   Prompts,
   ResetOwnerDeps,
   SelectOption,
@@ -17,6 +18,7 @@ export type {
   SendNotifyArgs,
   SendRequestArgs,
   StatusDeps,
+  StatusFetch,
   UninstallDeps,
   WaitForPairing,
   WaitOptions,

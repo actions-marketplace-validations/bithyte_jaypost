@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
+import { NO_AUTH } from '../../src/auth/index.ts'
 import {
   DEFAULT_PORT,
   resolveConfigDirectory,
@@ -14,6 +15,8 @@ import { PROVIDERS } from '../../src/provider/index.ts'
 import { createFakeProvider } from '../provider/fake.ts'
 
 const TELEGRAM = PROVIDERS[0]
+const FILE_TOKEN = 'f'.repeat(43)
+const ENV_TOKEN = 'e'.repeat(43)
 
 let dir: string
 let file: string
@@ -42,6 +45,7 @@ test('save then load roundtrip, host defaults to 127.0.0.1', () => {
     settings: { botToken: 'tok', ownerId: 7 },
     port: 9000,
     host: '127.0.0.1',
+    auth: NO_AUTH,
   })
 })
 
@@ -78,6 +82,7 @@ test('env overrides file values; env-only config works with no file', () => {
     settings: { botToken: 'envtok', ownerId: 42 },
     port: 2222,
     host: '0.0.0.0',
+    auth: NO_AUTH,
   })
   expect(
     loadConfig({ TELEGRAM_ASK_CONFIG: join(dir, 'missing.json'), BOT_TOKEN: 't', OWNER_ID: '42' }),
@@ -86,6 +91,7 @@ test('env overrides file values; env-only config works with no file', () => {
     settings: { botToken: 't', ownerId: 42 },
     port: 8787,
     host: '127.0.0.1',
+    auth: NO_AUTH,
   })
 })
 
@@ -98,6 +104,7 @@ test('empty-string env vars count as unset', () => {
     settings: { botToken: 'filetok', ownerId: 1 },
     port: 1111,
     host: '127.0.0.1',
+    auth: NO_AUTH,
   })
 })
 
@@ -204,4 +211,32 @@ test('fake provider settings load from env and file', () => {
 
 test('readConfigFile rethrows read errors other than a missing file', () => {
   expect(() => readConfigFile(dir)).toThrow(/EISDIR/)
+})
+
+test('api token comes from TELEGRAM_ASK_TOKEN, then apiToken in the file, else none', () => {
+  updateConfigFile(file, { botToken: 'tok', apiToken: FILE_TOKEN })
+  expect(loadConfig({ TELEGRAM_ASK_CONFIG: file, TELEGRAM_ASK_TOKEN: ENV_TOKEN }).auth).toEqual({
+    kind: 'token',
+    token: ENV_TOKEN,
+  })
+  expect(loadConfig({ TELEGRAM_ASK_CONFIG: file, TELEGRAM_ASK_TOKEN: '' }).auth).toEqual({
+    kind: 'token',
+    token: FILE_TOKEN,
+  })
+  updateConfigFile(file, { apiToken: null })
+  expect(loadConfig({ TELEGRAM_ASK_CONFIG: file }).auth).toEqual(NO_AUTH)
+})
+
+test('an invalid api token throws without quoting it', () => {
+  const message =
+    'invalid api token; run `telegram-ask init` to set up the bot (or set TELEGRAM_ASK_TOKEN)'
+  updateConfigFile(file, { botToken: 'tok' })
+  const fromEnv = () =>
+    loadConfig({ TELEGRAM_ASK_CONFIG: file, TELEGRAM_ASK_TOKEN: 'short-secret' })
+  expect(fromEnv).toThrow(message)
+  expect(fromEnv).not.toThrow(/short-secret/)
+  updateConfigFile(file, { apiToken: 'short-secret' })
+  const fromFile = () => loadConfig({ TELEGRAM_ASK_CONFIG: file })
+  expect(fromFile).toThrow(message)
+  expect(fromFile).not.toThrow(/short-secret/)
 })

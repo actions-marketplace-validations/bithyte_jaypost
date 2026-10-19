@@ -1,10 +1,11 @@
+import { removeTokenFile } from '../auth/index.ts'
 import { findExistingInstall, removeInstall } from '../install/index.ts'
 import { PromptAborted } from './prompts.ts'
 import type { UninstallDeps } from './types.ts'
 
 /**
- * Removes the service after asking whether to purge the credentials and owner. Returns 0 on success
- * or when nothing is installed, 1 on failure, 130 on interrupt.
+ * Removes the service after asking whether to purge the credentials, API token and owner. Returns
+ * 0 on success or when nothing is installed, 1 on failure, 130 on interrupt.
  */
 export async function runUninstall(deps: UninstallDeps): Promise<number> {
   const { print } = deps
@@ -15,9 +16,15 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
   }
   const { record } = existing
   try {
-    const purge = await deps.confirm('Also delete the saved credentials and paired owner?', false)
+    const purge = await deps.confirm(
+      'Also delete the saved credentials, API token and paired owner?',
+      false,
+    )
     await deps.targets[record.target].remove(record, purge)
     removeInstall(deps.paths.installFile)
+    if (purge) {
+      removeTokenFile(deps.paths.tokenFile)
+    }
   } catch (error) {
     if (error instanceof PromptAborted || deps.signal?.aborted) {
       print('')

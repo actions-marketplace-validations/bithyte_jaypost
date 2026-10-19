@@ -1,3 +1,4 @@
+import { parseToken, resolveClientToken, resolveTokenFile } from '../auth/index.ts'
 import { DEFAULT_PORT } from '../config/constants.ts'
 import { FETCH_GRACE_MS, HOST } from './constants.ts'
 import { isOutcome, postApi, toFetchTimeoutMs } from './http.ts'
@@ -8,21 +9,33 @@ export class TelegramAskError extends Error {
   override name = 'TelegramAskError'
 }
 
-/** Asks questions and sends notifications through a running telegram-ask service. */
+/**
+ * Asks questions and sends notifications through a running telegram-ask service. Calls throw
+ * `TelegramAskError` when the token lookup finds an unusable token.
+ */
 export class Client {
   #host: string
   #port: number
   #project: string | undefined
+  #token: string | undefined
 
   constructor(options: ClientOptions = {}) {
     this.#host = options.host ?? HOST
     this.#port = options.port ?? DEFAULT_PORT
     this.#project = options.project
+    if (options.token !== undefined) {
+      const token = parseToken(options.token)
+      if (token === undefined) {
+        throw new RangeError("token isn't a valid telegram-ask token")
+      }
+      this.#token = token
+    }
   }
 
   /**
    * Resolves once the user taps a button or the timeout fires (then with `timeoutOption`). Throws
-   * `TelegramAskError` on failure, or the signal's reason if aborted.
+   * `TelegramAskError` on failure (including an unusable token lookup), or the signal's reason if
+   * aborted.
    */
   async request(request: AskRequest): Promise<Answer> {
     const body = await this.#post(
@@ -57,11 +70,17 @@ export class Client {
   ): Promise<unknown> {
     const project = call.project ?? this.#project
     const signal = call.signal ?? new AbortController().signal
+    const token = this.#resolveToken()
     const result = await postApi(
       this.#port,
       path,
       { ...body, ...(project === undefined ? {} : { project }) },
-      { signal, timeoutMs, host: this.#host },
+      {
+        signal,
+        timeoutMs,
+        host: this.#host,
+        ...(token === undefined ? {} : { token }),
+      },
     )
     if (signal.aborted) {
       throw signal.reason
@@ -70,5 +89,20 @@ export class Client {
       throw new TelegramAskError(result.message)
     }
     return result.body
+  }
+
+  #resolveToken(): string | undefined {
+    if (this.#token !== undefined) {
+      return this.#token
+    }
+    const found = resolveClientToken(process.env, resolveTokenFile(process.env))
+    switch (found.kind) {
+      case 'token':
+        return found.token
+      case 'none':
+        return undefined
+      case 'unusable':
+        throw new TelegramAskError(found.message)
+    }
   }
 }

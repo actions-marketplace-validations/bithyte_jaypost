@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { beforeEach, expect, test } from 'vite-plus/test'
 import { resolveInstallPaths, createQuadletTarget } from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
+import { NO_AUTH } from '../../src/auth/index.ts'
 import { telegramProvider } from '../../src/telegram/index.ts'
 import { createPairingFakeProvider } from '../provider/fake.ts'
 
@@ -49,11 +50,13 @@ function make() {
 }
 const PAIRING_FAKE = createPairingFakeProvider()
 const PROVIDERS = [telegramProvider, PAIRING_FAKE]
+const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 const base = {
   version: '0.1.0',
   port: 8787,
   provider: telegramProvider,
   settings: { botToken: 't' },
+  auth: NO_AUTH,
   print: () => {},
 }
 const withOwner = { ...base, settings: { botToken: 't', ownerId: 9 } }
@@ -259,4 +262,12 @@ test('restart throws on a non-zero exit', async () => {
   const { t } = make()
   failCtl = (a) => a.includes('restart')
   await expect(t.restart(rec)).rejects.toThrow('systemctl restart failed (exit 1)')
+})
+
+test('install writes the api token into .env and keeps it out of the Dockerfile', async () => {
+  const { t, paths } = make()
+  await t.install({ ...base, auth: { kind: 'token', token: TOKEN } })
+  const directory = paths.quadletDirectory
+  expect(readFileSync(join(directory, '.env'), 'utf8')).toContain(`TELEGRAM_ASK_TOKEN=${TOKEN}\n`)
+  expect(readFileSync(join(directory, 'Dockerfile'), 'utf8')).not.toContain(TOKEN)
 })

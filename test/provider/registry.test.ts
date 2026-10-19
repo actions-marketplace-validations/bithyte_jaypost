@@ -33,3 +33,8 @@ test('each provider has at most one owner setting, and an owner setting iff rese
 test('telegram is registered and is the default', () => {
   expect(findProvider(PROVIDERS, DEFAULT_PROVIDER)?.name).toBe('telegram')
 })
+
+test('the api token key and env var are reserved', () => {
+  expect(RESERVED_CONFIG_KEYS).toContain('apiToken')
+  expect(RESERVED_ENV_VARS).toContain('TELEGRAM_ASK_TOKEN')
+})

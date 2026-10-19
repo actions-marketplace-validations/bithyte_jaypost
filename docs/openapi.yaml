@@ -8,7 +8,8 @@ info:
     identifier: Apache-2.0
 servers:
   - url: http://127.0.0.1:8787
-security: []
+security:
+  - bearerAuth: []
 paths:
   /request:
     post:
@@ -30,6 +31,8 @@ paths:
                 $ref: "#/components/schemas/Outcome"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "500":
@@ -67,6 +70,8 @@ paths:
                   - ok
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "502":
@@ -84,10 +89,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Status"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /openapi.yaml:
     get:
       operationId: openapi
       summary: This document
+      security: []
       responses:
         "200":
           description: OpenAPI document for this service.
@@ -96,6 +104,11 @@ paths:
               schema:
                 type: string
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: The token `init` saved to `~/.config/telegram-ask/token`. A service installed without a token ignores the header.
   schemas:
     ApprovalRequest:
       type: object
@@ -198,6 +211,12 @@ components:
       required:
         - error
   responses:
+    Unauthorized:
+      description: Missing or wrong bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     BadRequest:
       description: Body is not valid JSON or fails validation; `error` is the first problem found. Nothing is sent.
       content:

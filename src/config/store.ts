@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { NO_AUTH, parseToken, TOKEN_ENV_VAR } from '../auth/index.ts'
+import type { ApiAuth } from '../auth/index.ts'
 import { DEFAULT_PROVIDER, PROVIDERS, requireProvider } from '../provider/index.ts'
 import type { Provider, SettingValue } from '../provider/index.ts'
 import { isMissingFileError, writeFileAtomic } from '../system/index.ts'
@@ -11,33 +11,9 @@ import {
   INTEGER_PATTERN,
   SECRET_FILE_MODE,
 } from './constants.ts'
+import { findEnvValue, resolveConfigPath } from './paths.ts'
 import { fileConfigSchema } from './schema.ts'
 import type { Config, ConfigPatch, FileConfig } from './types.ts'
-
-function findEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
-  const value = env[key]
-  return value === undefined || value === '' ? undefined : value
-}
-
-/**
- * Path of config.json: $TELEGRAM_ASK_CONFIG, else under $XDG_CONFIG_HOME or ~/.config. Empty env
- * values count as unset.
- */
-export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = findEnvValue(env, 'TELEGRAM_ASK_CONFIG')
-  if (explicit) {
-    return explicit
-  }
-  const xdgConfigHome = findEnvValue(env, 'XDG_CONFIG_HOME')
-  const base = xdgConfigHome ?? join(findEnvValue(env, 'HOME') ?? homedir(), '.config')
-  return join(base, 'telegram-ask', 'config.json')
-}
-
-/** Default config directory, ignoring $TELEGRAM_ASK_CONFIG; install files live here. */
-export function resolveConfigDirectory(env: NodeJS.ProcessEnv = process.env): string {
-  const { TELEGRAM_ASK_CONFIG: _ignored, ...rest } = env
-  return dirname(resolveConfigPath(rest))
-}
 
 /**
  * Returns {} when the file is missing. Throws on invalid JSON or fields, without quoting the file,
@@ -81,11 +57,24 @@ function toInteger(value: unknown): number | undefined {
   return undefined
 }
 
+function resolveAuth(env: NodeJS.ProcessEnv, file: FileConfig): ApiAuth {
+  const raw = findEnvValue(env, TOKEN_ENV_VAR) ?? (file.apiToken === '' ? undefined : file.apiToken)
+  if (raw === undefined) {
+    return NO_AUTH
+  }
+  const token = parseToken(raw)
+  if (token === undefined) {
+    throw new Error(`invalid api token; ${INIT_HINT} (or set ${TOKEN_ENV_VAR})`)
+  }
+  return { kind: 'token', token }
+}
+
 /**
  * Provider (PROVIDER env, else the file, else telegram), its settings, port and host. Env vars
  * (e.g. PROVIDER, PORT, HOST) override the config file. Throws a user-facing error on an unknown
- * provider, a missing required setting, or an invalid setting or port; read errors other than a
- * missing config file are rethrown.
+ * provider, a missing required setting, or an invalid setting, port or api token
+ * (TELEGRAM_ASK_TOKEN, else apiToken in the file; the message never quotes it); read errors other
+ * than a missing config file are rethrown.
  */
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -117,7 +106,8 @@ export function loadConfig(
   if (port === undefined || port < 1 || port > 65535) {
     throw new Error(`invalid port ${JSON.stringify(String(rawPort))}: must be an integer 1-65535`)
   }
-  return { provider, settings, port, host: findEnvValue(env, 'HOST') ?? DEFAULT_HOST }
+  const auth = resolveAuth(env, file)
+  return { provider, settings, port, host: findEnvValue(env, 'HOST') ?? DEFAULT_HOST, auth }
 }
 
 /** Merges `patch` into the file's JSON object; a `null` value deletes that key. */

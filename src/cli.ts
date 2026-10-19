@@ -4,6 +4,7 @@ import { realpathSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveClientToken, resolveTokenFile } from './auth/index.ts'
 import {
   createClackPrompts,
   defaultFetchStatus,
@@ -61,6 +62,7 @@ function collect(value: string, previous: readonly string[] | undefined): readon
 function createSendDeps(flagPort: number | undefined, signal: AbortSignal): SendDeps {
   return {
     port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
+    token: resolveClientToken(process.env, resolveTokenFile(process.env)),
     signal,
     print: (text) => console.log(text),
     printError: (text) => console.error(text),
@@ -140,16 +142,20 @@ async function runWithSigint(
 }
 
 function runStatusCommand(): Promise<number> {
+  const tokenFile = resolveTokenFile(process.env)
   const paths = resolveInstallPaths()
   return runStatus({
     targets: createRealTargets(paths),
     paths,
     fetchStatus: defaultFetchStatus,
+    token: resolveClientToken(process.env, tokenFile),
+    tokenFile,
     print: (text) => console.log(text),
   })
 }
 
 function runResetOwnerCommand(): Promise<number> {
+  const token = resolveClientToken(process.env, resolveTokenFile(process.env))
   const paths = resolveInstallPaths()
   const targets = createRealTargets(paths)
   return runWithSigint((controller) =>
@@ -161,6 +167,7 @@ function runResetOwnerCommand(): Promise<number> {
       wait: waitForPairing,
       print: (text) => console.log(text),
       signal: controller.signal,
+      token,
     }),
   )
 }
@@ -193,6 +200,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         PROVIDERS.map((provider) => provider.name),
       ),
     )
+    .option('--token', 'require an API token (default for new setups)')
+    .option('--no-token', "don't require an API token")
     // Installs an unpublished build; for testing.
     .addOption(new Option('--tarball <path>').hideHelp())
     .action(
@@ -202,12 +211,14 @@ export async function main(argv: readonly string[]): Promise<number> {
           readonly port?: number
           readonly tarball?: string
           readonly provider?: string
+          readonly token?: boolean
         },
       ) => {
         code = await runInitCommand({
           ...(target ? { target } : {}),
           ...(options.port === undefined ? {} : { port: options.port }),
           ...(options.provider === undefined ? {} : { provider: options.provider }),
+          ...(options.token === undefined ? {} : { token: options.token }),
           ...(options.tarball === undefined ? {} : { tarball: resolve(options.tarball) }),
         })
       },
@@ -226,7 +237,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     .command('test')
     .description('send a test approval request')
     .action(async () => {
-      code = await runTest(resolvePort(), resolveInstallPaths().installFile)
+      code = await runTest(
+        resolvePort(),
+        resolveInstallPaths().installFile,
+        resolveClientToken(process.env, resolveTokenFile(process.env)),
+      )
     })
   program
     .command('reset-owner')
@@ -246,9 +261,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
     .action(async (options: { readonly port?: number }) => {
       // Not resolvePort(): that reads config.json, which an agent's container may not have.
-      code = await runMcp(
-        resolveMcpPort(options.port, process.env, resolveInstallPaths().installFile),
-      )
+      const tokenFile = resolveTokenFile(process.env)
+      code = await runMcp({
+        port: resolveMcpPort(options.port, process.env, resolveInstallPaths().installFile),
+        readToken: () => resolveClientToken(process.env, tokenFile),
+      })
     })
   program
     .command('openapi')

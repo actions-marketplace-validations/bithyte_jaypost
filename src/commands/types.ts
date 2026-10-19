@@ -1,3 +1,4 @@
+import type { ClientToken } from '../auth/index.ts'
 import type { InstallPaths, Target, TargetName } from '../install/index.ts'
 import type { Provider } from '../provider/index.ts'
 import type { StatusInfo } from '../server/index.ts'
@@ -21,6 +22,15 @@ export type Prompts = {
   ) => Promise<T>
 }
 
+/** Result of one /status call: a parsed answer, a 401, or no usable answer. */
+export type StatusFetch =
+  | { readonly kind: 'answered'; readonly status: StatusInfo }
+  | { readonly kind: 'unauthorized' }
+  | { readonly kind: 'unreachable' }
+
+/** Signature of `defaultFetchStatus`, injectable for tests. */
+export type FetchStatus = (port: number, token: string | undefined) => Promise<StatusFetch>
+
 /** Inputs to `waitForPairing`; the optional fields are test seams with real defaults. */
 export type WaitOptions = {
   readonly port: number
@@ -29,7 +39,9 @@ export type WaitOptions = {
   readonly logsHint: string
   readonly signal?: AbortSignal
   /** Injectable for tests; defaults to `defaultFetchStatus`. */
-  readonly fetchStatus?: (port: number) => Promise<StatusInfo | undefined>
+  readonly fetchStatus?: FetchStatus
+  /** Sent as a bearer token on every /status poll. */
+  readonly token?: string
   readonly sleep?: (delayMs: number) => Promise<void>
   /** Limit on waiting for the first /status answer; defaults to `DEFAULT_START_TIMEOUT_MS`. */
   readonly startTimeoutMs?: number
@@ -37,10 +49,10 @@ export type WaitOptions = {
 }
 
 /**
- * Why `waitForPairing` returned: paired, Ctrl-C, no answer within the start timeout, or the service
- * stopped.
+ * Why `waitForPairing` returned: paired, Ctrl-C, no answer within the start timeout, the service
+ * stopped, or the service rejected the token.
  */
-export type WaitResult = 'paired' | 'interrupted' | 'notStarted' | 'stopped'
+export type WaitResult = 'paired' | 'interrupted' | 'notStarted' | 'stopped' | 'unauthorized'
 
 /** Signature of `waitForPairing`, injectable for tests. */
 export type WaitForPairing = (options: WaitOptions) => Promise<WaitResult>
@@ -67,6 +79,8 @@ export type InitArgs = {
   readonly port?: number
   readonly tarball?: string
   readonly provider?: string
+  /** `true` for `--token`, `false` for `--no-token`; absent when neither was passed. */
+  readonly token?: boolean
 }
 
 /** Everything `runResetOwner` touches outside itself, injected for tests. */
@@ -78,13 +92,17 @@ export type ResetOwnerDeps = {
   readonly wait: WaitForPairing
   readonly print: (text: string) => void
   readonly signal?: AbortSignal
+  readonly token: ClientToken
 }
 
 /** Everything `runStatus` touches outside itself, injected for tests. */
 export type StatusDeps = {
   readonly targets: Readonly<Record<TargetName, Target>>
   readonly paths: InstallPaths
-  readonly fetchStatus: (port: number) => Promise<StatusInfo | undefined>
+  readonly fetchStatus: FetchStatus
+  readonly token: ClientToken
+  /** Token file path, named in the `Token:` line when the token came from it. */
+  readonly tokenFile: string
   readonly print: (text: string) => void
 }
 
@@ -114,6 +132,7 @@ export type SendNotifyArgs = { readonly text: string; readonly project?: string 
 /** Where `send` talks to and writes; aborting `signal` cancels the call. */
 export type SendDeps = {
   readonly port: number
+  readonly token: ClientToken
   readonly signal: AbortSignal
   readonly print: (text: string) => void
   readonly printError: (text: string) => void

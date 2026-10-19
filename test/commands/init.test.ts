@@ -1,7 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
+import { NO_AUTH, writeTokenFile } from '../../src/auth/index.ts'
+import { TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
 import { PromptAborted, runInit } from '../../src/commands/index.ts'
 import type { InitDeps } from '../../src/commands/index.ts'
 import { resolveInstallPaths, readInstall, writeInstall } from '../../src/install/index.ts'
@@ -23,6 +25,22 @@ beforeEach(() => {
   order = []
   out = []
 })
+
+const TOKEN = 'saved-api-token-'.padEnd(43, 'x')
+const OTHER_TOKEN = 'stale-shell-token-'.padEnd(43, 'y')
+const REQUIRE =
+  'Require an API token? Scripts, n8n flows and agents in containers will need to send it.'
+const NO_TOKEN_LINE = 'No API token: any local process can use the API.'
+
+const savedToken = () => readFileSync(paths.tokenFile, 'utf8').trim()
+
+function savedToLine(): string {
+  return `API token saved to ${paths.tokenFile}. Agents in containers need TELEGRAM_ASK_TOKEN set to it.`
+}
+
+function wasAsked(d: InitDeps): boolean {
+  return vi.mocked(d.prompt.confirm).mock.calls.some(([message]) => message === REQUIRE)
+}
 
 const ACCEPTED: CredentialCheck = { ok: true, displayName: '@mybot' }
 const REJECTED: CredentialCheck = { ok: false, reason: 'rejected' }
@@ -431,6 +449,7 @@ test('single provider: no provider prompt and unchanged output', async () => {
   expect(out).toEqual([
     'Done. Try it: telegram-ask test',
     'Check state: telegram-ask status',
+    savedToLine(),
     'Logs: logs for quadlet',
   ])
 })
@@ -475,6 +494,7 @@ test('switching provider asks, clears the old owner and drops old settings', asy
   expect(vi.mocked(d.prompt.confirm).mock.calls).toEqual([
     ['Replace it?', true],
     ['This deletes the saved Telegram settings and paired owner. Continue?', false],
+    [REQUIRE, true],
   ])
   expect(old.clearOwner).toHaveBeenCalledWith(expect.objectContaining({ target: 'compose' }))
   expect(old.remove).toHaveBeenCalled()
@@ -558,4 +578,151 @@ test('a provider with nothing to prompt and rejected credentials returns 1', asy
   expect(out).toEqual([provider.setup.text.rejected])
   expect(d.prompt.password).not.toHaveBeenCalled()
   expect(d.targets.quadlet.install).not.toHaveBeenCalled()
+})
+
+test('fresh install generates a token, saves it before installing, and passes it on', async () => {
+  const d = deps()
+  let isSavedAtInstall = false
+  vi.mocked(d.targets.quadlet.install).mockImplementation(async (o) => {
+    isSavedAtInstall = existsSync(paths.tokenFile)
+    return { target: 'quadlet', port: o.port, version: o.version }
+  })
+  expect(await runInit({}, d)).toBe(0)
+  expect(isSavedAtInstall).toBe(true)
+  const token = savedToken()
+  expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  expect(statSync(paths.tokenFile).mode & 0o777).toBe(0o600)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ auth: { kind: 'token', token } }),
+  )
+  expect(d.wait).toHaveBeenCalledWith(expect.objectContaining({ token }))
+  expect(wasAsked(d)).toBe(false)
+  expect(out).toContain(savedToLine())
+  expect(out.join('\n')).not.toContain(token)
+})
+
+test('a valid token file is reused without asking', async () => {
+  seed('compose')
+  writeTokenFile(paths.tokenFile, TOKEN)
+  const d = deps()
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ auth: { kind: 'token', token: TOKEN } }),
+  )
+  expect(d.wait).toHaveBeenCalledWith(expect.objectContaining({ token: TOKEN }))
+  expect(out).toContain('Reusing the saved API token.')
+  expect(wasAsked(d)).toBe(false)
+  expect(savedToken()).toBe(TOKEN)
+  expect(out.join('\n')).not.toContain(TOKEN)
+})
+
+test('replacing an install without a token file asks, and yes makes one', async () => {
+  seed('compose')
+  const d = deps()
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.prompt.confirm).toHaveBeenCalledWith(REQUIRE, true)
+  const token = savedToken()
+  expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ auth: { kind: 'token', token } }),
+  )
+  expect(out).toContain(savedToLine())
+})
+
+test('answering no installs without a token', async () => {
+  seed('compose')
+  const d = deps()
+  vi.mocked(d.prompt.confirm).mockImplementation(async (message) => message !== REQUIRE)
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(expect.objectContaining({ auth: NO_AUTH }))
+  expect(d.wait).toHaveBeenCalledWith(expect.not.objectContaining({ token: expect.anything() }))
+  expect(out).toContain(NO_TOKEN_LINE)
+  expect(existsSync(paths.tokenFile)).toBe(false)
+})
+
+test('--token and --no-token skip the question', async () => {
+  for (const token of [true, false]) {
+    seed('compose')
+    const d = deps()
+    expect(await runInit({ token }, d)).toBe(0)
+    expect(wasAsked(d)).toBe(false)
+    expect(existsSync(paths.tokenFile)).toBe(token)
+  }
+})
+
+test('--no-token removes the token file only after the install succeeds', async () => {
+  writeTokenFile(paths.tokenFile, TOKEN)
+  const failing = deps()
+  vi.mocked(failing.targets.quadlet.install).mockImplementation(async () => {
+    throw new Error('boom')
+  })
+  expect(await runInit({ token: false }, failing)).toBe(1)
+  expect(savedToken()).toBe(TOKEN)
+  const d = deps()
+  expect(await runInit({ token: false }, d)).toBe(0)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(expect.objectContaining({ auth: NO_AUTH }))
+  expect(existsSync(paths.tokenFile)).toBe(false)
+  expect(out).toContain(NO_TOKEN_LINE)
+})
+
+test('an invalid token file is replaced without asking', async () => {
+  seed('compose')
+  mkdirSync(dirname(paths.tokenFile), { recursive: true })
+  writeFileSync(paths.tokenFile, 'short-secret\n')
+  const d = deps()
+  expect(await runInit({}, d)).toBe(0)
+  const token = savedToken()
+  expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(
+    expect.objectContaining({ auth: { kind: 'token', token } }),
+  )
+  expect(out).toContain('The saved API token was invalid; made a new one.')
+  expect(wasAsked(d)).toBe(false)
+  expect(out.join('\n')).not.toContain('short-secret')
+})
+
+test('an unreadable token file fails the install', async () => {
+  mkdirSync(paths.tokenFile, { recursive: true })
+  const d = deps()
+  expect(await runInit({}, d)).toBe(1)
+  expect(out.join('\n')).toContain('Install failed:')
+  expect(d.targets.quadlet.install).not.toHaveBeenCalled()
+})
+
+test('the token is masked in install errors', async () => {
+  writeTokenFile(paths.tokenFile, TOKEN)
+  const d = deps()
+  vi.mocked(d.targets.quadlet.install).mockImplementation(async () => {
+    throw new Error(`boom ${TOKEN}`)
+  })
+  expect(await runInit({}, d)).toBe(1)
+  const text = out.join('\n')
+  expect(text).toContain('Install failed: boom ***')
+  expect(text).not.toContain(TOKEN)
+})
+
+test('a failed install keeps the new token for the retry', async () => {
+  const failing = deps()
+  vi.mocked(failing.targets.quadlet.install).mockImplementation(async () => {
+    throw new Error('boom')
+  })
+  expect(await runInit({}, failing)).toBe(1)
+  const first = vi.mocked(failing.targets.quadlet.install).mock.calls[0]?.[0].auth
+  expect(first).toEqual({ kind: 'token', token: savedToken() })
+  const d = deps()
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.targets.quadlet.install).toHaveBeenCalledWith(expect.objectContaining({ auth: first }))
+})
+
+test('a stale TELEGRAM_ASK_TOKEN in the shell does not reach the wait', async () => {
+  const d = deps({ env: { TELEGRAM_ASK_TOKEN: OTHER_TOKEN } })
+  expect(await runInit({}, d)).toBe(0)
+  expect(d.wait).toHaveBeenCalledWith(expect.objectContaining({ token: savedToken() }))
+  expect(savedToken()).not.toBe(OTHER_TOKEN)
+})
+
+test('an unauthorized wait returns 1 with the hint', async () => {
+  const d = deps({ wait: vi.fn(async () => 'unauthorized' as const) })
+  expect(await runInit({}, d)).toBe(1)
+  expect(out).toContain(TOKEN_REJECTED_MESSAGE)
 })

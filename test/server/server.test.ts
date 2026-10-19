@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { parse } from 'yaml'
+import { NO_AUTH } from '../../src/auth/index.ts'
+import type { ApiAuth } from '../../src/auth/index.ts'
 import { SendError } from '../../src/approval/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
 import type { StatusInfo } from '../../src/server/index.ts'
@@ -34,11 +36,13 @@ async function start(
   request: RequestFn,
   status: () => StatusInfo = () => ({ paired: true, bot: 'b' }),
   notify?: NotifyFn,
+  auth: ApiAuth = NO_AUTH,
 ): Promise<string> {
   const stub = { request: vi.fn(request) }
   server = createApiServer(stub, status, {
     maxTextLength: 3900,
     providerName: 'test',
+    auth,
     ...(notify === undefined ? {} : { notifications: { notify } }),
   })
   await server.listen({ port: 0, host: '127.0.0.1' })
@@ -51,6 +55,23 @@ const post = (url: string, body: string) =>
 
 const postNotify = (url: string, body: string) =>
   fetch(`${url}/notify`, { method: 'POST', body, headers: { 'content-type': 'application/json' } })
+
+const TOKEN = 'a'.repeat(43)
+const WRONG = 'b'.repeat(43)
+const TOKEN_AUTH: ApiAuth = { kind: 'token', token: TOKEN }
+
+const call = (
+  url: string,
+  method: string,
+  path: string,
+  headers: Record<string, string>,
+  body?: string,
+) =>
+  fetch(`${url}${path}`, {
+    method,
+    headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
+    ...(body === undefined ? {} : { body }),
+  })
 
 const unpaired = (): StatusInfo => ({ paired: false, code: 'ABCD-EFGH', bot: 'b' })
 
@@ -126,6 +147,7 @@ test('server uses the provider text limit', async () => {
   server = createApiServer({ request: vi.fn<RequestFn>() }, () => ({ paired: true, bot: 'b' }), {
     maxTextLength: 10,
     providerName: 'test',
+    auth: NO_AUTH,
   })
   await server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = server.server.address() as AddressInfo
@@ -358,4 +380,96 @@ test('GET /notify is 405 with Allow: POST', async () => {
   const res = await fetch(`${url}/notify`)
   expect(res.status).toBe(405)
   expect(res.headers.get('allow')).toBe('POST')
+})
+
+test('401 with WWW-Authenticate on every api route for a missing, malformed or wrong token', async () => {
+  const url = await start(vi.fn<RequestFn>(), undefined, vi.fn<NotifyFn>(), TOKEN_AUTH)
+  const routes = [
+    ['POST', '/request', JSON.stringify(valid)],
+    ['POST', '/notify', JSON.stringify({ text: 'hi' })],
+    ['GET', '/status', undefined],
+  ] as const
+  const headerSets: Record<string, string>[] = [
+    {},
+    { authorization: `Basic ${TOKEN}` },
+    { authorization: `Bearer ${WRONG}` },
+  ]
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  for (const [method, path, body] of routes) {
+    for (const headers of headerSets) {
+      const res = await call(url, method, path, headers, body)
+      expect(res.status).toBe(401)
+      expect(res.headers.get('www-authenticate')).toBe('Bearer')
+      expect(await res.json()).toEqual({ error: 'unauthorized' })
+    }
+  }
+  error.mockRestore()
+})
+
+test('401 comes before 503, 400 and 413, and nothing reaches the service', async () => {
+  const request = vi.fn<RequestFn>()
+  const notify = vi.fn<NotifyFn>()
+  const url = await start(request, unpaired, notify, TOKEN_AUTH)
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  for (const body of [JSON.stringify(valid), '{not json', 'x'.repeat(70_000)]) {
+    for (const path of ['/request', '/notify']) {
+      expect((await call(url, 'POST', path, {}, body)).status).toBe(401)
+    }
+  }
+  expect(request).not.toHaveBeenCalled()
+  expect(notify).not.toHaveBeenCalled()
+  error.mockRestore()
+})
+
+test('the right token behaves as today', async () => {
+  const request = vi.fn<RequestFn>(async () => ({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  }))
+  const url = await start(request, undefined, undefined, TOKEN_AUTH)
+  for (const authorization of [`Bearer ${TOKEN}`, `bearer   ${TOKEN}`]) {
+    const res = await call(url, 'POST', '/request', { authorization }, JSON.stringify(valid))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ answer: 'Approve', timedOut: false })
+  }
+  const status = await call(url, 'GET', '/status', { authorization: `Bearer ${TOKEN}` })
+  expect(status.status).toBe(200)
+  expect(await status.json()).toEqual({ paired: true, bot: 'b' })
+})
+
+test('openapi.yaml, 404 and 405 stay open with a token', async () => {
+  const url = await start(vi.fn<RequestFn>(), undefined, undefined, TOKEN_AUTH)
+  expect((await call(url, 'GET', '/openapi.yaml', {})).status).toBe(200)
+  expect((await call(url, 'GET', '/other', {})).status).toBe(404)
+  const res = await call(url, 'GET', '/request', {})
+  expect(res.status).toBe(405)
+  expect(res.headers.get('allow')).toBe('POST')
+})
+
+test('rejections are logged once each without the token', async () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const url = await start(vi.fn<RequestFn>(), undefined, undefined, TOKEN_AUTH)
+  await call(url, 'POST', '/request', {}, JSON.stringify(valid))
+  await call(url, 'GET', '/status', { authorization: `Bearer ${WRONG}` })
+  expect(error.mock.calls).toEqual([
+    ['rejected POST /request: missing token'],
+    ['rejected GET /status: wrong token'],
+  ])
+  error.mockRestore()
+})
+
+test('without a token a stray authorization header is ignored', async () => {
+  const request = vi.fn<RequestFn>(async () => ({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  }))
+  const url = await start(request)
+  const res = await call(
+    url,
+    'POST',
+    '/request',
+    { authorization: 'Bearer whatever' },
+    JSON.stringify(valid),
+  )
+  expect(res.status).toBe(200)
 })

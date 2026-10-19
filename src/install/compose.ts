@@ -64,6 +64,7 @@ export function createComposeTarget(deps: TargetDeps): Target {
           provider: options.provider,
           port: options.port,
           settings: options.settings,
+          auth: options.auth,
         }),
       )
       const result = await compose(['up', '-d', '--build'], { inherit: true })

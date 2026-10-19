@@ -1,23 +1,25 @@
 import Fastify from 'fastify'
-import type { FastifyError, FastifyInstance } from 'fastify'
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { parseApprovalRequest, SendError } from '../approval/index.ts'
 import type { ApprovalService } from '../approval/index.ts'
+import { isAuthorized, UNAUTHORIZED_ERROR } from '../auth/index.ts'
 import { parseNotifyRequest } from '../notify/index.ts'
 import { MAX_BODY_BYTES } from './constants.ts'
 import { formatOpenApiYaml } from './openapi.ts'
 import type { ApiServerOptions, StatusInfo } from './types.ts'
 
 /**
- * Builds the HTTP API (POST /request, POST /notify, GET /status, GET /openapi.yaml) without listening. Aborting the
- * connection cancels the pending request; errors return JSON bodies. Without `options.notifications`,
- * POST /notify answers 501.
+ * Builds the HTTP API (POST /request, POST /notify, GET /status, GET /openapi.yaml) without
+ * listening. Aborting the connection cancels the pending request; errors return JSON bodies. With a
+ * token in `options.auth`, the three API routes answer 401 before parsing the body or touching the
+ * service; /openapi.yaml stays open. Without `options.notifications`, POST /notify answers 501.
  */
 export function createApiServer(
   service: Pick<ApprovalService, 'request'>,
   status: () => StatusInfo,
   options: ApiServerOptions,
 ): FastifyInstance {
-  const { maxTextLength, providerName, notifications } = options
+  const { maxTextLength, providerName, notifications, auth } = options
   // Pending requests can hang for minutes; close() shouldn't wait for them.
   const app = Fastify({ bodyLimit: MAX_BODY_BYTES, forceCloseConnections: true })
   // Take the body as text whatever the content type, so bad JSON gets our own 400.
@@ -51,14 +53,32 @@ export function createApiServer(
     console.error(`unexpected error handling ${request.url}`, error)
     return reply.code(500).send({ error: 'internal server error' })
   })
-  app.get('/status', async () => status())
+  const guard =
+    auth.kind === 'token'
+      ? {
+          onRequest: async (request: FastifyRequest, reply: FastifyReply) => {
+            if (isAuthorized(request.headers.authorization, auth.token)) {
+              return
+            }
+            const reason = request.headers.authorization === undefined ? 'missing' : 'wrong'
+            console.error(
+              `rejected ${request.method} ${request.url.split('?')[0]}: ${reason} token`,
+            )
+            return reply
+              .code(401)
+              .header('WWW-Authenticate', 'Bearer')
+              .send({ error: UNAUTHORIZED_ERROR })
+          },
+        }
+      : {}
+  app.get('/status', guard, async () => status())
   // Containers publish the same port on the host, so the local port is the one clients use.
   app.get('/openapi.yaml', async (request, reply) =>
     reply
       .type('application/yaml; charset=utf-8')
       .send(formatOpenApiYaml({ port: request.socket.localPort ?? 0, maxTextLength })),
   )
-  app.post<{ Body: string | undefined }>('/request', async (request, reply) => {
+  app.post<{ Body: string | undefined }>('/request', guard, async (request, reply) => {
     if (!status().paired) {
       return reply.code(503).send({ error: 'not paired' })
     }
@@ -89,7 +109,7 @@ export function createApiServer(
     }
     return result.outcome
   })
-  app.post<{ Body: string | undefined }>('/notify', async (request, reply) => {
+  app.post<{ Body: string | undefined }>('/notify', guard, async (request, reply) => {
     if (notifications === undefined) {
       return reply.code(501).send({ error: 'notifications not supported' })
     }

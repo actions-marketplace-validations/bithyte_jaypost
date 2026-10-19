@@ -24,8 +24,14 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
     "./package.json": "./package.json"
   },
@@ -34,7 +40,7 @@
     "cli": "node src/cli.ts",
     "test": "vp test",
     "check": "vp check",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && vp pack",
     "openapi": "node scripts/openapi.ts",
     "changeset": "changeset",
     "version-packages": "changeset version && npm install --package-lock-only && npm run openapi",

@@ -1,3 +1,4 @@
+import { describeUnauthorized } from '../client/index.ts'
 import { findExistingInstall, resolveRecordProvider } from '../install/index.ts'
 import { findOwnerSetting, requireProvider } from '../provider/index.ts'
 import type { Provider } from '../provider/index.ts'
@@ -17,6 +18,10 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
     return 1
   }
   const { record } = existing
+  if (deps.token.kind === 'unusable') {
+    print(deps.token.message)
+    return 1
+  }
   const target = deps.targets[record.target]
   let provider: Provider
   try {
@@ -50,6 +55,7 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
       port: record.port,
       isRunning: () => target.isRunning(record),
       logsHint: target.logsHint(record),
+      ...(deps.token.kind === 'token' ? { token: deps.token.token } : {}),
       ...(deps.signal ? { signal: deps.signal } : {}),
       print,
     })
@@ -67,6 +73,10 @@ export async function runResetOwner(deps: ResetOwnerDeps): Promise<number> {
   }
   if (result === 'interrupted') {
     return 130
+  }
+  if (result === 'unauthorized') {
+    print(describeUnauthorized(deps.token.kind === 'token'))
+    return 1
   }
   print(target.logsHint(record))
   return 1

@@ -1,3 +1,13 @@
+import {
+  generateToken,
+  NO_AUTH,
+  parseToken,
+  readTokenFile,
+  removeTokenFile,
+  writeTokenFile,
+} from '../auth/index.ts'
+import type { ApiAuth } from '../auth/index.ts'
+import { describeUnauthorized } from '../client/index.ts'
 import { DEFAULT_PORT } from '../config/index.ts'
 import {
   detectTargets,
@@ -91,6 +101,38 @@ function isComplete(provider: Provider, settings: SettingValues): boolean {
     .every((setting) => Object.hasOwn(settings, setting.configKey))
 }
 
+/**
+ * The API auth to install with: none for `--no-token`, else a valid saved token, else a new one
+ * when `--token` is set or this is a fresh install, else the user's answer. An invalid saved token
+ * is replaced; an unreadable token file throws.
+ */
+async function chooseAuth(args: InitArgs, deps: InitDeps, isReplacing: boolean): Promise<ApiAuth> {
+  if (args.token === false) {
+    return NO_AUTH
+  }
+  const raw = readTokenFile(deps.paths.tokenFile)
+  if (raw !== undefined) {
+    const token = parseToken(raw)
+    if (token !== undefined) {
+      deps.print('Reusing the saved API token.')
+      return { kind: 'token', token }
+    }
+    deps.print('The saved API token was invalid; made a new one.')
+    return { kind: 'token', token: generateToken() }
+  }
+  if (
+    args.token === true ||
+    !isReplacing ||
+    (await deps.prompt.confirm(
+      'Require an API token? Scripts, n8n flows and agents in containers will need to send it.',
+      true,
+    ))
+  ) {
+    return { kind: 'token', token: generateToken() }
+  }
+  return NO_AUTH
+}
+
 function redact(message: string, secrets: readonly string[]): string {
   let redacted = message
   for (const secret of secrets) {
@@ -102,8 +144,10 @@ function redact(message: string, secrets: readonly string[]): string {
 }
 
 /**
- * Installs or replaces the service and waits for pairing. Returns 0 on success or when the user
- * declines, 1 on failure, 130 on interrupt; error text is shown with known secrets masked.
+ * Installs or replaces the service and waits for pairing. Saves the API token before installing,
+ * and removes the token file only after a tokenless install succeeds. Returns 0 on success or when
+ * the user declines, 1 on failure, 130 on interrupt; error text is shown with known secrets and
+ * the API token masked.
  */
 export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
   // Every secret value init has seen, so error messages can be shown with them masked.
@@ -251,30 +295,51 @@ async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Pro
     print(`Port ${port} is in use. Pick another with --port.`)
     return 1
   }
+  const auth = await chooseAuth(args, deps, existing !== undefined)
+  if (auth.kind === 'token') {
+    seen.push(auth.token)
+    // Saved first, so a failed install below reuses this token on the retry.
+    writeTokenFile(deps.paths.tokenFile, auth.token)
+  }
   const installed = await target.install({
     version: deps.version,
     port,
     provider,
     settings,
+    auth,
     ...(args.tarball === undefined ? {} : { tarball: args.tarball }),
     print,
   })
   writeInstall(deps.paths.installFile, installed)
+  if (auth.kind === 'none') {
+    removeTokenFile(deps.paths.tokenFile)
+  }
+  // The token just chosen, never TELEGRAM_ASK_TOKEN: a stale one in the shell would fail pairing.
   const result = await deps.wait({
     port,
     isRunning: () => target.isRunning(installed),
     logsHint: target.logsHint(installed),
     ...(deps.signal ? { signal: deps.signal } : {}),
+    ...(auth.kind === 'token' ? { token: auth.token } : {}),
     print,
   })
   if (result === 'paired') {
     print('Done. Try it: telegram-ask test')
     print('Check state: telegram-ask status')
+    print(
+      auth.kind === 'token'
+        ? `API token saved to ${deps.paths.tokenFile}. Agents in containers need TELEGRAM_ASK_TOKEN set to it.`
+        : 'No API token: any local process can use the API.',
+    )
     print(`Logs: ${target.logsHint(installed)}`)
     return 0
   }
   if (result === 'interrupted') {
     return 130
+  }
+  if (result === 'unauthorized') {
+    print(describeUnauthorized(auth.kind === 'token'))
+    return 1
   }
   print(target.logsHint(installed))
   return 1

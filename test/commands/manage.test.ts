@@ -2,7 +2,12 @@ import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
+import { NO_CLIENT_TOKEN, writeTokenFile } from '../../src/auth/index.ts'
+import type { ClientToken } from '../../src/auth/index.ts'
+import { TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
 import { runResetOwner, runStatus, runUninstall } from '../../src/commands/index.ts'
+import type { StatusInfo } from '../../src/server/index.ts'
+import { UNAUTHORIZED_STATUS, UNREACHABLE_STATUS } from '../../src/commands/constants.ts'
 import { resolveInstallPaths, writeInstall } from '../../src/install/index.ts'
 import type { InstallPaths, Target, TargetName } from '../../src/install/index.ts'
 import { telegramProvider } from '../../src/telegram/index.ts'
@@ -55,6 +60,13 @@ function seed(target: TargetName = 'systemd') {
   writeInstall(paths.installFile, { target, port: 9000, version: '1.0.0' })
 }
 
+const TOKEN = 'T'.repeat(43)
+const TOKEN_FILE = '/h/.config/telegram-ask/token'
+
+function answered(status: StatusInfo) {
+  return { kind: 'answered' as const, status }
+}
+
 function base(over = {}) {
   return {
     targets: targets(),
@@ -62,6 +74,8 @@ function base(over = {}) {
     providers: [telegramProvider, createFakeProvider()],
     print: (s: string) => out.push(s),
     confirm: vi.fn(async () => true),
+    token: NO_CLIENT_TOKEN as ClientToken,
+    tokenFile: TOKEN_FILE,
     ...over,
   }
 }
@@ -73,7 +87,7 @@ test('status not installed -> 1', async () => {
 
 test('status running and paired -> 0', async () => {
   seed()
-  const fetchStatus = vi.fn(async () => ({ paired: true as const, bot: 'b' }))
+  const fetchStatus = vi.fn(async () => answered({ paired: true, bot: 'b' }))
   expect(await runStatus({ ...base(), fetchStatus })).toBe(0)
   const s = out.join('\n')
   expect(s).toContain('systemd')
@@ -81,27 +95,31 @@ test('status running and paired -> 0', async () => {
   expect(s).toContain('9000')
   expect(s).toContain('yes')
   expect(s).toContain('paired')
-  expect(fetchStatus).toHaveBeenCalledWith(9000)
+  expect(fetchStatus).toHaveBeenCalledWith(9000, undefined)
 })
 
 test('status running, unpaired shows pairing line', async () => {
   seed()
-  const fetchStatus = vi.fn(async () => ({
-    paired: false as const,
-    code: 'ABCD-EFGH',
-    bot: 'mybot',
-  }))
+  const fetchStatus = vi.fn(async () =>
+    answered({
+      paired: false,
+      code: 'ABCD-EFGH',
+      bot: 'mybot',
+    }),
+  )
   expect(await runStatus({ ...base(), fetchStatus })).toBe(0)
   expect(out.join('\n')).toContain('/start ABCD-EFGH')
 })
 
 test('status prints old-shape pairing text', async () => {
   seed()
-  const fetchStatus = vi.fn(async () => ({
-    paired: false as const,
-    code: 'ABCD-EFGH',
-    bot: 'mybot',
-  }))
+  const fetchStatus = vi.fn(async () =>
+    answered({
+      paired: false,
+      code: 'ABCD-EFGH',
+      bot: 'mybot',
+    }),
+  )
   expect(await runStatus({ ...base(), fetchStatus })).toBe(0)
   expect(out.join('\n')).toContain(
     'Pairing: not paired\nPairing code: ABCD-EFGH\nSend "/start ABCD-EFGH" to @mybot, or open https://t.me/mybot?start=ABCDEFGH',
@@ -110,13 +128,15 @@ test('status prints old-shape pairing text', async () => {
 
 test('status prints provider instructions as is', async () => {
   seed()
-  const fetchStatus = vi.fn(async () => ({
-    paired: false as const,
-    provider: 'fake',
-    displayName: 'fake',
-    code: 'ABCD-EFGH',
-    instructions: 'Say ABCDEFGH to fake',
-  }))
+  const fetchStatus = vi.fn(async () =>
+    answered({
+      paired: false,
+      provider: 'fake',
+      displayName: 'fake',
+      code: 'ABCD-EFGH',
+      instructions: 'Say ABCDEFGH to fake',
+    }),
+  )
   expect(await runStatus({ ...base(), fetchStatus })).toBe(0)
   expect(out.join('\n')).toContain(
     'Pairing: not paired\nPairing code: ABCD-EFGH\nSay ABCDEFGH to fake',
@@ -127,7 +147,10 @@ test('status not running -> 1', async () => {
   seed()
   const t = targets({ systemd: fake('systemd', false) })
   expect(
-    await runStatus({ ...base({ targets: t }), fetchStatus: vi.fn(async () => undefined) }),
+    await runStatus({
+      ...base({ targets: t }),
+      fetchStatus: vi.fn(async () => UNREACHABLE_STATUS),
+    }),
   ).toBe(1)
   expect(out.join('\n')).toContain('no')
 })
@@ -164,7 +187,10 @@ test('reset-owner confirm text comes from the provider', async () => {
     version: '1',
   })
   const d = {
-    ...base({ confirm: vi.fn(async () => false), providers: [createPairingFakeProvider()] }),
+    ...base({
+      confirm: vi.fn(async () => false),
+      providers: [createPairingFakeProvider()],
+    }),
     wait: vi.fn(),
   }
   expect(await runResetOwner(d)).toBe(0)
@@ -172,7 +198,12 @@ test('reset-owner confirm text comes from the provider', async () => {
 })
 
 test('reset-owner without an owner setting returns 1 before prompting', async () => {
-  writeInstall(paths.installFile, { target: 'systemd', provider: 'fake', port: 9000, version: '1' })
+  writeInstall(paths.installFile, {
+    target: 'systemd',
+    provider: 'fake',
+    port: 9000,
+    version: '1',
+  })
   const d = { ...base(), wait: vi.fn() }
   expect(await runResetOwner(d)).toBe(1)
   expect(out).toEqual(["Fake doesn't support re-pairing."])
@@ -181,7 +212,12 @@ test('reset-owner without an owner setting returns 1 before prompting', async ()
 })
 
 test('reset-owner with an unknown provider returns 1 before prompting', async () => {
-  writeInstall(paths.installFile, { target: 'systemd', provider: 'nope', port: 9000, version: '1' })
+  writeInstall(paths.installFile, {
+    target: 'systemd',
+    provider: 'nope',
+    port: 9000,
+    version: '1',
+  })
   const d = { ...base(), wait: vi.fn() }
   expect(await runResetOwner(d)).toBe(1)
   expect(out).toEqual(['unknown provider "nope"; run `telegram-ask init`'])
@@ -239,7 +275,7 @@ test('uninstall passes purge answer through and removes install.json', async () 
     const d = base({ confirm: vi.fn(async () => ans) })
     expect(await runUninstall(d)).toBe(0)
     expect(d.confirm).toHaveBeenCalledWith(
-      'Also delete the saved credentials and paired owner?',
+      'Also delete the saved credentials, API token and paired owner?',
       false,
     )
     expect(d.targets.compose.remove).toHaveBeenCalledWith(
@@ -247,6 +283,20 @@ test('uninstall passes purge answer through and removes install.json', async () 
       purge,
     )
     expect(existsSync(paths.installFile)).toBe(false)
+  }
+})
+
+test('uninstall purge removes the token file; no purge keeps it', async () => {
+  for (const purge of [false, true]) {
+    seed('compose')
+    writeTokenFile(paths.tokenFile, TOKEN)
+    const d = base({ confirm: vi.fn(async () => purge) })
+    expect(await runUninstall(d)).toBe(0)
+    expect(d.confirm).toHaveBeenCalledWith(
+      'Also delete the saved credentials, API token and paired owner?',
+      false,
+    )
+    expect(existsSync(paths.tokenFile)).toBe(!purge)
   }
 })
 
@@ -275,11 +325,55 @@ test('uninstall failure: generic error, 1, install.json kept', async () => {
 test('test command takes port from install.json first', async () => {
   const { runTest } = await import('../../src/commands/index.ts')
   seed()
-  const f = vi.fn(async (_url: string) => new Response('ok', { status: 200 }))
+  const f = vi.fn(
+    async (_url: string, _init?: { headers?: Record<string, string> }) =>
+      new Response('ok', { status: 200 }),
+  )
   vi.stubGlobal('fetch', f)
   vi.spyOn(console, 'log').mockImplementation(() => {})
-  expect(await runTest(1234, paths.installFile)).toBe(0)
+  expect(await runTest(1234, paths.installFile, NO_CLIENT_TOKEN)).toBe(0)
   expect(f.mock.calls[0]![0]).toBe('http://127.0.0.1:9000/request')
+  expect(f.mock.calls[0]![1]?.headers).not.toHaveProperty('authorization')
+  vi.unstubAllGlobals()
+})
+
+test('test sends the token and explains a 401', async () => {
+  const { runTest } = await import('../../src/commands/index.ts')
+  seed()
+  const token = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG'
+  const f = vi.fn(
+    async (_url: string, _init?: { headers?: Record<string, string> }) =>
+      new Response('{"error":"unauthorized"}', { status: 401 }),
+  )
+  vi.stubGlobal('fetch', f)
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(
+    await runTest(1234, paths.installFile, {
+      kind: 'token',
+      token,
+      source: 'file',
+    }),
+  ).toBe(1)
+  expect(f.mock.calls[0]![1]?.headers?.authorization).toBe(`Bearer ${token}`)
+  expect(error).toHaveBeenCalledWith(TOKEN_REJECTED_MESSAGE)
+  vi.unstubAllGlobals()
+})
+
+test('test with an unusable token fails before calling', async () => {
+  const { runTest } = await import('../../src/commands/index.ts')
+  seed()
+  const f = vi.fn(async () => new Response('ok', { status: 200 }))
+  vi.stubGlobal('fetch', f)
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(
+    await runTest(1234, paths.installFile, {
+      kind: 'unusable',
+      message: 'bad token here',
+    }),
+  ).toBe(1)
+  expect(f).not.toHaveBeenCalled()
+  expect(error).toHaveBeenCalledWith('bad token here')
   vi.unstubAllGlobals()
 })
 
@@ -305,4 +399,68 @@ test('reset-owner wait throwing prints a generic error and returns 1', async () 
   const text = out.join('\n')
   expect(text).toContain('Waiting for pairing failed. logs hint')
   expect(text).not.toContain('secret-token-123')
+})
+
+test('status prints where the token comes from, never its value', async () => {
+  seed()
+  const cases: [ClientToken, string, string | undefined][] = [
+    [NO_CLIENT_TOKEN, 'Token:   none', undefined],
+    [{ kind: 'token', token: TOKEN, source: 'env' }, 'Token:   from TELEGRAM_ASK_TOKEN', TOKEN],
+    [{ kind: 'token', token: TOKEN, source: 'file' }, `Token:   from ${TOKEN_FILE}`, TOKEN],
+  ]
+  for (const [token, line, sent] of cases) {
+    out.length = 0
+    const fetchStatus = vi.fn(async () => answered({ paired: true, bot: 'b' }))
+    expect(await runStatus({ ...base({ token }), fetchStatus })).toBe(0)
+    const lines = out.join('\n').split('\n')
+    expect(lines[lines.findIndex((l) => l.startsWith('Port:')) + 1]).toBe(line)
+    expect(out.join('\n')).not.toContain(TOKEN)
+    expect(fetchStatus).toHaveBeenCalledWith(9000, sent)
+  }
+})
+
+test('status with an unusable token prints it and returns 1 without calling the service', async () => {
+  seed()
+  const fetchStatus = vi.fn()
+  const token: ClientToken = { kind: 'unusable', message: 'bad token here' }
+  expect(await runStatus({ ...base({ token }), fetchStatus })).toBe(1)
+  expect(out).toContain('Token:   unusable (bad token here)')
+  expect(out).toContain('Pairing: unknown (no usable token)')
+  expect(fetchStatus).not.toHaveBeenCalled()
+})
+
+test('status returns 1 when the service rejects the token', async () => {
+  seed()
+  const token: ClientToken = { kind: 'token', token: TOKEN, source: 'file' }
+  const fetchStatus = vi.fn(async () => UNAUTHORIZED_STATUS)
+  expect(await runStatus({ ...base({ token }), fetchStatus })).toBe(1)
+  const lines = out.join('\n')
+  expect(lines).toContain(
+    `Pairing: unknown (the service rejected the token)\n${TOKEN_REJECTED_MESSAGE}`,
+  )
+  expect(lines).not.toContain(TOKEN)
+})
+
+test('reset-owner with an unusable token fails before clearing the owner', async () => {
+  seed()
+  const d = {
+    ...base({ token: { kind: 'unusable', message: 'bad token here' } }),
+    wait: vi.fn(),
+  }
+  expect(await runResetOwner(d)).toBe(1)
+  expect(out.join('\n')).toContain('bad token here')
+  expect(d.confirm).not.toHaveBeenCalled()
+  expect(d.wait).not.toHaveBeenCalled()
+  expect(d.targets.systemd.clearOwner).not.toHaveBeenCalled()
+  expect(d.targets.systemd.restart).not.toHaveBeenCalled()
+})
+
+test('reset-owner passes the token to the wait and explains unauthorized', async () => {
+  seed()
+  const wait = vi.fn(async () => 'unauthorized' as const)
+  const token: ClientToken = { kind: 'token', token: TOKEN, source: 'env' }
+  expect(await runResetOwner({ ...base({ token }), wait })).toBe(1)
+  expect(wait).toHaveBeenCalledWith(expect.objectContaining({ token: TOKEN }))
+  expect(out.join('\n')).toContain(TOKEN_REJECTED_MESSAGE)
+  expect(out.join('\n')).not.toContain(TOKEN)
 })

@@ -1,14 +1,23 @@
 import { spawn } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import {
+  getDefaultEnvironment,
+  StdioClientTransport,
+} from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { FastifyInstance } from 'fastify'
-import { afterEach, expect, test } from 'vite-plus/test'
+import { afterEach, beforeEach, expect, test } from 'vite-plus/test'
 import { ApprovalService } from '../../src/approval/index.ts'
 import type { MessageReference, Messenger, Settlement } from '../../src/approval/index.ts'
 import { NotificationService } from '../../src/notify/index.ts'
 import type { Notifier } from '../../src/notify/index.ts'
+import { NO_AUTH, writeTokenFile } from '../../src/auth/index.ts'
+import type { ApiAuth } from '../../src/auth/index.ts'
+import { TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
 
 const ROOT = new URL('../..', import.meta.url).pathname
@@ -45,20 +54,36 @@ class RecordingNotifier implements Notifier {
   }
 }
 
+const TOKEN = 'a'.repeat(43)
+const FIRST = 'b'.repeat(43)
+const SECOND = 'c'.repeat(43)
+const NOTE = { project_name: 'api', text: 'done' }
+
 const servers: FastifyInstance[] = []
 const clients: Client[] = []
+let directory = ''
+let tokenFile = ''
+beforeEach(() => {
+  directory = mkdtempSync(join(tmpdir(), 'telegram-ask-mcp-'))
+  mkdirSync(join(directory, 'telegram-ask'))
+  tokenFile = join(directory, 'telegram-ask', 'token')
+})
 afterEach(async () => {
+  rmSync(directory, { recursive: true, force: true })
   await Promise.all(clients.splice(0).map((client) => client.close()))
   await Promise.all(servers.splice(0).map((server) => server.close()))
 })
 
-async function startApi(options: { readonly notifications?: boolean } = {}) {
+async function startApi(
+  options: { readonly notifications?: boolean; readonly auth?: ApiAuth } = {},
+) {
   const messenger = new RecordingMessenger()
   const notifier = new RecordingNotifier()
   const service = new ApprovalService(messenger)
   const server = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
     maxTextLength: 3900,
     providerName: 'test',
+    auth: options.auth ?? NO_AUTH,
     ...(options.notifications === false
       ? {}
       : { notifications: new NotificationService(notifier) }),
@@ -69,7 +94,7 @@ async function startApi(options: { readonly notifications?: boolean } = {}) {
   return { port, service, messenger, notifier }
 }
 
-async function connect(port: number): Promise<Client> {
+async function connect(port: number, extraEnv: Record<string, string> = {}): Promise<Client> {
   const client = new Client({ name: 'test', version: '0.0.0' })
   clients.push(client)
   await client.connect(
@@ -77,6 +102,7 @@ async function connect(port: number): Promise<Client> {
       command: process.execPath,
       args: ['src/cli.ts', 'mcp', '--port', String(port)],
       cwd: ROOT,
+      env: { ...getDefaultEnvironment(), XDG_CONFIG_HOME: directory, ...extraEnv },
       stderr: 'pipe',
     }),
   )
@@ -258,4 +284,56 @@ test('stdout carries only json-rpc', async () => {
   for (const line of lines) {
     expect(JSON.parse(line)).toMatchObject({ jsonrpc: '2.0' })
   }
+})
+
+test('tool calls send the token from the token file', async () => {
+  writeTokenFile(tokenFile, TOKEN)
+  const { port } = await startApi({ auth: { kind: 'token', token: TOKEN } })
+  const client = await connect(port)
+  expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual({
+    content: [{ type: 'text', text: 'sent' }],
+  })
+})
+
+test('TELEGRAM_ASK_TOKEN reaches the service', async () => {
+  const { port } = await startApi({ auth: { kind: 'token', token: TOKEN } })
+  const client = await connect(port, { TELEGRAM_ASK_TOKEN: TOKEN })
+  expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual({
+    content: [{ type: 'text', text: 'sent' }],
+  })
+})
+
+test('the token is read again on every call', async () => {
+  writeTokenFile(tokenFile, FIRST)
+  const { port } = await startApi({ auth: { kind: 'token', token: SECOND } })
+  const client = await connect(port)
+  expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual({
+    isError: true,
+    content: [{ type: 'text', text: TOKEN_REJECTED_MESSAGE }],
+  })
+  writeTokenFile(tokenFile, SECOND)
+  expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual({
+    content: [{ type: 'text', text: 'sent' }],
+  })
+})
+
+test('an unusable token fails only the call that hit it', async () => {
+  writeTokenFile(tokenFile, 'short-secret')
+  const { port } = await startApi({ auth: { kind: 'token', token: TOKEN } })
+  const client = await connect(port)
+  const unusable = {
+    isError: true,
+    content: [
+      {
+        type: 'text',
+        text: `token file ${JSON.stringify(tokenFile)} isn't a valid telegram-ask token`,
+      },
+    ],
+  }
+  expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual(unusable)
+  expect(await client.callTool({ name: 'ask_for_permission', arguments: ASK })).toEqual(unusable)
+  writeTokenFile(tokenFile, TOKEN)
+  expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual({
+    content: [{ type: 'text', text: 'sent' }],
+  })
 })

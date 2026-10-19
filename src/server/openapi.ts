@@ -58,8 +58,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
       license: { name: 'Apache-2.0', identifier: 'Apache-2.0' },
     },
     servers: [{ url: `http://127.0.0.1:${port}` }],
-    // Loopback only, no auth.
-    security: [],
+    security: [{ bearerAuth: [] }],
     paths: {
       '/request': {
         post: {
@@ -81,6 +80,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
               },
             },
             '400': { $ref: '#/components/responses/BadRequest' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
             '413': { $ref: '#/components/responses/PayloadTooLarge' },
             '500': errorResponse('Internal error, or the request was cancelled.'),
             '502': { $ref: '#/components/responses/SendFailed' },
@@ -114,6 +114,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
               },
             },
             '400': { $ref: '#/components/responses/BadRequest' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
             '413': { $ref: '#/components/responses/PayloadTooLarge' },
             '502': { $ref: '#/components/responses/SendFailed' },
             '503': { $ref: '#/components/responses/NotPaired' },
@@ -131,6 +132,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
                 'application/json': { schema: { $ref: '#/components/schemas/Status' } },
               },
             },
+            '401': { $ref: '#/components/responses/Unauthorized' },
           },
         },
       },
@@ -138,6 +140,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
         get: {
           operationId: 'openapi',
           summary: 'This document',
+          security: [],
           responses: {
             '200': {
               description: 'OpenAPI document for this service.',
@@ -148,6 +151,14 @@ export function createOpenApiDocument(options: OpenApiOptions) {
       },
     },
     components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          description:
+            'The token `init` saved to `~/.config/telegram-ask/token`. A service installed without a token ignores the header.',
+        },
+      },
       schemas: {
         ApprovalRequest: toBodySchema(createApprovalRequestSchema(maxTextLength), maxTextLength),
         Outcome: {
@@ -167,6 +178,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
         },
       },
       responses: {
+        Unauthorized: errorResponse('Missing or wrong bearer token.'),
         BadRequest: errorResponse(
           'Body is not valid JSON or fails validation; `error` is the first problem found. Nothing is sent.',
         ),

@@ -74,6 +74,7 @@ export function createQuadletTarget(deps: TargetDeps): Target {
           provider: options.provider,
           port: options.port,
           settings: options.settings,
+          auth: options.auth,
         }),
       )
       const build = await exec(

@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import type { ApiAuth } from '../auth/index.ts'
 import type { Provider, SettingValues } from '../provider/index.ts'
 import type { Exec } from '../system/index.ts'
 import type { installRecordSchema } from './schema.ts'
@@ -13,6 +14,8 @@ export type InstallPaths = {
   readonly configDirectory: string
   readonly configFile: string
   readonly installFile: string
+  /** The client token file `init` writes for the CLI and MCP server. */
+  readonly tokenFile: string
   readonly composeDirectory: string
   readonly quadletDirectory: string
   readonly systemdUnit: string
@@ -37,6 +40,8 @@ export type InstallOptions = {
   readonly provider: Provider
   /** The current provider's settings; the owner setting is left alone when absent. */
   readonly settings: SettingValues
+  /** The token the service enforces; `none` leaves the service without one. */
+  readonly auth: ApiAuth
   readonly tarball?: string
   readonly print: (text: string) => void
 }

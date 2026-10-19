@@ -40,3 +40,17 @@ test('yaml parses back to the document', () => {
   const options = { port: 8787, maxTextLength: 3900 }
   expect(parse(formatOpenApiYaml(options))).toEqual(createOpenApiDocument(options))
 })
+
+test('bearer auth is declared and required on the api routes', () => {
+  const document = createOpenApiDocument({ port: 8787, maxTextLength: 3900 })
+  expect(document.components.securitySchemes.bearerAuth).toMatchObject({
+    type: 'http',
+    scheme: 'bearer',
+  })
+  expect(document.security).toEqual([{ bearerAuth: [] }])
+  expect(document.paths['/openapi.yaml'].get.security).toEqual([])
+  const unauthorized = { $ref: '#/components/responses/Unauthorized' }
+  expect(document.paths['/request'].post.responses['401']).toEqual(unauthorized)
+  expect(document.paths['/notify'].post.responses['401']).toEqual(unauthorized)
+  expect(document.paths['/status'].get.responses['401']).toEqual(unauthorized)
+})

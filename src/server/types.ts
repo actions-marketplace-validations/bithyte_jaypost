@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import type { ApiAuth } from '../auth/index.ts'
 import type { NotificationService } from '../notify/index.ts'
 import type { statusInfoSchema } from './schema.ts'
 
@@ -9,6 +10,8 @@ export type StatusInfo = Readonly<z.infer<typeof statusInfoSchema>>
 export type ApiServerOptions = {
   readonly maxTextLength: number
   readonly providerName: string
+  /** With a token, /request, /notify and /status answer 401 unless it is presented. */
+  readonly auth: ApiAuth
   readonly notifications?: Pick<NotificationService, 'notify'>
 }
 

@@ -1,10 +1,14 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, test, vi } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { parse } from 'yaml'
 import { main } from '../src/cli.ts'
 import { VERSION } from '../src/config/index.ts'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 test('unknown command returns 2', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
@@ -30,6 +34,14 @@ test('init --help lists --provider', async () => {
   expect(write.mock.calls.map((call) => String(call[0])).join('')).toContain('--provider <name>')
 })
 
+test('init --help lists --token and --no-token', async () => {
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  expect(await main(['init', '--help'])).toBe(0)
+  const help = write.mock.calls.map((call) => String(call[0])).join('')
+  expect(help).toContain('--token ')
+  expect(help).toContain('--no-token')
+})
+
 test('mcp rejects a bad port with 2', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   expect(await main(['mcp', '--port', 'abc'])).toBe(2)
@@ -47,6 +59,15 @@ test('send request requires options and timeout option, and rejects a bad timeou
 test('send notify requires text', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   expect(await main(['send', 'notify'])).toBe(2)
+})
+
+test('send exits 1 with the message on an invalid TELEGRAM_ASK_TOKEN', async () => {
+  vi.stubEnv('TELEGRAM_ASK_TOKEN', 'short-secret')
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(await main(['send', 'notify', 'hi', '--port', '1'])).toBe(1)
+  expect(error).toHaveBeenCalledWith(
+    "telegram-ask: TELEGRAM_ASK_TOKEN isn't a valid telegram-ask token",
+  )
 })
 
 test('openapi writes the spec with the given port to a file', async () => {

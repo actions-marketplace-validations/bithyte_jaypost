@@ -2,7 +2,12 @@ import { createServer } from 'node:http'
 import type { RequestListener, Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
-import { postApi, toFetchTimeoutMs } from '../../src/client/index.ts'
+import {
+  TOKEN_REJECTED_MESSAGE,
+  TOKEN_REQUIRED_MESSAGE,
+  postApi,
+  toFetchTimeoutMs,
+} from '../../src/client/index.ts'
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -44,12 +49,16 @@ function options(timeoutMs = 5000): { signal: AbortSignal; timeoutMs: number } {
   return { signal: new AbortController().signal, timeoutMs }
 }
 
+const TOKEN = 'A'.repeat(43)
+
 function unreachable(port: number): string {
   return `telegram-ask service not reachable on 127.0.0.1:${port} (run telegram-ask status)`
 }
 
 test('200 returns the parsed body', async () => {
-  let seen: { method?: string; url?: string; type?: string; body: string } = { body: '' }
+  let seen: { method?: string; url?: string; type?: string; body: string } = {
+    body: '',
+  }
   const port = await startStub((request, response) => {
     let body = ''
     request.on('data', (chunk) => (body += chunk))
@@ -64,7 +73,10 @@ test('200 returns the parsed body', async () => {
     })
   })
   const result = await postApi(port, '/request', { question: 'ok?' }, options())
-  expect(result).toEqual({ kind: 'ok', body: { answer: 'Approve', timedOut: false } })
+  expect(result).toEqual({
+    kind: 'ok',
+    body: { answer: 'Approve', timedOut: false },
+  })
   expect(seen).toEqual({
     method: 'POST',
     url: '/request',
@@ -92,7 +104,10 @@ test.each([
   ],
 ] as const)('status %i on %s maps to a message', async (status, path, body, message) => {
   const port = await startStub(reply(status, body))
-  expect(await postApi(port, path, {}, options())).toEqual({ kind: 'failed', message })
+  expect(await postApi(port, path, {}, options())).toEqual({
+    kind: 'failed',
+    message,
+  })
 })
 
 test('non-json error body is used as is', async () => {
@@ -150,11 +165,36 @@ test('caller abort', async () => {
 test('does not use global fetch', async () => {
   vi.stubGlobal('fetch', () => Promise.reject(new Error('fetch must not be used')))
   const port = await startStub(reply(200, '{"ok":true}'))
-  expect(await postApi(port, '/notify', {}, options())).toEqual({ kind: 'ok', body: { ok: true } })
+  expect(await postApi(port, '/notify', {}, options())).toEqual({
+    kind: 'ok',
+    body: { ok: true },
+  })
 })
 
 test('timeout above 300 is capped', () => {
   expect(toFetchTimeoutMs(900)).toBe(330_000)
   expect(toFetchTimeoutMs(undefined)).toBe(330_000)
   expect(toFetchTimeoutMs(10)).toBe(40_000)
+})
+
+test('the token is sent as a bearer header only when given', async () => {
+  const seen: (string | undefined)[] = []
+  const port = await startStub((request, response) => {
+    seen.push(request.headers.authorization)
+    response.end('{}')
+  })
+  await postApi(port, '/request', {}, { ...options(), token: TOKEN })
+  await postApi(port, '/request', {}, options())
+  expect(seen).toEqual([`Bearer ${TOKEN}`, undefined])
+})
+
+test('401 explains whether a token was sent', async () => {
+  const port = await startStub(reply(401, '{"error":"unauthorized"}'))
+  expect(await postApi(port, '/request', {}, options())).toEqual({
+    kind: 'failed',
+    message: TOKEN_REQUIRED_MESSAGE,
+  })
+  const result = await postApi(port, '/request', {}, { ...options(), token: TOKEN })
+  expect(result).toEqual({ kind: 'failed', message: TOKEN_REJECTED_MESSAGE })
+  expect(JSON.stringify(result)).not.toContain(TOKEN)
 })

@@ -1,27 +1,36 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { statusInfoSchema } from '../server/index.ts'
-import type { StatusInfo } from '../server/index.ts'
-import { DEFAULT_START_TIMEOUT_MS, POLL_INTERVAL_MS, STATUS_TIMEOUT_MS } from './constants.ts'
+import {
+  DEFAULT_START_TIMEOUT_MS,
+  POLL_INTERVAL_MS,
+  STATUS_TIMEOUT_MS,
+  UNAUTHORIZED_STATUS,
+  UNREACHABLE_STATUS,
+} from './constants.ts'
 import { formatPairingText } from './pairing-text.ts'
-import type { WaitOptions, WaitResult } from './types.ts'
+import type { StatusFetch, WaitOptions, WaitResult } from './types.ts'
 
 /**
- * GETs the local /status; undefined on any failure or unexpected body (typically the service isn't
- * up yet).
+ * GETs the local /status, sending the bearer token when given. A 401 is `unauthorized`; any other
+ * failure or unexpected body is `unreachable` (typically the service isn't up yet). Never throws.
  */
-export async function defaultFetchStatus(port: number): Promise<StatusInfo | undefined> {
+export async function defaultFetchStatus(port: number, token?: string): Promise<StatusFetch> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/status`, {
+      ...(token === undefined ? {} : { headers: { authorization: `Bearer ${token}` } }),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     })
+    if (response.status === 401) {
+      return UNAUTHORIZED_STATUS
+    }
     const body = statusInfoSchema.safeParse(await response.json())
     if (body.success) {
-      return body.data
+      return { kind: 'answered', status: body.data }
     }
   } catch {
     // not up yet
   }
-  return undefined
+  return UNREACHABLE_STATUS
 }
 
 function createAbortableSleep(signal?: AbortSignal): (delayMs: number) => Promise<void> {
@@ -31,7 +40,8 @@ function createAbortableSleep(signal?: AbortSignal): (delayMs: number) => Promis
 
 /**
  * Polls /status, printing the pairing code once. Start timeout only applies until the service first
- * answers; ends as paired, interrupted, stopped (not running) or notStarted.
+ * answers; ends as paired, interrupted, stopped (not running), notStarted or unauthorized (the
+ * service rejected the token).
  */
 export async function waitForPairing(options: WaitOptions): Promise<WaitResult> {
   const print = options.print ?? ((text: string) => console.log(text))
@@ -48,15 +58,18 @@ export async function waitForPairing(options: WaitOptions): Promise<WaitResult> 
       )
       return 'interrupted'
     }
-    const status = await fetchStatus(options.port)
-    if (status) {
+    const fetched = await fetchStatus(options.port, options.token)
+    if (fetched.kind === 'unauthorized') {
+      return 'unauthorized'
+    }
+    if (fetched.kind === 'answered') {
       answered = true
-      if (status.paired) {
+      if (fetched.status.paired) {
         return 'paired'
       }
       if (!shown) {
         shown = true
-        print(formatPairingText(status))
+        print(formatPairingText(fetched.status))
       }
     } else if (!answered && Date.now() - began >= startTimeoutMs) {
       return 'notStarted'

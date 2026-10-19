@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { resolveTokenFile } from '../auth/index.ts'
 import { resolveConfigDirectory } from '../config/index.ts'
 import type { InstallPaths } from './types.ts'
 
@@ -17,6 +18,7 @@ export function resolveInstallPaths(env: NodeJS.ProcessEnv = process.env): Insta
     configDirectory,
     configFile: join(configDirectory, 'config.json'),
     installFile: join(configDirectory, 'install.json'),
+    tokenFile: resolveTokenFile(env),
     composeDirectory: join(configDirectory, 'compose'),
     quadletDirectory: join(configDirectory, 'quadlet'),
     systemdUnit: join(xdgConfigHome, 'systemd', 'user', 'telegram-ask.service'),

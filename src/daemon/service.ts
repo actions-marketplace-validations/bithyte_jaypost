@@ -94,6 +94,7 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   const server = createApiServer(service, status, {
     maxTextLength: provider.maxTextLength,
     providerName: provider.name,
+    auth: config.auth,
     ...(notifications === undefined ? {} : { notifications }),
   })
   const handlers: RuntimeHandlers = {
@@ -142,7 +143,10 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     process.exit(1)
   }
   running.server.listen({ port: config.port, host: config.host }).then(
-    () => console.log(`listening on ${config.host}:${config.port}`),
+    () =>
+      console.log(
+        `listening on ${config.host}:${config.port} (${config.auth.kind === 'token' ? 'token required' : 'no token'})`,
+      ),
     (error: unknown) => {
       console.error('http server error:', error instanceof Error ? error.message : String(error))
       process.exit(1)

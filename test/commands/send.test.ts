@@ -8,8 +8,12 @@ import { runSendNotify, runSendRequest } from '../../src/commands/index.ts'
 import type { SendDeps } from '../../src/commands/index.ts'
 import { NotificationService } from '../../src/notify/index.ts'
 import type { Notifier } from '../../src/notify/index.ts'
+import { NO_AUTH, NO_CLIENT_TOKEN } from '../../src/auth/index.ts'
+import type { ApiAuth, ClientToken } from '../../src/auth/index.ts'
+import { TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
 
+const TOKEN = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG'
 const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
 
 class RecordingMessenger implements Messenger {
@@ -44,13 +48,16 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()))
 })
 
-async function startApi(options: { readonly notifications?: boolean } = {}) {
+async function startApi(
+  options: { readonly notifications?: boolean; readonly auth?: ApiAuth } = {},
+) {
   const messenger = new RecordingMessenger()
   const notifier = new RecordingNotifier()
   const service = new ApprovalService(messenger)
   const server = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
     maxTextLength: 3900,
     providerName: 'test',
+    auth: options.auth ?? NO_AUTH,
     ...(options.notifications === false
       ? {}
       : { notifications: new NotificationService(notifier) }),
@@ -61,12 +68,17 @@ async function startApi(options: { readonly notifications?: boolean } = {}) {
   return { port, service, messenger, notifier }
 }
 
-function createDeps(port: number, signal = new AbortController().signal) {
+function createDeps(
+  port: number,
+  signal = new AbortController().signal,
+  token: ClientToken = NO_CLIENT_TOKEN,
+) {
   const out: string[] = []
   const errors: string[] = []
   const deps: SendDeps = {
     port,
     signal,
+    token,
     print: (text) => out.push(text),
     printError: (text) => errors.push(text),
   }
@@ -165,4 +177,44 @@ test('service down fails with a hint', async () => {
   expect(errors).toEqual([
     `telegram-ask: telegram-ask service not reachable on 127.0.0.1:${port} (run telegram-ask status)`,
   ])
+})
+
+test('request sends the token', async () => {
+  const { port, service, messenger } = await startApi({ auth: { kind: 'token', token: TOKEN } })
+  const { deps, out, errors } = createDeps(port, undefined, {
+    kind: 'token',
+    token: TOKEN,
+    source: 'env',
+  })
+  const pending = runSendRequest(ASK, deps)
+  await waitFor(() => messenger.sent.length === 1)
+  service.tap(messenger.sent[0]?.id ?? '', 0)
+  expect(await pending).toBe(0)
+  expect(out).toEqual(['Approve'])
+  expect(errors).toEqual([])
+})
+
+test('an unusable token fails without calling the service', async () => {
+  const { port, messenger } = await startApi()
+  const { deps, out, errors } = createDeps(port, undefined, {
+    kind: 'unusable',
+    message: 'bad token here',
+  })
+  expect(await runSendRequest(ASK, deps)).toBe(1)
+  expect(await runSendNotify({ text: 'hi' }, deps)).toBe(1)
+  expect(out).toEqual([])
+  expect(errors).toEqual(['telegram-ask: bad token here', 'telegram-ask: bad token here'])
+  expect(messenger.sent).toEqual([])
+})
+
+test('a wrong token prints the rejected message', async () => {
+  const { port, messenger } = await startApi({ auth: { kind: 'token', token: TOKEN } })
+  const { deps, errors } = createDeps(port, undefined, {
+    kind: 'token',
+    token: `${TOKEN}x`,
+    source: 'file',
+  })
+  expect(await runSendRequest(ASK, deps)).toBe(1)
+  expect(errors).toEqual([`telegram-ask: ${TOKEN_REJECTED_MESSAGE}`])
+  expect(messenger.sent).toEqual([])
 })

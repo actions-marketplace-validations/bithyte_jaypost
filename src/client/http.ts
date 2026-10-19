@@ -7,6 +7,8 @@ import {
   NOT_PAIRED_MESSAGE,
   NOT_SUPPORTED_MESSAGE,
   SEND_FAILED_MESSAGE,
+  TOKEN_REJECTED_MESSAGE,
+  TOKEN_REQUIRED_MESSAGE,
   TOO_OLD_MESSAGE,
 } from './constants.ts'
 import type { ApiOptions, ApiPath, ApiResult } from './types.ts'
@@ -25,14 +27,27 @@ export async function postApi(
   const signal = AbortSignal.any([options.signal, timeout])
   let response: RawResponse
   try {
-    response = await send(options.host ?? HOST, port, path, JSON.stringify(body), signal)
+    response = await send(
+      options.host ?? HOST,
+      port,
+      path,
+      JSON.stringify(body),
+      signal,
+      options.token,
+    )
   } catch {
-    return { kind: 'failed', message: describeTransportFailure(port, options, timeout) }
+    return {
+      kind: 'failed',
+      message: describeTransportFailure(port, options, timeout),
+    }
   }
   if (response.status === 200) {
     return parseOk(response.text)
   }
-  return { kind: 'failed', message: describeStatus(response.status, path, response.text) }
+  return {
+    kind: 'failed',
+    message: describeStatus(response.status, path, response.text, options.token !== undefined),
+  }
 }
 
 /** HTTP timeout for a /request call: the capped approval timeout plus a grace period. */
@@ -51,6 +66,7 @@ function send(
   path: ApiPath,
   payload: string,
   signal: AbortSignal,
+  token: string | undefined,
 ): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const request = httpRequest(
@@ -62,6 +78,7 @@ function send(
         headers: {
           'content-type': 'application/json',
           'content-length': Buffer.byteLength(payload),
+          ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
         },
         signal,
       },
@@ -119,8 +136,16 @@ function parseOk(text: string): ApiResult {
   }
 }
 
-function describeStatus(status: number, path: ApiPath, text: string): string {
+/** The 401 copy: a token was never sent, or it was sent and refused. */
+export function describeUnauthorized(sentToken: boolean): string {
+  return sentToken ? TOKEN_REJECTED_MESSAGE : TOKEN_REQUIRED_MESSAGE
+}
+
+function describeStatus(status: number, path: ApiPath, text: string, sentToken: boolean): string {
   const error = readErrorField(text)
+  if (status === 401) {
+    return describeUnauthorized(sentToken)
+  }
   if (status === 400 && error !== undefined) {
     return error
   }

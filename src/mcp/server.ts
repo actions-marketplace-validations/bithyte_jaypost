@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { MAX_OPTION_LENGTH, MAX_PROJECT_LENGTH, MAX_TIMEOUT_SECONDS } from '../approval/index.ts'
 import { FETCH_GRACE_MS, isOutcome, postApi, toFetchTimeoutMs } from '../client/index.ts'
 import { VERSION } from '../config/constants.ts'
+import type { ServiceAddress } from './types.ts'
 
 const ASK_DESCRIPTION = [
   'Ask the user a question on their phone and wait for them to tap one of the options.',
@@ -26,7 +27,7 @@ const projectNameSchema = z
 const textSchema = z.string().min(1).describe('Message to show the user')
 
 /** MCP server with ask_for_permission and notify_user; aborting `signal` cancels every call. */
-export function createMcpServer(port: number, signal: AbortSignal): McpServer {
+export function createMcpServer(address: ServiceAddress, signal: AbortSignal): McpServer {
   const server = new McpServer({ name: 'telegram-ask', version: VERSION })
   server.registerTool(
     'ask_for_permission',
@@ -53,8 +54,12 @@ export function createMcpServer(port: number, signal: AbortSignal): McpServer {
       outputSchema: { answer: z.string(), timed_out: z.boolean() },
     },
     async (args, extra): Promise<CallToolResult> => {
+      const token = address.readToken()
+      if (token.kind === 'unusable') {
+        return toErrorResult(token.message)
+      }
       const result = await postApi(
-        port,
+        address.port,
         '/request',
         {
           project: args.project_name,
@@ -66,6 +71,7 @@ export function createMcpServer(port: number, signal: AbortSignal): McpServer {
         {
           signal: AbortSignal.any([extra.signal, signal]),
           timeoutMs: toFetchTimeoutMs(args.timeout_seconds),
+          ...(token.kind === 'token' ? { token: token.token } : {}),
         },
       )
       if (result.kind === 'failed') {
@@ -95,11 +101,19 @@ export function createMcpServer(port: number, signal: AbortSignal): McpServer {
       inputSchema: { project_name: projectNameSchema, text: textSchema },
     },
     async (args, extra): Promise<CallToolResult> => {
+      const token = address.readToken()
+      if (token.kind === 'unusable') {
+        return toErrorResult(token.message)
+      }
       const result = await postApi(
-        port,
+        address.port,
         '/notify',
         { project: args.project_name, text: args.text },
-        { signal: AbortSignal.any([extra.signal, signal]), timeoutMs: FETCH_GRACE_MS },
+        {
+          signal: AbortSignal.any([extra.signal, signal]),
+          timeoutMs: FETCH_GRACE_MS,
+          ...(token.kind === 'token' ? { token: token.token } : {}),
+        },
       )
       if (result.kind === 'failed') {
         return toErrorResult(result.message)
@@ -114,9 +128,9 @@ export function createMcpServer(port: number, signal: AbortSignal): McpServer {
  * Serves MCP on stdin/stdout until stdin ends or closes, then cancels in-flight calls and closes.
  * Resolves 0. Writes nothing to stdout but JSON-RPC.
  */
-export async function runMcp(port: number): Promise<number> {
+export async function runMcp(address: ServiceAddress): Promise<number> {
   const controller = new AbortController()
-  const server = createMcpServer(port, controller.signal)
+  const server = createMcpServer(address, controller.signal)
   // The SDK transport doesn't notice the end of stdin by itself.
   const stdinDone = new Promise<void>((resolve) => {
     process.stdin.once('end', resolve)

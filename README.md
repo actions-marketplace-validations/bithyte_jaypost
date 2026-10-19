@@ -28,6 +28,8 @@ Or try it from the shell:
 telegram-ask test
 ```
 
+`init` also makes an API token (see [Security](#security)). The CLI, `mcp` and the Node client read it from `~/.config/telegram-ask/token` on their own. An agent in a container can't see that file, so pass it in: `export TELEGRAM_ASK_TOKEN=$(cat ~/.config/telegram-ask/token)`, then add `-e TELEGRAM_ASK_TOKEN` (name only) to `docker run` or `podman run`. Putting the value on the command line would show it in `ps`.
+
 ## How it works
 
 ```mermaid
@@ -84,6 +86,22 @@ In a container or anywhere the package isn't installed, use `npx -y telegram-ask
 }
 ```
 
+If the token file isn't readable where the MCP server runs (a container, another user), set `TELEGRAM_ASK_TOKEN` to its contents, which wins over the file. In a client's JSON, add an `env` block:
+
+```json
+{
+  "mcpServers": {
+    "telegram-ask": {
+      "command": "telegram-ask",
+      "args": ["mcp"],
+      "env": { "TELEGRAM_ASK_TOKEN": "<contents of ~/.config/telegram-ask/token>" }
+    }
+  }
+}
+```
+
+For a container, `export TELEGRAM_ASK_TOKEN=$(cat ~/.config/telegram-ask/token)` and then `-e TELEGRAM_ASK_TOKEN` (name only) does the same; a `-e NAME=value` would show the token in `ps`.
+
 The port comes from `--port`, then `PORT`, then the install's `install.json`, then 8787. If you run `start` by hand on a custom port without an install, pass `--port` or set `PORT`.
 
 The service has to be running. A call made while it's down returns an error to the agent; the MCP server stays up, so the next call works once the service is back.
@@ -120,13 +138,14 @@ const { answer, timedOut } = await client.request({
 await client.notify({ text: 'backup finished' })
 ```
 
-`new Client()` takes optional `host` (default `127.0.0.1`), `port` (default 8787) and `project`, which every call sends unless it passes its own. `request` takes the [`/request` fields](#ask-a-question) plus an optional `signal`; aborting it cancels the question and rejects with the signal's reason. Failures (service down, a 400, a send error) throw a `TelegramAskError` with the same message the CLI prints. A timeout isn't a failure: it resolves with `timeoutOption` and `timedOut: true`.
+`new Client()` takes optional `host` (default `127.0.0.1`), `port` (default 8787), `token` and `project`, which every call sends unless it passes its own. Without `token`, each call looks one up: `TELEGRAM_ASK_TOKEN` if set, else the token file, else none is sent. An invalid `token` throws a `RangeError`. `request` takes the [`/request` fields](#ask-a-question) plus an optional `signal`; aborting it cancels the question and rejects with the signal's reason. Failures (service down, a 400, a send error) throw a `TelegramAskError` with the same message the CLI prints. A timeout isn't a failure: it resolves with `timeoutOption` and `timedOut: true`.
 
 ### Ask a question
 
 ```
 curl -s -X POST http://127.0.0.1:8787/request \
   -H 'content-type: application/json' \
+  -H "authorization: Bearer $(cat ~/.config/telegram-ask/token)" \
   -d '{"text":"Deploy?","options":["Approve","Decline"],"timeoutOption":"Decline","timeout":60}'
 ```
 
@@ -153,6 +172,7 @@ Errors are JSON `{ "error": "..." }`:
 | Status | Meaning                                                                 |
 | ------ | ----------------------------------------------------------------------- |
 | 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram. |
+| 401    | Missing or wrong token.                                                 |
 | 413    | Body over 64 KiB.                                                       |
 | 502    | Message couldn't be sent.                                               |
 | 500    | Internal error, or the request was cancelled.                           |
@@ -168,6 +188,7 @@ For messages that don't need an answer, e.g. from n8n when someone joins a game 
 ```
 curl -s -X POST http://127.0.0.1:8787/notify \
   -H 'content-type: application/json' \
+  -H "authorization: Bearer $(cat ~/.config/telegram-ask/token)" \
   -d '{"text":"alice joined the Core Keeper server"}'
 ```
 
@@ -185,6 +206,7 @@ Errors are JSON `{ "error": "..." }`:
 | Status | Meaning                                                                 |
 | ------ | ----------------------------------------------------------------------- |
 | 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram. |
+| 401    | Missing or wrong token.                                                 |
 | 413    | Body over 64 KiB.                                                       |
 | 501    | Notifications aren't supported.                                         |
 | 502    | Message couldn't be sent.                                               |
@@ -196,7 +218,7 @@ Known issue: the 8-hour timers live in memory. If the service restarts before a 
 
 ### Status
 
-`GET /status` returns `provider` and `displayName` along with `paired` and `bot`, plus `code` and `instructions` while unpaired. `telegram-ask status` is the friendlier way to read it.
+`GET /status` needs the token too. It returns `provider` and `displayName` along with `paired` and `bot`, plus `code` and `instructions` while unpaired. `telegram-ask status` is the friendlier way to read it.
 
 ### OpenAPI spec
 
@@ -208,19 +230,20 @@ Create a bot with @BotFather first and have the token ready. `init`:
 
 1. Detects which targets work here (Podman Quadlet, Docker Compose, systemd) and asks where the bot should run. The first usable one in that order is the default. Or pass it: `init quadlet`, `init compose`, `init systemd`. `--provider NAME` picks the chat app; only `telegram` exists for now, and it's the default.
 2. Asks for the bot token (input hidden) and checks it with Telegram. Port is 8787; use `--port N` to change it. It refuses a port that's already in use.
-3. Installs and starts the service, then waits for pairing.
+3. Makes an API token and saves it to `~/.config/telegram-ask/token` (mode 0600). It asks first if you're upgrading an install that has none; `--token` and `--no-token` skip the question. It reuses a valid saved token.
+4. Installs and starts the service, then waits for pairing.
 
-If it finds an existing install it offers to replace it, reusing the saved token and owner (no re-pairing). If there's no install but a token was kept by `uninstall`, it reuses that (and the owner) too. If `init` fails partway, run it again; the old install record and saved token are kept until the new install succeeds.
+If it finds an existing install it offers to replace it, reusing the saved bot token and owner (no re-pairing). If there's no install but a bot token was kept by `uninstall`, it reuses that (and the owner) too. If `init` fails partway, run it again; the old install record and saved bot token are kept until the new install succeeds.
 
 Node 24+ is needed for `npx` and the systemd target; the container targets bring their own Node.
 
-All targets keep their files under `~/.config/telegram-ask/` (or `$XDG_CONFIG_HOME/telegram-ask/`). `install.json` there records which target is installed, its port and version. It's what `status`, `reset-owner` and `uninstall` read.
+The API token file `~/.config/telegram-ask/token` is written for every target; the service's own copy goes in the target's `.env` or in `config.json` as listed below. All targets keep their files under `~/.config/telegram-ask/` (or `$XDG_CONFIG_HOME/telegram-ask/`). `install.json` there records which target is installed, its port and version. It's what `status`, `reset-owner` and `uninstall` read.
 
 ### Podman Quadlet
 
 Needs Podman 4.4 or newer and a systemd user session. Written:
 
-- `~/.config/telegram-ask/quadlet/` with a `Dockerfile`, `.env` (token, port, owner) and a `.dockerignore` that keeps `.env` out of the image build
+- `~/.config/telegram-ask/quadlet/` with a `Dockerfile`, `.env` (bot token, port, owner, `TELEGRAM_ASK_TOKEN`) and a `.dockerignore` that keeps `.env` out of the image build
 - `~/.config/containers/systemd/telegram-ask.container`
 - image `localhost/telegram-ask:<version>`, volume `telegram-ask-data` (holds the pairing state)
 
@@ -234,7 +257,7 @@ journalctl --user -u telegram-ask -f
 
 Needs Docker with the compose v2 plugin, and your user in the `docker` group (otherwise `init` reports it can't talk to docker and skips this target). Written:
 
-- `~/.config/telegram-ask/compose/` with `Dockerfile`, `compose.yaml`, `.env` and `.dockerignore`
+- `~/.config/telegram-ask/compose/` with `Dockerfile`, `compose.yaml`, `.env` (bot token, port, owner, `TELEGRAM_ASK_TOKEN`) and `.dockerignore`
 - a named volume `data` in the `telegram-ask` compose project
 
 Logs:
@@ -249,14 +272,14 @@ This target is untested on real Docker so far.
 
 No container. `init` installs the package globally with npm (`npm i -g`), or into `~/.local/share/telegram-ask/npm` if the global prefix isn't writable. If you ran `init` from an already-installed copy, it uses that. Written:
 
-- `~/.config/telegram-ask/config.json` (token, port, owner)
+- `~/.config/telegram-ask/config.json` (bot token, port, owner, `apiToken`)
 - `~/.config/systemd/user/telegram-ask.service` with absolute paths to `node`, the CLI and the config file (`TELEGRAM_ASK_CONFIG` is always set in the unit, and `install.json` records the same path)
 
 Logs: `journalctl --user -u telegram-ask -f`. Linger is handled as for Quadlet.
 
 ### Config
 
-Config is read from `$TELEGRAM_ASK_CONFIG`, else `$XDG_CONFIG_HOME/telegram-ask/config.json`, else `~/.config/telegram-ask/config.json`. The env vars `PROVIDER`, `BOT_TOKEN`, `OWNER_ID`, `PORT` and `HOST` override the file. `PROVIDER` picks the chat app and defaults to `telegram`, which is the only one for now. `HOST` defaults to `127.0.0.1` (the container targets set `0.0.0.0` inside the container and publish only on `127.0.0.1`).
+Config is read from `$TELEGRAM_ASK_CONFIG`, else `$XDG_CONFIG_HOME/telegram-ask/config.json`, else `~/.config/telegram-ask/config.json`. The env vars `PROVIDER`, `BOT_TOKEN`, `OWNER_ID`, `PORT`, `HOST` and `TELEGRAM_ASK_TOKEN` override the file. `apiToken` in the file (or `TELEGRAM_ASK_TOKEN`) is the token the service requires; without either, the API is open. The same env var is what clients read, with the token file as their fallback. `PROVIDER` picks the chat app and defaults to `telegram`, which is the only one for now. `HOST` defaults to `127.0.0.1` (the container targets set `0.0.0.0` inside the container and publish only on `127.0.0.1`).
 
 ## Pairing
 
@@ -275,7 +298,7 @@ It asks first, clears the owner, restarts the service and waits for a new pairin
 ## Commands
 
 ```
-telegram-ask init [systemd|compose|quadlet] [--port N] [--provider NAME]
+telegram-ask init [systemd|compose|quadlet] [--port N] [--provider NAME] [--token|--no-token]
 telegram-ask status
 telegram-ask test
 telegram-ask reset-owner
@@ -288,10 +311,10 @@ telegram-ask send notify TEXT [--project NAME] [--port N]
 ```
 
 - `init`: installs or replaces the service. See [Install options](#install-options).
-- `status`: target, version, port, whether it's running, and pairing state (with the code and instructions if unpaired).
+- `status`: target, version, port, where the token comes from (never its value), whether it's running, and pairing state (with the code and instructions if unpaired).
 - `test`: sends "This is a test" with Approve/Decline buttons (Decline on timeout) and prints the response.
 - `reset-owner`: clears the paired owner. See [Pairing](#pairing).
-- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the token and owner without asking. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
+- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
 - `openapi`: prints the API's OpenAPI spec, or writes it to `FILE`. See [OpenAPI spec](#openapi-spec).
@@ -303,11 +326,17 @@ Only one instance can run per bot token; two would fight over Telegram's updates
 
 ### Upgrading from the old setup
 
-Earlier versions used `npm run onboard` and `deploy/install-service.sh`. `init` recognizes that systemd unit as a legacy install, offers to replace it, and reuses the token and owner from the existing config. Stop any hand-run Docker container using the same token first. The old config file is kept and reused if you pick the systemd target.
+Earlier versions used `npm run onboard` and `deploy/install-service.sh`. `init` recognizes that systemd unit as a legacy install, offers to replace it, and reuses the bot token and owner from the existing config. Stop any hand-run Docker container using the same bot token first. The old config file is kept and reused if you pick the systemd target.
+
+Re-running `init` on an install without an API token asks whether to add one (default yes). Once it's on, curl, n8n and container callers get a 401 until they send `authorization: Bearer <token>`; the CLI, `mcp` and the Node client pick it up on their own.
 
 ## Security
 
-There's no auth. The API is meant for localhost only; don't expose it. The container targets publish the port on `127.0.0.1` only; keep it that way.
+The API is meant for localhost only; don't expose it. The container targets publish the port on `127.0.0.1` only; keep it that way.
+
+On top of that, `init` makes an API token and the service answers 401 without it. It stops other users on the machine, a browser page or a container that can reach the port from calling the API. It doesn't stop a process running as you: it can read `~/.config/telegram-ask/token` (mode 0600) like the CLI does. `init --no-token` turns it off, which leaves any local process able to ask or notify.
+
+To rotate it, delete the token file and re-run `init`.
 
 ## Releasing
 
