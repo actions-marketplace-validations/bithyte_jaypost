@@ -92,6 +92,17 @@ The service has to be running. A call made while it's down returns an error to t
 
 ## Scripts and tools (HTTP API)
 
+### From the shell
+
+`telegram-ask send` wraps `/request` and `/notify` so scripts don't need curl:
+
+```
+answer=$(telegram-ask send request 'Deploy?' -o Approve -o Decline --timeout-option Decline --timeout 60)
+telegram-ask send notify 'backup finished' --project nas
+```
+
+`send request` prints the answer on stdout (the timeout option on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button. `send notify` prints nothing and exits 0 once sent. Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
+
 ### Ask a question
 
 ```
@@ -248,6 +259,8 @@ telegram-ask reset-owner
 telegram-ask uninstall
 telegram-ask start
 telegram-ask mcp [--port N]
+telegram-ask send request TEXT -o OPTION... --timeout-option OPTION [--timeout S] [--project NAME] [--json] [--port N]
+telegram-ask send notify TEXT [--project NAME] [--port N]
 ```
 
 - `init`: installs or replaces the service. See [Install options](#install-options).
@@ -257,6 +270,7 @@ telegram-ask mcp [--port N]
 - `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the token and owner without asking. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
+- `send request` / `send notify`: the HTTP API from a shell. See [From the shell](#from-the-shell).
 
 ### One instance per token
 

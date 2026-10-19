@@ -96,3 +96,25 @@ export type UninstallDeps = {
   readonly print: (text: string) => void
   readonly signal?: AbortSignal
 }
+
+/** `send request` input; `timeout` in seconds, capped to 300 by the service. */
+export type SendRequestArgs = {
+  readonly text: string
+  readonly options: readonly string[]
+  readonly timeoutOption: string
+  readonly timeout?: number
+  readonly project?: string
+  /** Print `{ answer, timedOut }` instead of the bare answer. */
+  readonly json?: boolean
+}
+
+/** `send notify` input. */
+export type SendNotifyArgs = { readonly text: string; readonly project?: string }
+
+/** Where `send` talks to and writes; aborting `signal` cancels the call. */
+export type SendDeps = {
+  readonly port: number
+  readonly signal: AbortSignal
+  readonly print: (text: string) => void
+  readonly printError: (text: string) => void
+}

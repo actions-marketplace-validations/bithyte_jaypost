@@ -4,7 +4,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { MAX_OPTION_LENGTH, MAX_PROJECT_LENGTH, MAX_TIMEOUT_SECONDS } from '../approval/index.ts'
 import { VERSION } from '../config/constants.ts'
-import { postApi } from './client.ts'
+import { isOutcome, postApi } from './client.ts'
 import { FETCH_GRACE_MS } from './constants.ts'
 
 const ASK_DESCRIPTION = [
@@ -139,15 +139,4 @@ export async function runMcp(port: number): Promise<number> {
 
 function toErrorResult(message: string): CallToolResult {
   return { isError: true, content: [{ type: 'text', text: message }] }
-}
-
-function isOutcome(body: unknown): body is { answer: string; timedOut: boolean } {
-  return (
-    typeof body === 'object' &&
-    body !== null &&
-    'answer' in body &&
-    typeof body.answer === 'string' &&
-    'timedOut' in body &&
-    typeof body.timedOut === 'boolean'
-  )
 }

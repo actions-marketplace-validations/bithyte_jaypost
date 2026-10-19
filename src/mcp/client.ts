@@ -86,6 +86,18 @@ function describeTransportFailure(port: number, options: ApiOptions, timeout: Ab
   return `telegram-ask service not reachable on ${HOST}:${port} (run telegram-ask status)`
 }
 
+/** True for a /request answer body: `{ answer, timedOut }`. */
+export function isOutcome(body: unknown): body is { answer: string; timedOut: boolean } {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    'answer' in body &&
+    typeof body.answer === 'string' &&
+    'timedOut' in body &&
+    typeof body.timedOut === 'boolean'
+  )
+}
+
 function parseOk(text: string): ApiResult {
   try {
     return { kind: 'ok', body: JSON.parse(text) }

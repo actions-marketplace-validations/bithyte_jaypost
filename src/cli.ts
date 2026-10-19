@@ -10,12 +10,14 @@ import {
   runInit,
   runOwner,
   runResetOwner,
+  runSendNotify,
+  runSendRequest,
   runStatus,
   runTest,
   runUninstall,
   waitForPairing,
 } from './commands/index.ts'
-import type { InitArgs } from './commands/index.ts'
+import type { InitArgs, SendDeps } from './commands/index.ts'
 import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
 import { runService } from './daemon/index.ts'
 import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
@@ -41,6 +43,27 @@ function parsePort(rawPort: string): number {
     throw new InvalidArgumentError('must be an integer 1-65535')
   }
   return port
+}
+
+function parseTimeout(rawTimeout: string): number {
+  const timeout = Number(rawTimeout)
+  if (rawTimeout.trim() === '' || !Number.isFinite(timeout) || timeout <= 0) {
+    throw new InvalidArgumentError('must be a positive number of seconds')
+  }
+  return timeout
+}
+
+function collect(value: string, previous: readonly string[] | undefined): readonly string[] {
+  return [...(previous ?? []), value]
+}
+
+function createSendDeps(flagPort: number | undefined, signal: AbortSignal): SendDeps {
+  return {
+    port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
+    signal,
+    print: (text) => console.log(text),
+    printError: (text) => console.error(text),
+  }
 }
 
 function runInitCommand(args: InitArgs): Promise<number> {
@@ -198,6 +221,62 @@ export async function main(argv: readonly string[]): Promise<number> {
         resolveMcpPort(options.port, process.env, resolveInstallPaths().installFile),
       )
     })
+  const send = program
+    .command('send')
+    .description('ask a question or send a notification from a script')
+  send
+    .command('request')
+    .description('ask a question with buttons and print the tapped answer')
+    .argument('<text>', 'question to show')
+    .requiredOption('-o, --option <label>', 'button label, repeat for each button', collect)
+    .requiredOption('--timeout-option <label>', 'answer printed on timeout; one of the options')
+    .option('--timeout <seconds>', 'seconds to wait; default and max 300', parseTimeout)
+    .option('--project <name>', 'shown as [name] above the question')
+    .option('--json', 'print {"answer":...,"timedOut":...} instead of the answer')
+    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .action(
+      async (
+        text: string,
+        options: {
+          readonly option: readonly string[]
+          readonly timeoutOption: string
+          readonly timeout?: number
+          readonly project?: string
+          readonly json?: boolean
+          readonly port?: number
+        },
+      ) => {
+        code = await runWithSigint((controller) =>
+          runSendRequest(
+            {
+              text,
+              options: options.option,
+              timeoutOption: options.timeoutOption,
+              ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+              ...(options.project === undefined ? {} : { project: options.project }),
+              ...(options.json === undefined ? {} : { json: options.json }),
+            },
+            createSendDeps(options.port, controller.signal),
+          ),
+        )
+      },
+    )
+  send
+    .command('notify')
+    .description("send a message that doesn't need an answer")
+    .argument('<text>', 'message to show')
+    .option('--project <name>', 'shown as [name] above the message')
+    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .action(
+      async (text: string, options: { readonly project?: string; readonly port?: number }) => {
+        code = await runWithSigint((controller) =>
+          runSendNotify(
+            { text, ...(options.project === undefined ? {} : { project: options.project }) },
+            createSendDeps(options.port, controller.signal),
+          ),
+        )
+      },
+    )
   // Runs inside containers to read or clear the owner in the data volume.
   program
     .command('owner', { hidden: true })

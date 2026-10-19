@@ -30,3 +30,17 @@ test('mcp rejects a bad port with 2', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   expect(await main(['mcp', '--port', 'abc'])).toBe(2)
 })
+
+test('send request requires options and timeout option, and rejects a bad timeout', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  expect(await main(['send', 'request', 'Deploy?', '--timeout-option', 'No'])).toBe(2)
+  expect(await main(['send', 'request', 'Deploy?', '-o', 'Yes', '-o', 'No'])).toBe(2)
+  const ask = ['send', 'request', 'Deploy?', '-o', 'Yes', '--timeout-option', 'Yes']
+  expect(await main([...ask, '--timeout', '0'])).toBe(2)
+  expect(await main([...ask, '--timeout', 'soon'])).toBe(2)
+})
+
+test('send notify requires text', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  expect(await main(['send', 'notify'])).toBe(2)
+})

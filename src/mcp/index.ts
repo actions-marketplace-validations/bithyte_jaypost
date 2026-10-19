@@ -1,4 +1,5 @@
-export { postApi } from './client.ts'
+export { isOutcome, postApi } from './client.ts'
+export { FETCH_GRACE_MS } from './constants.ts'
 export { resolveMcpPort } from './port.ts'
 export { createMcpServer, runMcp, toFetchTimeoutMs } from './server.ts'
 export type { ApiOptions, ApiPath, ApiResult } from './types.ts'
