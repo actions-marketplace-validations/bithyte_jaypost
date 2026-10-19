@@ -57,7 +57,15 @@ function formatTimeLeft(summary: PendingSummary, now: Date): string {
   const remainingMs =
     summary.openedAt.getTime() + summary.request.timeoutSeconds * 1000 - now.getTime()
   const seconds = Math.max(1, Math.ceil(remainingMs / 1000))
-  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} min`
+  if (seconds < 60) {
+    return `${seconds} s`
+  }
+  const minutes = Math.ceil(seconds / 60)
+  if (minutes < 60) {
+    return `${minutes} min`
+  }
+  const rest = minutes % 60
+  return rest === 0 ? `${minutes / 60} h` : `${Math.floor(minutes / 60)} h ${rest} min`
 }
 
 function capReply(header: string, entries: readonly string[], maxTextLength: number): string {

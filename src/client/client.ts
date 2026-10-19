@@ -1,7 +1,7 @@
 import { parseToken, resolveClientToken, resolveTokenFile } from '../auth/index.ts'
 import { DEFAULT_PORT } from '../config/constants.ts'
 import { FETCH_GRACE_MS, HOST } from './constants.ts'
-import { isOutcome, postApi, toFetchTimeoutMs } from './http.ts'
+import { postApi, requestApi } from './http.ts'
 import type { Answer, ApiPath, AskRequest, ClientOptions, Notification } from './types.ts'
 
 /** Thrown by `Client` when the service is unreachable, rejects the input or can't send. */
@@ -38,23 +38,27 @@ export class Client {
    * aborted.
    */
   async request(request: AskRequest): Promise<Answer> {
-    const body = await this.#post(
-      '/request',
+    const project = request.project ?? this.#project
+    const signal = request.signal ?? new AbortController().signal
+    const token = this.#resolveToken()
+    const result = await requestApi(
+      this.#port,
       {
         text: request.text,
         options: request.options,
         timeoutOption: request.timeoutOption,
         ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
+        ...(project === undefined ? {} : { project }),
       },
-      request,
-      toFetchTimeoutMs(request.timeout),
+      { signal, host: this.#host, ...(token === undefined ? {} : { token }) },
     )
-    if (!isOutcome(body)) {
-      throw new TelegramAskError(
-        `telegram-ask service sent an unreadable answer: ${JSON.stringify(body)}`,
-      )
+    if (signal.aborted) {
+      throw signal.reason
     }
-    return { answer: body.answer, timedOut: body.timedOut }
+    if (result.kind === 'failed') {
+      throw new TelegramAskError(result.message)
+    }
+    return result.outcome
   }
 
   /** Resolves once Telegram accepts the message. Throws like `request`. */

@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
+import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import type { Progress } from '@modelcontextprotocol/sdk/types.js'
 import {
   getDefaultEnvironment,
   StdioClientTransport,
@@ -17,8 +20,9 @@ import { NotificationService } from '../../src/notify/index.ts'
 import type { Notifier } from '../../src/notify/index.ts'
 import { NO_AUTH, writeTokenFile } from '../../src/auth/index.ts'
 import type { ApiAuth } from '../../src/auth/index.ts'
-import { TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
+import { BACKGROUND_TOO_OLD_MESSAGE, TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
+import { createMcpServer, OpenQuestions } from '../../src/mcp/index.ts'
 
 const ROOT = new URL('../..', import.meta.url).pathname
 const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
@@ -60,6 +64,7 @@ const SECOND = 'c'.repeat(43)
 const NOTE = { project_name: 'api', text: 'done' }
 
 const servers: FastifyInstance[] = []
+const stubs: Server[] = []
 const clients: Client[] = []
 let directory = ''
 let tokenFile = ''
@@ -72,6 +77,12 @@ afterEach(async () => {
   rmSync(directory, { recursive: true, force: true })
   await Promise.all(clients.splice(0).map((client) => client.close()))
   await Promise.all(servers.splice(0).map((server) => server.close()))
+  await Promise.all(
+    stubs.splice(0).map((stub) => {
+      stub.closeAllConnections()
+      return new Promise<void>((resolve) => stub.close(() => resolve()))
+    }),
+  )
 })
 
 async function startApi(
@@ -119,6 +130,30 @@ async function waitFor(condition: () => boolean): Promise<void> {
   }
 }
 
+async function startStub(
+  handler: (request: IncomingMessage, response: ServerResponse) => void,
+): Promise<number> {
+  const stub = createServer(handler)
+  stubs.push(stub)
+  await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve))
+  return (stub.address() as AddressInfo).port
+}
+
+async function askInBackground(
+  client: Client,
+  extraArguments: Record<string, unknown> = {},
+): Promise<string> {
+  const result = await client.callTool({
+    name: 'ask_for_permission_in_background',
+    arguments: { ...ASK, ...extraArguments },
+  })
+  const id = (result.structuredContent as { request_id?: unknown } | undefined)?.request_id
+  if (typeof id !== 'string') {
+    throw new Error(`no request_id in ${JSON.stringify(result)}`)
+  }
+  return id
+}
+
 async function freePort(): Promise<number> {
   const server = createServer()
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -134,14 +169,25 @@ const ASK = {
   timeout_option: 'Decline',
 }
 
-test('lists exactly the two tools with project_name required', async () => {
+test('lists the four tools with their required inputs', async () => {
   const { port } = await startApi()
   const client = await connect(port)
   const { tools } = await client.listTools()
-  expect(tools.map((tool) => tool.name).toSorted()).toEqual(['ask_for_permission', 'notify_user'])
-  for (const tool of tools) {
-    expect(tool.inputSchema.required).toContain('project_name')
-  }
+  const requiredByName = Object.fromEntries(
+    tools.map((tool) => [tool.name, tool.inputSchema.required?.toSorted()]),
+  )
+  expect(requiredByName).toEqual({
+    ask_for_permission: ['options', 'project_name', 'text', 'timeout_option'],
+    ask_for_permission_in_background: ['options', 'project_name', 'text', 'timeout_option'],
+    notify_user: ['project_name', 'text'],
+    wait_for_answer: ['request_id'],
+  })
+  expect(tools.map((tool) => tool.name).toSorted()).toEqual([
+    'ask_for_permission',
+    'ask_for_permission_in_background',
+    'notify_user',
+    'wait_for_answer',
+  ])
 })
 
 test('ask returns the tapped answer', async () => {
@@ -336,4 +382,271 @@ test('an unusable token fails only the call that hit it', async () => {
   expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual({
     content: [{ type: 'text', text: 'sent' }],
   })
+})
+
+test('a long ask sends progress while it waits', async () => {
+  const { port, service, messenger } = await startApi()
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  const server = createMcpServer(
+    { port, readToken: () => ({ kind: 'none' }) },
+    new AbortController().signal,
+    { progressIntervalMs: 50 },
+  )
+  await server.connect(serverTransport)
+  const client = new Client({ name: 'test', version: '0.0.0' })
+  clients.push(client)
+  await client.connect(clientTransport)
+  const progress: Progress[] = []
+  const pending = client.callTool(
+    { name: 'ask_for_permission', arguments: { ...ASK, timeout_seconds: 3600 } },
+    undefined,
+    { onprogress: (event) => progress.push(event) },
+  )
+  await waitFor(() => progress.length >= 2)
+  service.tap(messenger.sent[0]?.id ?? '', 0)
+  await pending
+  await server.close()
+  expect(progress[0]).toEqual({
+    progress: expect.any(Number),
+    total: 3600,
+    message: 'waiting for the user',
+  })
+})
+
+test('ask in background returns an id at once', async () => {
+  const { port, service, messenger } = await startApi()
+  const client = await connect(port)
+  const result = await client.callTool({
+    name: 'ask_for_permission_in_background',
+    arguments: ASK,
+  })
+  const id = messenger.sent[0]?.id ?? ''
+  const state = service.get(id)
+  const expiresAt = state?.kind === 'pending' ? state.expiresAt.toISOString() : ''
+  expect(result).toEqual({
+    content: [
+      {
+        type: 'text',
+        text: `Asked. Call wait_for_answer with request_id ${id} when you need the answer (expires ${expiresAt}).`,
+      },
+    ],
+    structuredContent: { request_id: id, expires_at: expiresAt },
+  })
+  expect(expiresAt).not.toBe('')
+})
+
+test('wait_for_answer returns the answer once the user taps', async () => {
+  const { port, service } = await startApi()
+  const client = await connect(port)
+  const id = await askInBackground(client)
+  const pending = client.callTool({ name: 'wait_for_answer', arguments: { request_id: id } })
+  service.tap(id, 0)
+  expect(await pending).toEqual({
+    content: [{ type: 'text', text: 'Approve' }],
+    structuredContent: { state: 'done', answer: 'Approve', timed_out: false },
+  })
+})
+
+test('wait_for_answer reports a timeout like ask_for_permission', async () => {
+  const { port } = await startApi()
+  const client = await connect(port)
+  const id = await askInBackground(client, { timeout_seconds: 0.2 })
+  expect(await client.callTool({ name: 'wait_for_answer', arguments: { request_id: id } })).toEqual(
+    {
+      content: [{ type: 'text', text: 'Decline (timed out, no answer from the user)' }],
+      structuredContent: { state: 'done', answer: 'Decline', timed_out: true },
+    },
+  )
+})
+
+test('wait_seconds 0 checks once', async () => {
+  const { port } = await startApi()
+  const client = await connect(port)
+  const id = await askInBackground(client)
+  expect(
+    await client.callTool({
+      name: 'wait_for_answer',
+      arguments: { request_id: id, wait_seconds: 0 },
+    }),
+  ).toEqual({
+    content: [{ type: 'text', text: 'still waiting for the user' }],
+    structuredContent: { state: 'pending' },
+  })
+})
+
+test('wait_seconds running out reports the question as pending', async () => {
+  const { port } = await startApi()
+  const client = await connect(port)
+  const id = await askInBackground(client)
+  const startedAt = performance.now()
+  const result = await client.callTool({
+    name: 'wait_for_answer',
+    arguments: { request_id: id, wait_seconds: 0.3 },
+  })
+  expect(performance.now() - startedAt).toBeGreaterThanOrEqual(300)
+  expect(result).toEqual({
+    content: [{ type: 'text', text: 'still waiting for the user' }],
+    structuredContent: { state: 'pending' },
+  })
+})
+
+test('a cancelled question is a normal result', async () => {
+  const { port, service } = await startApi()
+  const client = await connect(port)
+  const id = await askInBackground(client)
+  await service.cancel(id)
+  expect(await client.callTool({ name: 'wait_for_answer', arguments: { request_id: id } })).toEqual(
+    {
+      content: [{ type: 'text', text: 'the question was cancelled' }],
+      structuredContent: { state: 'cancelled' },
+    },
+  )
+})
+
+test('an unknown id is a tool error', async () => {
+  const { port } = await startApi()
+  const client = await connect(port)
+  expect(
+    await client.callTool({ name: 'wait_for_answer', arguments: { request_id: 'nope' } }),
+  ).toEqual({
+    isError: true,
+    content: [
+      {
+        type: 'text',
+        text: "telegram-ask doesn't know request nope (the service restarted, or the answer expired after 24 h)",
+      },
+    ],
+  })
+})
+
+test('an old service is reported for background asks', async () => {
+  const port = await startStub((_request, response) => {
+    response.writeHead(404, { 'content-type': 'application/json' })
+    response.end(
+      JSON.stringify({ message: 'Route POST:/request/async not found', statusCode: 404 }),
+    )
+  })
+  const client = await connect(port)
+  expect(
+    await client.callTool({ name: 'ask_for_permission_in_background', arguments: ASK }),
+  ).toEqual({
+    isError: true,
+    content: [{ type: 'text', text: BACKGROUND_TOO_OLD_MESSAGE }],
+  })
+})
+
+test('cancelling wait_for_answer leaves the question open', async () => {
+  const { port, service } = await startApi()
+  const originalWaitFor = service.waitFor.bind(service)
+  let pollCount = 0
+  service.waitFor = (...args) => {
+    pollCount += 1
+    return originalWaitFor(...args)
+  }
+  const client = await connect(port)
+  const id = await askInBackground(client)
+  const controller = new AbortController()
+  const pending = client.callTool(
+    { name: 'wait_for_answer', arguments: { request_id: id } },
+    undefined,
+    { signal: controller.signal },
+  )
+  await waitFor(() => pollCount === 1)
+  controller.abort()
+  await expect(pending).rejects.toThrow()
+  expect(
+    await client.callTool({
+      name: 'wait_for_answer',
+      arguments: { request_id: id, wait_seconds: 0 },
+    }),
+  ).toEqual({
+    content: [{ type: 'text', text: 'still waiting for the user' }],
+    structuredContent: { state: 'pending' },
+  })
+  expect(service.get(id)?.kind).toBe('pending')
+})
+
+test('closing stdin cancels unsettled background questions', async () => {
+  const { port, service, messenger } = await startApi()
+  const client = await connect(port)
+  const answered = await askInBackground(client)
+  const open = await askInBackground(client, { text: 'Migrate?' })
+  service.tap(answered, 0)
+  await waitFor(() => messenger.finalized.length === 1)
+  await client.close()
+  await waitFor(() => messenger.finalized.length === 2)
+  expect(messenger.finalized.map(({ settlement }) => settlement.kind)).toEqual([
+    'answered',
+    'cancelled',
+  ])
+  expect(service.get(open)).toEqual({ kind: 'cancelled' })
+})
+
+test('wait_for_answer sends progress while it waits', async () => {
+  const { port, service } = await startApi()
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  const server = createMcpServer(
+    { port, readToken: () => ({ kind: 'none' }) },
+    new AbortController().signal,
+    { progressIntervalMs: 50 },
+  )
+  await server.connect(serverTransport)
+  const client = new Client({ name: 'test', version: '0.0.0' })
+  clients.push(client)
+  await client.connect(clientTransport)
+  const id = await askInBackground(client)
+  const progress: Progress[] = []
+  const pending = client.callTool(
+    { name: 'wait_for_answer', arguments: { request_id: id } },
+    undefined,
+    { onprogress: (event) => progress.push(event) },
+  )
+  await waitFor(() => progress.length >= 2)
+  service.tap(id, 0)
+  await pending
+  await server.close()
+  expect(progress[0]).toStrictEqual({
+    progress: expect.any(Number),
+    message: 'waiting for the user',
+  })
+})
+
+test('cancelAll gives up after its timeout', async () => {
+  const paths: string[] = []
+  const port = await startStub((request) => {
+    // Never answers, like a hung service.
+    paths.push(`${request.method} ${request.url}`)
+  })
+  const openQuestions = new OpenQuestions()
+  openQuestions.add('a')
+  openQuestions.add('b')
+  openQuestions.settle('b')
+  const startedAt = performance.now()
+  await openQuestions.cancelAll({ port, readToken: () => ({ kind: 'none' }) }, 100)
+  expect(performance.now() - startedAt).toBeLessThan(1000)
+  expect(paths).toEqual(['DELETE /request/a'])
+})
+
+test('cancelAll resolves when the service is down', async () => {
+  const openQuestions = new OpenQuestions()
+  openQuestions.add('a')
+  const port = await freePort()
+  await expect(
+    openQuestions.cancelAll({ port, readToken: () => ({ kind: 'none' }) }),
+  ).resolves.toBeUndefined()
+})
+
+test('cancelAll skips an unusable token', async () => {
+  const paths: string[] = []
+  const port = await startStub((request, response) => {
+    paths.push(`${request.method} ${request.url}`)
+    response.end('{}')
+  })
+  const openQuestions = new OpenQuestions()
+  openQuestions.add('a')
+  await openQuestions.cancelAll({
+    port,
+    readToken: () => ({ kind: 'unusable', message: 'bad token' }),
+  })
+  expect(paths).toEqual([])
 })

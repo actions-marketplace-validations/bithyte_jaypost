@@ -1,6 +1,11 @@
 import { stringify } from 'yaml'
 import { z } from 'zod'
-import { createApprovalRequestSchema, MAX_TIMEOUT_SECONDS } from '../approval/index.ts'
+import {
+  createApprovalRequestSchema,
+  DEFAULT_TIMEOUT_SECONDS,
+  MAX_TIMEOUT_SECONDS,
+  MAX_WAIT_SECONDS,
+} from '../approval/index.ts'
 import { VERSION } from '../config/index.ts'
 import { createNotifyRequestSchema } from '../notify/index.ts'
 import { MAX_BODY_BYTES } from './constants.ts'
@@ -17,7 +22,7 @@ const BODY_DESCRIPTIONS: Readonly<Record<string, JsonSchema>> = {
   options: { description: 'Button labels, unique.' },
   timeoutOption: { description: 'Answer returned on timeout. Must be one of `options`.' },
   timeout: {
-    description: `Seconds to wait. Default and max ${MAX_TIMEOUT_SECONDS}; larger values are clamped.`,
+    description: `Seconds to wait. Default ${DEFAULT_TIMEOUT_SECONDS}, max ${MAX_TIMEOUT_SECONDS} (24 h); larger values are clamped.`,
   },
 }
 
@@ -85,6 +90,85 @@ export function createOpenApiDocument(options: OpenApiOptions) {
             '500': errorResponse('Internal error, or the request was cancelled.'),
             '502': { $ref: '#/components/responses/SendFailed' },
             '503': { $ref: '#/components/responses/NotPaired' },
+          },
+        },
+      },
+      '/request/async': {
+        post: {
+          operationId: 'requestAsync',
+          summary: 'Ask a question with buttons and return at once',
+          description:
+            'Returns once the message is sent. Poll `GET /request/{id}` for the answer. The question outlives the connection and is cancelled only by `DELETE /request/{id}`, the timeout or the owner.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ApprovalRequest' } },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Sent and pending.',
+              headers: {
+                Location: {
+                  description: 'Path of the question, `/request/{id}`.',
+                  schema: { type: 'string' },
+                },
+              },
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/PendingRequest' } },
+              },
+            },
+            '400': { $ref: '#/components/responses/BadRequest' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '413': { $ref: '#/components/responses/PayloadTooLarge' },
+            '502': { $ref: '#/components/responses/SendFailed' },
+            '503': { $ref: '#/components/responses/NotPaired' },
+          },
+        },
+      },
+      '/request/{id}': {
+        get: {
+          operationId: 'getRequest',
+          summary: 'State of a background question, optionally waiting for it to settle',
+          description:
+            'Without `wait` answers at once. With `wait`, stays open until the question settles or `wait` seconds pass, then returns the state. Disconnecting does not cancel the question.',
+          parameters: [
+            { $ref: '#/components/parameters/RequestId' },
+            {
+              name: 'wait',
+              in: 'query',
+              required: false,
+              description: `Seconds to wait for the question to settle. Default 0; values above ${MAX_WAIT_SECONDS} are clamped.`,
+              schema: { type: 'number', minimum: 0 },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The current state.',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/RequestState' } },
+              },
+            },
+            '400': errorResponse('`wait` is not a non-negative number.'),
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '404': { $ref: '#/components/responses/UnknownRequest' },
+          },
+        },
+        delete: {
+          operationId: 'cancelRequest',
+          summary: 'Cancel a background question',
+          description:
+            'Cancels a pending question and edits its message to a cancelled line. A settled question keeps its state.',
+          parameters: [{ $ref: '#/components/parameters/RequestId' }],
+          responses: {
+            '200': {
+              description: 'The state after the call: `cancelled`, or the earlier `done`.',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/RequestState' } },
+              },
+            },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '404': { $ref: '#/components/responses/UnknownRequest' },
           },
         },
       },
@@ -169,6 +253,39 @@ export function createOpenApiDocument(options: OpenApiOptions) {
           },
           required: ['answer', 'timedOut'],
         },
+        PendingRequest: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            state: { const: 'pending' },
+            expiresAt: {
+              type: 'string',
+              format: 'date-time',
+              description: 'When the timeout fires.',
+            },
+          },
+          required: ['id', 'state', 'expiresAt'],
+        },
+        RequestState: {
+          oneOf: [
+            { $ref: '#/components/schemas/PendingRequest' },
+            {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                state: { const: 'done' },
+                answer: { type: 'string', description: 'The tapped option, or `timeoutOption`.' },
+                timedOut: { type: 'boolean' },
+              },
+              required: ['id', 'state', 'answer', 'timedOut'],
+            },
+            {
+              type: 'object',
+              properties: { id: { type: 'string' }, state: { const: 'cancelled' } },
+              required: ['id', 'state'],
+            },
+          ],
+        },
         NotifyRequest: toBodySchema(createNotifyRequestSchema(maxTextLength), maxTextLength),
         Status: status,
         Error: {
@@ -177,7 +294,19 @@ export function createOpenApiDocument(options: OpenApiOptions) {
           required: ['error'],
         },
       },
+      parameters: {
+        RequestId: {
+          name: 'id',
+          in: 'path',
+          required: true,
+          description: 'Id from `POST /request/async`.',
+          schema: { type: 'string' },
+        },
+      },
       responses: {
+        UnknownRequest: errorResponse(
+          'Unknown id: never created, expired 24 h after settling, or lost to a restart.',
+        ),
         Unauthorized: errorResponse('Missing or wrong bearer token.'),
         BadRequest: errorResponse(
           'Body is not valid JSON or fails validation; `error` is the first problem found. Nothing is sent.',

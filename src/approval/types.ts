@@ -34,6 +34,26 @@ export type Settlement =
  */
 export type MessageEnding = Settlement | { readonly kind: 'expired' }
 
+/**
+ * State of a background question as `ApprovalService.get` reports it; `done` covers a tap, the
+ * timeout and the owner's /cancel, with `timedOut` telling the timeout apart.
+ */
+export type RequestState =
+  | { readonly kind: 'pending'; readonly expiresAt: Date }
+  | { readonly kind: 'done'; readonly outcome: Outcome }
+  | { readonly kind: 'cancelled' }
+
+/** What `ApprovalService.start` resolves to; `expiresAt` is when the timeout fires. */
+export type StartedRequest = {
+  readonly id: string
+  readonly expiresAt: Date
+}
+
+/** Outcome of validating a `wait` query value; `error` is the client-facing message. */
+export type WaitParseResult =
+  | { readonly ok: true; readonly seconds: number }
+  | { readonly ok: false; readonly error: string }
+
 /** Outcome of validating a request body; `error` is the client-facing message. */
 export type ParseResult =
   | { readonly ok: true; readonly value: ApprovalRequest }
@@ -78,6 +98,23 @@ export type PendingEntry = {
   readonly openedAt: Date
   readonly timer: ReturnType<typeof setTimeout>
   readonly resolve: (settlement: Settlement) => void
+}
+
+/** A sent request now waiting in `PendingRequests`; `settlement` resolves once it settles. */
+export type OpenedRequest = {
+  readonly id: string
+  readonly reference: MessageReference
+  readonly openedAt: Date
+  readonly settlement: Promise<Settlement>
+}
+
+/**
+ * A background question's current state; `settled` resolves with the final state as soon as it is
+ * recorded, before the final edit.
+ */
+export type BackgroundEntry = {
+  readonly state: RequestState
+  readonly settled: Promise<RequestState>
 }
 
 /** A settled request as kept in the service's in-memory history. */

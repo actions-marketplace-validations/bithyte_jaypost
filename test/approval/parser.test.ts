@@ -1,5 +1,5 @@
 import { expect, test } from 'vite-plus/test'
-import { parseApprovalRequest } from '../../src/approval/index.ts'
+import { parseApprovalRequest, parseWaitSeconds } from '../../src/approval/index.ts'
 
 const base = { text: 'This is a test', options: ['Approve', 'Decline'], timeoutOption: 'Decline' }
 
@@ -13,11 +13,18 @@ test('custom timeout', () =>
     ok: true,
     value: { timeoutSeconds: 30 },
   }))
-test('timeout clamped', () =>
-  expect(parseApprovalRequest({ ...base, timeout: 900 }, 3900)).toMatchObject({
-    ok: true,
-    value: { timeoutSeconds: 300 },
-  }))
+test.each([
+  [undefined, 300],
+  [900, 900],
+  [86_400, 86_400],
+  [100_000, 86_400],
+])('timeout %s becomes %s (default 300, clamped to 24 h)', (timeout, expected) => {
+  const result = parseApprovalRequest(
+    { ...base, ...(timeout === undefined ? {} : { timeout }) },
+    3900,
+  )
+  expect(result.ok && result.value.timeoutSeconds).toBe(expected)
+})
 test.each([0, -5, '30', null, Number.NaN, Infinity])('bad timeout %s', (t) => {
   const r = parseApprovalRequest({ ...base, timeout: t }, 3900)
   expect(r.ok).toBe(false)
@@ -88,3 +95,22 @@ test('project length limit', () => {
     error: 'project must be at most 100 characters',
   })
 })
+
+test.each([
+  [undefined, 0],
+  ['0', 0],
+  ['-0', 0],
+  ['2.5', 2.5],
+  ['120', 120],
+  ['500', 120],
+])('wait %s becomes %s seconds (clamped to 120)', (raw, seconds) =>
+  expect(parseWaitSeconds(raw)).toEqual({ ok: true, seconds }),
+)
+test.each([[''], ['   '], ['-1'], ['abc'], ['Infinity'], ['1e999'], [['1', '2']], [5], [null]])(
+  'bad wait %j',
+  (raw: unknown) =>
+    expect(parseWaitSeconds(raw)).toEqual({
+      ok: false,
+      error: 'wait must be a non-negative number',
+    }),
+)

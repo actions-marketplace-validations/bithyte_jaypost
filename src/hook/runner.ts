@@ -1,6 +1,6 @@
-import { MAX_TIMEOUT_SECONDS } from '../approval/index.ts'
+import { DEFAULT_TIMEOUT_SECONDS } from '../approval/index.ts'
 import type { ClientToken } from '../auth/index.ts'
-import { FETCH_GRACE_MS, isOutcome, postApi, toFetchTimeoutMs } from '../client/index.ts'
+import { FETCH_GRACE_MS, postApi, requestApi } from '../client/index.ts'
 import { ASK_IN_TERMINAL_OPTION, ASK_USER_QUESTION_TOOL } from './constants.ts'
 import { decidePermission, formatNotificationText, formatPermissionQuestion } from './formatter.ts'
 import { parseHookEvent } from './parser.ts'
@@ -62,32 +62,21 @@ async function askPermission(
     return 0
   }
   const question = formatPermissionQuestion(event)
-  const result = await postApi(
+  const result = await requestApi(
     deps.port,
-    '/request',
     {
       project,
       text: question.text,
       options: question.options,
       timeoutOption: ASK_IN_TERMINAL_OPTION,
-      timeout: args.timeout ?? MAX_TIMEOUT_SECONDS,
+      timeout: args.timeout ?? DEFAULT_TIMEOUT_SECONDS,
     },
-    {
-      signal: deps.signal,
-      timeoutMs: toFetchTimeoutMs(args.timeout),
-      ...toTokenOption(deps.token),
-    },
+    { signal: deps.signal, ...toTokenOption(deps.token) },
   )
   if (result.kind === 'failed') {
     return reportFailure(result.message, deps)
   }
-  if (!isOutcome(result.body)) {
-    deps.printError(
-      `telegram-ask: service sent an unreadable answer: ${JSON.stringify(result.body)}`,
-    )
-    return 1
-  }
-  const decision = decidePermission(event, question.options, result.body)
+  const decision = decidePermission(event, question.options, result.outcome)
   switch (decision.kind) {
     case 'decided':
       deps.print(JSON.stringify(decision.output))

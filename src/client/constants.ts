@@ -15,3 +15,11 @@ export const TOKEN_REQUIRED_MESSAGE =
 /** Shown when the service answers 401 to a token that was sent. */
 export const TOKEN_REJECTED_MESSAGE =
   'telegram-ask service rejected the token; check TELEGRAM_ASK_TOKEN, or re-run telegram-ask init if the token file changed'
+/** Services before long timeouts capped /request at this many seconds. */
+export const LEGACY_MAX_TIMEOUT_SECONDS = 300
+/** Shown when a long /request timed out early, which only a service without long timeouts does. */
+export const TIMEOUT_TOO_OLD_MESSAGE =
+  'telegram-ask service is too old for timeouts over 300 s (run telegram-ask init to upgrade)'
+/** Shown when the service has no /request/async. */
+export const BACKGROUND_TOO_OLD_MESSAGE =
+  'telegram-ask service is too old for background questions (run telegram-ask init to upgrade)'

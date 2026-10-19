@@ -253,6 +253,26 @@ test('a timeout prints nothing', async () => {
   expect(messenger.finalized).toEqual([{ kind: 'timedOut', answer: 'Ask in terminal' }])
 })
 
+test('without --timeout the hook asks for 300 s', async () => {
+  let posted: { timeout?: number } = {}
+  const stub = createServer((request, response) => {
+    let raw = ''
+    request.setEncoding('utf8')
+    request.on('data', (chunk: string) => (raw += chunk))
+    request.on('end', () => {
+      posted = JSON.parse(raw)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: true, answer: 'Deny', kind: 'answered' }))
+    })
+  })
+  stubs.push(stub)
+  await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve))
+  const { port } = stub.address() as AddressInfo
+  const { deps } = createDeps(port, BASH_EVENT)
+  await runHook({}, deps)
+  expect(posted.timeout).toBe(300)
+})
+
 test('uses claude project dir for the project', async () => {
   const { port, service, messenger } = await startApi()
   const { deps } = createDeps(port, BASH_EVENT, {
@@ -336,7 +356,9 @@ test('an unreadable answer exits 1 with the body', async () => {
   const { deps, out, errors } = createDeps(port, BASH_EVENT)
   expect(await runHook({}, deps)).toBe(1)
   expect(out).toEqual([])
-  expect(errors).toEqual(['telegram-ask: service sent an unreadable answer: {"ok":true}'])
+  expect(errors).toEqual([
+    'telegram-ask: telegram-ask service sent an unreadable answer: {"ok":true}',
+  ])
 })
 
 test('abort cancels the question quietly', async () => {

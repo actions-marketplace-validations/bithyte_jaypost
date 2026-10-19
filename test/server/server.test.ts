@@ -5,7 +5,8 @@ import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { parse } from 'yaml'
 import { NO_AUTH } from '../../src/auth/index.ts'
 import type { ApiAuth } from '../../src/auth/index.ts'
-import { SendError } from '../../src/approval/index.ts'
+import { ApprovalService, SendError } from '../../src/approval/index.ts'
+import type { MessageEnding, MessageReference, Messenger } from '../../src/approval/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
 import type { StatusInfo } from '../../src/server/index.ts'
 import type { ApprovalRequest, RequestResult } from '../../src/approval/index.ts'
@@ -32,13 +33,22 @@ afterEach(async () => {
   await s.close()
 })
 
+function createStub(
+  request: RequestFn,
+): Pick<ApprovalService, 'request' | 'start' | 'get' | 'waitFor' | 'cancel'> {
+  const unexpected = (): never => {
+    throw new Error('unexpected call')
+  }
+  return { request, start: unexpected, get: unexpected, waitFor: unexpected, cancel: unexpected }
+}
+
 async function start(
   request: RequestFn,
   status: () => StatusInfo = () => ({ paired: true, bot: 'b' }),
   notify?: NotifyFn,
   auth: ApiAuth = NO_AUTH,
 ): Promise<string> {
-  const stub = { request: vi.fn(request) }
+  const stub = createStub(vi.fn(request))
   server = createApiServer(stub, status, {
     maxTextLength: 3900,
     providerName: 'test',
@@ -144,7 +154,7 @@ test('502 on SendError', async () => {
 })
 
 test('server uses the provider text limit', async () => {
-  server = createApiServer({ request: vi.fn<RequestFn>() }, () => ({ paired: true, bot: 'b' }), {
+  server = createApiServer(createStub(vi.fn<RequestFn>()), () => ({ paired: true, bot: 'b' }), {
     maxTextLength: 10,
     providerName: 'test',
     auth: NO_AUTH,
@@ -472,4 +482,229 @@ test('without a token a stray authorization header is ignored', async () => {
     JSON.stringify(valid),
   )
   expect(res.status).toBe(200)
+})
+
+test('held requests have no server-side time limit', async () => {
+  await start(async () => ({ kind: 'cancelled' }))
+  expect(server?.server.requestTimeout).toBe(0)
+  expect(server?.initialConfig.connectionTimeout).toBe(0)
+  expect(server?.server.timeout).toBe(0)
+})
+
+class RecordingMessenger implements Messenger {
+  sent: { id: string; text: string }[] = []
+  finalized: { text: string; ending: MessageEnding }[] = []
+  failSend = false
+
+  async sendRequest(id: string, text: string): Promise<MessageReference> {
+    if (this.failSend) {
+      throw new Error('telegram down')
+    }
+    this.sent.push({ id, text })
+    return { chatId: 1, messageId: this.sent.length }
+  }
+
+  async finalize(_reference: MessageReference, text: string, ending: MessageEnding): Promise<void> {
+    this.finalized.push({ text, ending })
+  }
+}
+
+async function startReal(
+  options: { readonly status?: () => StatusInfo; readonly auth?: ApiAuth } = {},
+) {
+  const messenger = new RecordingMessenger()
+  const service = new ApprovalService(messenger)
+  server = createApiServer(service, options.status ?? (() => ({ paired: true, bot: 'b' })), {
+    maxTextLength: 3900,
+    providerName: 'test',
+    auth: options.auth ?? NO_AUTH,
+  })
+  await server.listen({ port: 0, host: '127.0.0.1' })
+  const { port } = server.server.address() as AddressInfo
+  return { url: `http://127.0.0.1:${port}`, messenger, service }
+}
+
+const postAsync = (url: string, body: string) =>
+  fetch(`${url}/request/async`, {
+    method: 'POST',
+    body,
+    headers: { 'content-type': 'application/json' },
+  })
+
+async function createAsync(url: string, messenger: RecordingMessenger): Promise<string> {
+  const res = await postAsync(url, JSON.stringify(valid))
+  expect(res.status).toBe(202)
+  const body = (await res.json()) as { id: string }
+  expect(messenger.sent.map((message) => message.id)).toContain(body.id)
+  return body.id
+}
+
+test('async create answers 202 with the id, location and expiry', async () => {
+  const { url } = await startReal()
+  const before = Date.now()
+  const res = await postAsync(url, JSON.stringify(valid))
+  expect(res.status).toBe(202)
+  const body = (await res.json()) as { id: string; state: string; expiresAt: string }
+  expect(res.headers.get('location')).toBe(`/request/${body.id}`)
+  expect(body).toEqual({ id: body.id, state: 'pending', expiresAt: expect.any(String) })
+  const expiresAtMs = Date.parse(body.expiresAt)
+  expect(new Date(expiresAtMs).toISOString()).toBe(body.expiresAt)
+  expect(expiresAtMs).toBeGreaterThanOrEqual(before + 30_000)
+  expect(expiresAtMs).toBeLessThanOrEqual(Date.now() + 30_000)
+})
+
+test('get answers at once with the current state', async () => {
+  const { url, messenger, service } = await startReal()
+  const id = await createAsync(url, messenger)
+  const pending = await fetch(`${url}/request/${id}`)
+  expect(pending.status).toBe(200)
+  expect(await pending.json()).toEqual({ id, state: 'pending', expiresAt: expect.any(String) })
+  service.tap(id, 0)
+  const done = await fetch(`${url}/request/${id}`)
+  expect(await done.json()).toEqual({ id, state: 'done', answer: 'Approve', timedOut: false })
+})
+
+test('a long-poll returns as soon as the question settles', async () => {
+  const { url, messenger, service } = await startReal()
+  const id = await createAsync(url, messenger)
+  const startedAt = performance.now()
+  const response = fetch(`${url}/request/${id}?wait=60`)
+  setTimeout(() => service.tap(id, 1), 50)
+  const res = await response
+  expect(await res.json()).toEqual({ id, state: 'done', answer: 'Decline', timedOut: false })
+  expect(performance.now() - startedAt).toBeLessThan(5000)
+})
+
+test('a long-poll returns pending when wait runs out', async () => {
+  const { url, messenger } = await startReal()
+  const id = await createAsync(url, messenger)
+  const res = await fetch(`${url}/request/${id}?wait=0.2`)
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ id, state: 'pending', expiresAt: expect.any(String) })
+})
+
+test('closing a long-poll leaves the question open', async () => {
+  const { url, messenger, service } = await startReal()
+  const id = await createAsync(url, messenger)
+  const controller = new AbortController()
+  const poll = fetch(`${url}/request/${id}?wait=60`, { signal: controller.signal })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  controller.abort()
+  await expect(poll).rejects.toThrow()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  expect(service.get(id)?.kind).toBe('pending')
+  expect(messenger.finalized).toEqual([])
+  service.tap(id, 0)
+  const res = await fetch(`${url}/request/${id}`)
+  expect(await res.json()).toEqual({ id, state: 'done', answer: 'Approve', timedOut: false })
+})
+
+test('delete cancels a pending question and get agrees', async () => {
+  const { url, messenger } = await startReal()
+  const id = await createAsync(url, messenger)
+  const res = await fetch(`${url}/request/${id}`, { method: 'DELETE' })
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ id, state: 'cancelled' })
+  const after = await fetch(`${url}/request/${id}`)
+  expect(after.status).toBe(200)
+  expect(await after.json()).toEqual({ id, state: 'cancelled' })
+  await vi.waitFor(() => expect(messenger.finalized).toHaveLength(1))
+  expect(messenger.finalized[0]?.ending).toEqual({ kind: 'cancelled' })
+})
+
+test('delete on a settled question returns its state', async () => {
+  const { url, messenger, service } = await startReal()
+  const id = await createAsync(url, messenger)
+  service.tap(id, 0)
+  const res = await fetch(`${url}/request/${id}`, { method: 'DELETE' })
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ id, state: 'done', answer: 'Approve', timedOut: false })
+})
+
+test('unknown ids answer 404', async () => {
+  const { url } = await startReal()
+  for (const method of ['GET', 'DELETE']) {
+    const res = await fetch(`${url}/request/nope`, { method })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'unknown request' })
+  }
+})
+
+test('a bad wait answers 400', async () => {
+  const { url, messenger } = await startReal()
+  const id = await createAsync(url, messenger)
+  const queries = ['wait=', 'wait=-1', 'wait=abc', 'wait=Infinity', 'wait=1e999', 'wait=1&wait=2']
+  for (const query of queries) {
+    const res = await fetch(`${url}/request/${id}?${query}`)
+    expect(res.status, query).toBe(400)
+    expect(await res.json()).toEqual({ error: 'wait must be a non-negative number' })
+  }
+})
+
+test('async create validates like /request', async () => {
+  const { url, messenger } = await startReal()
+  expect((await postAsync(url, '{nope')).status).toBe(400)
+  expect((await postAsync(url, JSON.stringify({ text: 'x' }))).status).toBe(400)
+  expect(
+    (await postAsync(url, JSON.stringify({ ...valid, text: 'x'.repeat(70_000) }))).status,
+  ).toBe(413)
+  expect(messenger.sent).toEqual([])
+  await server?.close()
+  server = undefined
+  const unpairedServer = await startReal({ status: unpaired })
+  expect((await postAsync(unpairedServer.url, JSON.stringify(valid))).status).toBe(503)
+  expect(unpairedServer.messenger.sent).toEqual([])
+})
+
+test('async create answers 502 when the message fails to send', async () => {
+  const { url, messenger } = await startReal()
+  messenger.failSend = true
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  const res = await postAsync(url, JSON.stringify(valid))
+  spy.mockRestore()
+  expect(res.status).toBe(502)
+  expect(await res.json()).toEqual({ error: 'failed to send message' })
+})
+
+test('only async create checks pairing', async () => {
+  const { url, messenger, service } = await startReal()
+  const id = await createAsync(url, messenger)
+  await server?.close()
+  server = undefined
+  const other = createApiServer(service, unpaired, {
+    maxTextLength: 3900,
+    providerName: 'test',
+    auth: NO_AUTH,
+  })
+  server = other
+  await other.listen({ port: 0, host: '127.0.0.1' })
+  const { port } = other.server.address() as AddressInfo
+  const res = await fetch(`http://127.0.0.1:${port}/request/${id}`)
+  expect(res.status).toBe(200)
+})
+
+test('the new routes answer 405 with Allow', async () => {
+  const { url } = await startReal()
+  const put = await fetch(`${url}/request/async`, { method: 'PUT' })
+  expect(put.status).toBe(405)
+  expect(put.headers.get('allow')).toBe('POST')
+  const other = await fetch(`${url}/request/abc`, { method: 'POST' })
+  expect(other.status).toBe(405)
+  expect(other.headers.get('allow')).toBe('GET, DELETE')
+})
+
+test('the new routes need the token', async () => {
+  const { url, messenger } = await startReal({ auth: TOKEN_AUTH })
+  const headers = { authorization: `Bearer ${TOKEN}` }
+  const created = await call(url, 'POST', '/request/async', headers, JSON.stringify(valid))
+  const { id } = (await created.json()) as { id: string }
+  expect(messenger.sent).toHaveLength(1)
+  const rejected = [
+    await call(url, 'POST', '/request/async', {}, JSON.stringify(valid)),
+    await call(url, 'GET', `/request/${id}`, {}),
+    await call(url, 'DELETE', `/request/${id}`, { authorization: `Bearer ${WRONG}` }),
+  ]
+  expect(rejected.map((res) => res.status)).toEqual([401, 401, 401])
+  expect(messenger.sent).toHaveLength(1)
+  expect((await call(url, 'GET', `/request/${id}`, headers)).status).toBe(200)
 })

@@ -305,7 +305,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     .argument('<text>', 'question to show')
     .requiredOption('-o, --option <label>', 'button label, repeat for each button', collect)
     .requiredOption('--timeout-option <label>', 'answer printed on timeout; one of the options')
-    .option('--timeout <seconds>', 'seconds to wait; default and max 300', parseTimeout)
+    .option(
+      '--timeout <seconds>',
+      'seconds to wait; default 300, max 86400 (24 h); longer values are capped',
+      parseTimeout,
+    )
     .option('--project <name>', 'shown as [name] above the question')
     .option('--json', 'print {"answer":...,"timedOut":...} instead of the answer')
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
@@ -361,7 +365,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     .option('--project <name>', 'shown as [name] (default: the Claude Code project folder)')
     .option(
       '--timeout <seconds>',
-      'seconds to wait for an answer; default and max 300',
+      'seconds to wait for an answer; default 300, max 86400 (24 h); longer values are capped',
       parseTimeout,
     )
     .action(

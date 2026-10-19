@@ -1,5 +1,5 @@
 import type { ClientToken } from '../auth/index.ts'
-import { FETCH_GRACE_MS, isOutcome, postApi, toFetchTimeoutMs } from '../client/index.ts'
+import { FETCH_GRACE_MS, postApi, requestApi } from '../client/index.ts'
 import type { SendDeps, SendNotifyArgs, SendRequestArgs } from './types.ts'
 
 /**
@@ -11,9 +11,8 @@ export async function runSendRequest(args: SendRequestArgs, deps: SendDeps): Pro
     deps.printError(`telegram-ask: ${deps.token.message}`)
     return 1
   }
-  const result = await postApi(
+  const result = await requestApi(
     deps.port,
-    '/request',
     {
       text: args.text,
       options: args.options,
@@ -21,23 +20,13 @@ export async function runSendRequest(args: SendRequestArgs, deps: SendDeps): Pro
       ...(args.timeout === undefined ? {} : { timeout: args.timeout }),
       ...(args.project === undefined ? {} : { project: args.project }),
     },
-    {
-      signal: deps.signal,
-      timeoutMs: toFetchTimeoutMs(args.timeout),
-      ...toTokenOption(deps.token),
-    },
+    { signal: deps.signal, ...toTokenOption(deps.token) },
   )
   if (result.kind === 'failed') {
     deps.printError(`telegram-ask: ${result.message}`)
     return 1
   }
-  if (!isOutcome(result.body)) {
-    deps.printError(
-      `telegram-ask: service sent an unreadable answer: ${JSON.stringify(result.body)}`,
-    )
-    return 1
-  }
-  const { answer, timedOut } = result.body
+  const { answer, timedOut } = result.outcome
   deps.print(args.json ? JSON.stringify({ answer, timedOut }) : answer)
   return 0
 }

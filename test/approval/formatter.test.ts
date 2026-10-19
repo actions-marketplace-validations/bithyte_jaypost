@@ -74,12 +74,21 @@ test('time left rounds up', () => {
     [60, '1 min'],
     [61, '2 min'],
     [300, '5 min'],
+    [3599, '1 h'],
+    [3600, '1 h'],
+    [3660, '1 h 1 min'],
+    [5400, '1 h 30 min'],
+    [86_400, '24 h'],
   ] as const
   for (const [seconds, expected] of cases) {
-    const reply = formatPendingReply([pendingOf('q')], after(300_000 - seconds * 1000), 3900)
+    const reply = formatPendingReply(
+      [pendingOf('q', 86_400)],
+      after(86_400_000 - seconds * 1000),
+      3900,
+    )
     expect(secondLine(reply)).toBe(`Approve, Decline. ${expected} left, then Decline`)
   }
-  expect(secondLine(formatPendingReply([pendingOf('q')], after(299_500), 3900))).toContain(
+  expect(secondLine(formatPendingReply([pendingOf('q', 300)], after(299_500), 3900))).toContain(
     '. 1 s left',
   )
 })

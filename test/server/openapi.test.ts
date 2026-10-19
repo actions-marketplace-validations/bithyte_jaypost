@@ -54,3 +54,17 @@ test('bearer auth is declared and required on the api routes', () => {
   expect(document.paths['/notify'].post.responses['401']).toEqual(unauthorized)
   expect(document.paths['/status'].get.responses['401']).toEqual(unauthorized)
 })
+
+test('background paths are documented', () => {
+  const { paths } = createOpenApiDocument({ port: 8787, maxTextLength: 3900 })
+  expect(paths['/request/async'].post.responses['202'].headers).toHaveProperty('Location')
+  const item = paths['/request/{id}']
+  expect(item.get.parameters).toContainEqual(
+    expect.objectContaining({ name: 'wait', in: 'query', schema: { type: 'number', minimum: 0 } }),
+  )
+  expect(item.get.responses).toHaveProperty('404')
+  expect(item.delete.responses).toHaveProperty('404')
+  expect(item.get).not.toHaveProperty('security')
+  expect(item.delete).not.toHaveProperty('security')
+  expect(paths['/request/async'].post).not.toHaveProperty('security')
+})

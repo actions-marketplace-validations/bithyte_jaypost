@@ -1,13 +1,20 @@
 import { z } from 'zod'
-import { MAX_OPTION_LENGTH, MAX_PROJECT_LENGTH, MAX_TIMEOUT_SECONDS } from './constants.ts'
+import {
+  DEFAULT_TIMEOUT_SECONDS,
+  MAX_OPTION_LENGTH,
+  MAX_PROJECT_LENGTH,
+  MAX_TIMEOUT_SECONDS,
+  MAX_WAIT_SECONDS,
+} from './constants.ts'
 import { formatProjectText } from './formatter.ts'
-import type { ParseResult } from './types.ts'
+import type { ParseResult, WaitParseResult } from './types.ts'
 
 const TEXT_ERROR = 'text must be a non-empty string'
 const OPTIONS_ERROR = 'options must be a non-empty array'
 const OPTION_ERROR = `options must contain only non-empty strings of at most ${MAX_OPTION_LENGTH} characters`
 const PROJECT_ERROR = 'project must be a non-empty string'
 const TIMEOUT_ERROR = 'timeout must be a finite positive number'
+const WAIT_ERROR = 'wait must be a non-negative number'
 
 /** Non-empty (after trim) text; shared by /request and /notify. Length is checked by `checkProjectText`. */
 export function createTextSchema() {
@@ -89,14 +96,15 @@ export function createApprovalRequestSchema(maxTextLength: number) {
         text: checked.text,
         options,
         timeoutOption,
-        timeoutSeconds: Math.min(timeout ?? MAX_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS),
+        timeoutSeconds: Math.min(timeout ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS),
       }
     })
 }
 
 /**
  * Validates a request body; never throws. Returns the first problem as `error`, and clamps
- * `timeout` to the cap (the cap is also the default). `text` may be up to `maxTextLength`.
+ * `timeout` to `MAX_TIMEOUT_SECONDS`; absent means `DEFAULT_TIMEOUT_SECONDS`. `text` may be up to
+ * `maxTextLength`.
  */
 export function parseApprovalRequest(body: unknown, maxTextLength: number): ParseResult {
   const result = createApprovalRequestSchema(maxTextLength).safeParse(body)
@@ -104,4 +112,23 @@ export function parseApprovalRequest(body: unknown, maxTextLength: number): Pars
     return { ok: true, value: result.data }
   }
   return { ok: false, error: result.error.issues[0]?.message ?? 'invalid request' }
+}
+
+/**
+ * Validates a `wait` query value in seconds; never throws. Absent means 0, values above
+ * `MAX_WAIT_SECONDS` are clamped, and anything but a finite non-negative number string is an error.
+ */
+export function parseWaitSeconds(raw: unknown): WaitParseResult {
+  if (raw === undefined) {
+    return { ok: true, seconds: 0 }
+  }
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return { ok: false, error: WAIT_ERROR }
+  }
+  const seconds = Number(raw)
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return { ok: false, error: WAIT_ERROR }
+  }
+  // Math.max turns '-0' into 0.
+  return { ok: true, seconds: Math.max(0, Math.min(seconds, MAX_WAIT_SECONDS)) }
 }

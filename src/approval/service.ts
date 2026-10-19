@@ -1,25 +1,37 @@
-import { CANCELLED_RESULT, EXPIRED_ENDING, HISTORY_LIMIT } from './constants.ts'
+import {
+  CANCELLED_RESULT,
+  CANCELLED_STATE,
+  EXPIRED_ENDING,
+  HISTORY_LIMIT,
+  RESULT_TTL_MS,
+} from './constants.ts'
 import { formatFinalText } from './formatter.ts'
 import { PendingRequests } from './pending.ts'
 import type { RequestRecord } from '../state/index.ts'
 import type {
   ApprovalRequest,
   ApprovalServiceOptions,
+  BackgroundEntry,
   HistoryEntry,
   MessageEnding,
   MessageReference,
   Messenger,
+  OpenedRequest,
   PendingSummary,
   RequestResult,
+  RequestState,
   RequestStore,
+  Settlement,
+  StartedRequest,
 } from './types.ts'
 
 /** The messenger failed to send the request; the original error is in `cause`. */
 export class SendError extends Error {}
 
 /**
- * Sends each request to the owner and waits for a tap, the timeout or an abort. Also keeps the last
- * `HISTORY_LIMIT` settled requests in memory.
+ * Sends each request to the owner and waits for a tap, the timeout or an abort. Background
+ * questions from `start` stay readable by id until `RESULT_TTL_MS` after they settle. Also keeps
+ * the last `HISTORY_LIMIT` settled requests in memory.
  */
 export class ApprovalService {
   #messenger: Messenger
@@ -28,6 +40,7 @@ export class ApprovalService {
   #store: RequestStore | undefined
   #pending = new PendingRequests()
   #history: HistoryEntry[] = []
+  #background = new Map<string, BackgroundEntry>()
 
   constructor(
     messenger: Messenger,
@@ -46,17 +59,7 @@ export class ApprovalService {
    * only logged. An aborted `signal` settles as cancelled.
    */
   async request(request: ApprovalRequest, signal?: AbortSignal): Promise<RequestResult> {
-    const id = this.#newId()
-    let reference
-    try {
-      reference = await this.#messenger.sendRequest(id, request.text, request.options)
-    } catch (cause) {
-      throw new SendError('failed to send approval request', { cause })
-    }
-    if (this.#messenger.finalize !== undefined) {
-      this.#store?.addRequest({ id, reference, text: request.text })
-    }
-    const settled = this.#pending.open(id, request, this.#now())
+    const { id, reference, settlement: settled } = await this.#open(request)
     const onAbort = () => {
       this.#pending.cancel(id)
     }
@@ -68,13 +71,7 @@ export class ApprovalService {
     }
     const settlement = await settled
     signal?.removeEventListener('abort', onAbort)
-    const settledAt = this.#now()
-    this.#history.push({ text: request.text, settlement, settledAt })
-    if (this.#history.length > HISTORY_LIMIT) {
-      this.#history.shift()
-    }
-    await this.#finalize(reference, request.text, settlement, settledAt)
-    this.#store?.removeRequest(id)
+    await this.#finish(id, request, reference, settlement)
     if (settlement.kind === 'cancelled') {
       return CANCELLED_RESULT
     }
@@ -82,6 +79,69 @@ export class ApprovalService {
       kind: 'completed',
       outcome: { answer: settlement.answer, timedOut: settlement.kind === 'timedOut' },
     }
+  }
+
+  /**
+   * Sends a background question and resolves once the message is sent, without waiting for an
+   * answer. Throws `SendError` like `request`. Its id is readable with `get` from here until
+   * `RESULT_TTL_MS` after it settles.
+   */
+  async start(request: ApprovalRequest): Promise<StartedRequest> {
+    const opened = await this.#open(request)
+    const expiresAt = new Date(opened.openedAt.getTime() + request.timeoutSeconds * 1000)
+    const settled = opened.settlement.then((settlement) => {
+      const state = ApprovalService.#toRequestState(settlement)
+      // Recorded before the final edit, so a read right after a settle never sees an unknown id.
+      this.#background.set(opened.id, { state, settled })
+      this.#finishBackground(opened, request, settlement).catch((error) =>
+        console.error('failed to finish background request', error),
+      )
+      return state
+    })
+    this.#background.set(opened.id, { state: { kind: 'pending', expiresAt }, settled })
+    return { id: opened.id, expiresAt }
+  }
+
+  /** A background question's state; undefined for unknown, blocking or expired ids. */
+  get(id: string): RequestState | undefined {
+    return this.#background.get(id)?.state
+  }
+
+  /**
+   * Resolves with the current state once the question settles, `waitMs` passes or `signal` aborts,
+   * whichever comes first. Aborting never cancels the question. Undefined for unknown ids.
+   */
+  async waitFor(
+    id: string,
+    waitMs: number,
+    signal?: AbortSignal,
+  ): Promise<RequestState | undefined> {
+    const entry = this.#background.get(id)
+    if (entry === undefined || entry.state.kind !== 'pending' || signal?.aborted) {
+      return entry?.state
+    }
+    const { promise, resolve } = Promise.withResolvers<void>()
+    const timer = setTimeout(resolve, waitMs)
+    const stopWaiting = () => resolve()
+    signal?.addEventListener('abort', stopWaiting, { once: true })
+    void entry.settled.then(stopWaiting)
+    await promise
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', stopWaiting)
+    return this.get(id)
+  }
+
+  /**
+   * Cancels a pending background question and resolves with `cancelled` once that's recorded, not
+   * waiting for the final edit. A settled one keeps its state; undefined for unknown ids.
+   */
+  async cancel(id: string): Promise<RequestState | undefined> {
+    const entry = this.#background.get(id)
+    if (entry === undefined) {
+      return undefined
+    }
+    this.#pending.cancel(id)
+    return entry.settled
   }
 
   /**
@@ -124,6 +184,49 @@ export class ApprovalService {
     }
   }
 
+  async #open(request: ApprovalRequest): Promise<OpenedRequest> {
+    const id = this.#newId()
+    let reference
+    try {
+      reference = await this.#messenger.sendRequest(id, request.text, request.options)
+    } catch (cause) {
+      throw new SendError('failed to send approval request', { cause })
+    }
+    if (this.#messenger.finalize !== undefined) {
+      this.#store?.addRequest({ id, reference, text: request.text })
+    }
+    const openedAt = this.#now()
+    const settlement = this.#pending.open(id, request, openedAt)
+    return { id, reference, openedAt, settlement }
+  }
+
+  async #finish(
+    id: string,
+    request: ApprovalRequest,
+    reference: MessageReference,
+    settlement: Settlement,
+  ): Promise<void> {
+    const settledAt = this.#now()
+    this.#history.push({ text: request.text, settlement, settledAt })
+    if (this.#history.length > HISTORY_LIMIT) {
+      this.#history.shift()
+    }
+    await this.#finalize(reference, request.text, settlement, settledAt)
+    this.#store?.removeRequest(id)
+  }
+
+  async #finishBackground(
+    opened: OpenedRequest,
+    request: ApprovalRequest,
+    settlement: Settlement,
+  ): Promise<void> {
+    try {
+      await this.#finish(opened.id, request, opened.reference, settlement)
+    } finally {
+      setTimeout(() => this.#background.delete(opened.id), RESULT_TTL_MS).unref()
+    }
+  }
+
   async #finalize(
     reference: MessageReference,
     text: string,
@@ -137,6 +240,16 @@ export class ApprovalService {
       await this.#messenger.finalize(reference, formatFinalText(text, ending, endedAt), ending)
     } catch (error) {
       console.error('failed to finalize approval message', error)
+    }
+  }
+
+  static #toRequestState(settlement: Settlement): RequestState {
+    if (settlement.kind === 'cancelled') {
+      return CANCELLED_STATE
+    }
+    return {
+      kind: 'done',
+      outcome: { answer: settlement.answer, timedOut: settlement.kind === 'timedOut' },
     }
   }
 }

@@ -13,7 +13,10 @@ export type ClientOptions = {
   readonly token?: string
 }
 
-/** A question with buttons; `timeout` in seconds, default and max 300. */
+/**
+ * A question with buttons; `timeout` in seconds, default 300, max 86400 (24 h); longer values are
+ * capped.
+ */
 export type AskRequest = {
   readonly text: string
   readonly options: readonly string[]
@@ -35,8 +38,11 @@ export type Notification = {
   readonly signal?: AbortSignal
 }
 
+/** HTTP methods the clients use. */
+export type ApiMethod = 'GET' | 'POST' | 'DELETE'
+
 /** Service endpoints the clients call. */
-export type ApiPath = '/request' | '/notify'
+export type ApiPath = '/request' | '/notify' | '/request/async' | `/request/${string}`
 
 /** Outcome of a call to the local service; `message` is ready to show the caller. */
 export type ApiResult =
@@ -52,3 +58,31 @@ export type ApiOptions = {
   /** Sent as `authorization: Bearer <token>` when set. */
   readonly token?: string
 }
+
+/** The body of a /request call. */
+export type AskBody = {
+  readonly text: string
+  readonly options: readonly string[]
+  readonly timeoutOption: string
+  readonly timeout?: number
+  readonly project?: string
+}
+
+/** `now` returns milliseconds; default `performance.now`. */
+export type AskOptions = Omit<ApiOptions, 'timeoutMs'> & { readonly now?: () => number }
+
+/** Outcome of `requestApi`; `message` is ready to show the caller. */
+export type AskResult =
+  | { readonly kind: 'ok'; readonly outcome: Answer }
+  | { readonly kind: 'failed'; readonly message: string }
+
+/** The body of GET /request/<id>. */
+export type StateBody =
+  | { readonly id: string; readonly state: 'pending'; readonly expiresAt: string }
+  | {
+      readonly id: string
+      readonly state: 'done'
+      readonly answer: string
+      readonly timedOut: boolean
+    }
+  | { readonly id: string; readonly state: 'cancelled' }

@@ -315,6 +315,26 @@ test('a request pending at stop is expired by the next start', async () => {
   expect(readState(configPath).requests).toEqual([])
 })
 
+test('a background question pending at stop is expired by the next start', async () => {
+  const configPath = createConfigPath()
+  const { provider, finalized } = createRecordingProvider()
+  const first = await start(provider, { configPath })
+  const created = await post(first.url, '/request/async', REQUEST)
+  expect(created.status).toBe(202)
+  const { id } = (await created.json()) as { id: string }
+  await running?.stop()
+  running = undefined
+  const second = await start(provider, { configPath })
+  await recoverRunning()
+  expect(finalized).toContainEqual({
+    reference: { n: 1 },
+    text: expect.stringMatching(EXPIRED_TEXT_PATTERN),
+    ending: { kind: 'expired' },
+  })
+  expect(readState(configPath).requests).toEqual([])
+  expect((await fetch(`${second.url}/request/${id}`)).status).toBe(404)
+})
+
 test('a request left by a crash is expired on start', async () => {
   const configPath = createConfigPath()
   writeState(configPath, { requests: [{ id: 'old', reference: { n: 99 }, text: 'Deploy?' }] })

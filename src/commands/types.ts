@@ -117,7 +117,7 @@ export type UninstallDeps = {
   readonly signal?: AbortSignal
 }
 
-/** `send request` input; `timeout` in seconds, capped to 300 by the service. */
+/** `send request` input; `timeout` in seconds, capped to 86400 (24 h) by the service. */
 export type SendRequestArgs = {
   readonly text: string
   readonly options: readonly string[]

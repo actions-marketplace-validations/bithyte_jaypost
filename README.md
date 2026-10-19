@@ -49,19 +49,40 @@ It's single owner: one Telegram user, proven by a pairing code. The service can 
 
 ## Agents (MCP)
 
-`telegram-ask mcp [--port N]` is a stdio MCP server with two tools that forward to the [HTTP API](#scripts-and-tools-http-api). `project_name` shows as `[name]` on the first line of the message, so you can tell which agent is asking.
+`telegram-ask mcp [--port N]` is a stdio MCP server with four tools that forward to the [HTTP API](#scripts-and-tools-http-api). `project_name` shows as `[name]` on the first line of the message, so you can tell which agent is asking.
 
 `ask_for_permission` asks a question with buttons and waits for the tap or the timeout:
 
-| Param             | Type     | Required | Notes                                                 |
-| ----------------- | -------- | -------- | ----------------------------------------------------- |
-| `project_name`    | string   | yes      | Max 100 chars.                                        |
-| `text`            | string   | yes      | The question.                                         |
-| `options`         | string[] | yes      | Button labels, unique, max 64 chars each.             |
-| `timeout_option`  | string   | yes      | Answer returned on timeout. Must be one of `options`. |
-| `timeout_seconds` | number   | no       | Default and max 300; longer values are capped to 300. |
+| Param             | Type     | Required | Notes                                                    |
+| ----------------- | -------- | -------- | -------------------------------------------------------- |
+| `project_name`    | string   | yes      | Max 100 chars.                                           |
+| `text`            | string   | yes      | The question.                                            |
+| `options`         | string[] | yes      | Button labels, unique, max 64 chars each.                |
+| `timeout_option`  | string   | yes      | Answer returned on timeout. Must be one of `options`.    |
+| `timeout_seconds` | number   | no       | Default 300, max 86400 (24 h); longer values are capped. |
+
+While a question waits, the server sends MCP progress notifications every 60 seconds. Claude Code aborts a silent stdio tool call after 30 minutes (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`); progress keeps it alive when Claude Code sends a progress token. I haven't verified that it does. If it doesn't, raise the per-server `timeout` in `.mcp.json` or use `ask_for_permission_in_background`.
 
 It returns the answer as text (with `(timed out, no answer from the user)` appended on timeout) and as structured content `{ "answer": "...", "timed_out": false }`.
+
+`ask_for_permission_in_background` takes the same params as `ask_for_permission` but returns as soon as the message is sent, for agents with other work to do first or a client that can't hold a long call. The text result is `Asked. Call wait_for_answer with request_id <id> when you need the answer (expires <time>).` and the structured content is `{ "request_id": "...", "expires_at": "2026-10-20T06:00:00.000Z" }`. `expires_at` is when the timeout fires (the timeout is capped at 24 h). A service older than this release has no background questions, and the tool says it's too old.
+
+`wait_for_answer` collects the answer:
+
+| Param          | Type   | Required | Notes                                                                                     |
+| -------------- | ------ | -------- | ----------------------------------------------------------------------------------------- |
+| `request_id`   | string | yes      | From `ask_for_permission_in_background`.                                                  |
+| `wait_seconds` | number | no       | Max time to wait. Omit it to wait until the question settles; `0` checks once. Max 86400. |
+
+It returns text plus structured content `{ "state": ..., "answer"?: ..., "timed_out"?: ... }`:
+
+- answered or timed out: the same text as `ask_for_permission`, structured `{ "state": "done", "answer": "Approve", "timed_out": false }`.
+- `wait_seconds` ran out first: `still waiting for the user`, structured `{ "state": "pending" }`.
+- cancelled: `the question was cancelled`, structured `{ "state": "cancelled" }`. That's a normal result, not a tool error.
+
+An answer stays readable for 24 h after the question settles. After that, or after a service restart, `wait_for_answer` returns an error saying the service doesn't know the request. It sends progress notifications the same way as `ask_for_permission`. Cancelling a `wait_for_answer` call only stops the wait; the question stays open and you can wait again.
+
+Closing the agent session (the MCP server's stdin) cancels the background questions it asked that haven't been answered, and their Telegram messages get the cancelled line. If the MCP server is killed outright, they stay open until their timeout.
 
 `notify_user` sends a message that doesn't need an answer and returns `sent` once Telegram accepts it:
 
@@ -147,10 +168,10 @@ A timeout behaves like `Ask in terminal`. Long inputs that don't fit in the mess
 
 - `PermissionRequest` has no matcher in the snippet, so every prompt goes to the phone. To narrow it, add `"matcher": "Bash|Edit|Write"` to that entry.
 - The `Notification` matcher leaves out `permission_prompt` on purpose. That notification fires a few seconds after a prompt appears, and the `PermissionRequest` hook has already asked.
-- `timeout: 360` is the 300 s wait, the 30 s HTTP grace and some slack, so Claude Code doesn't kill the hook before the service answers.
+- `timeout: 360` is the default 300 s wait, the 30 s HTTP grace and some slack, so Claude Code doesn't kill the hook before the service answers. If you pass a longer `--timeout`, the Claude Code hook `timeout` must be at least `--timeout` + 60.
 - Without the package on `PATH`, use `npx -y telegram-ask hook` as the command. npx adds startup time to every prompt.
 - `--project NAME` sets the `[name]` line. Default is the Claude Code project folder.
-- `--timeout S` is how long to wait for a tap on a permission prompt. Default and max 300.
+- `--timeout S` is how long to wait for a tap on a permission prompt. Default 300, max 86400 (24 h); longer values are capped.
 - `--port N` picks the port as for [`mcp`](#agents-mcp), including `PORT`. Hooks inherit Claude Code's environment, so a `PORT` meant for your own app (say `PORT=3000`) points the hook at the wrong place. Pass `--port` then.
 - It finds the API token the same way `mcp` and `send` do: `TELEGRAM_ASK_TOKEN`, else `~/.config/telegram-ask/token`.
 
@@ -212,22 +233,47 @@ On timeout, `answer` is `timeoutOption` and `timedOut` is `true`. If the owner s
 | `text`          | string   | yes      | Question shown in Telegram. Non-empty, max 3900 chars.                                  |
 | `options`       | string[] | yes      | Button labels. Non-empty, unique, non-empty strings.                                    |
 | `timeoutOption` | string   | yes      | Answer returned on timeout. Must be one of `options`.                                   |
-| `timeout`       | number   | no       | Seconds. Default and max 300. Must be positive.                                         |
+| `timeout`       | number   | no       | Seconds. Default 300, max 86400 (24 h); longer values are capped. Must be positive.     |
 | `project`       | string   | no       | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900. |
+
+The cap used to be 300, so a `timeout: 900` was clamped to 300 before and now waits the full 900 s.
+
+Callers on Node's global `fetch` (undici, 300 s headers timeout) should keep `timeout` at 290 or less, raise `headersTimeout` with a custom dispatcher, or use [`POST /request/async`](#background-questions). curl, `node:http` and this package's CLI, `Client` and MCP server aren't affected.
 
 Errors are JSON `{ "error": "..." }`:
 
-| Status | Meaning                                                                 |
-| ------ | ----------------------------------------------------------------------- |
-| 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram. |
-| 401    | Missing or wrong token.                                                 |
-| 413    | Body over 64 KiB.                                                       |
-| 502    | Message couldn't be sent.                                               |
-| 500    | Internal error, or the request was cancelled.                           |
-| 404    | Path isn't `/request`, `/notify`, `/status` or `/openapi.yaml`.         |
-| 405    | Method isn't POST.                                                      |
+| Status | Meaning                                                                                            |
+| ------ | -------------------------------------------------------------------------------------------------- |
+| 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram.                            |
+| 401    | Missing or wrong token.                                                                            |
+| 413    | Body over 64 KiB.                                                                                  |
+| 502    | Message couldn't be sent.                                                                          |
+| 500    | Internal error, or the request was cancelled.                                                      |
+| 404    | Path isn't `/request`, `/request/async`, `/request/{id}`, `/notify`, `/status` or `/openapi.yaml`. |
+| 405    | Method isn't the one the path takes (POST, or GET and DELETE for `/request/{id}`).                 |
 
 If the caller disconnects early, the request is dropped and the Telegram message is edited to a "cancelled" line. A restart still drops pending requests (callers see a connection error), but when the service comes back it edits their Telegram messages to an expired line.
+
+### Background questions
+
+`POST /request/async` takes the same body and sends the same message, but answers `202` as soon as it is sent, so no connection has to stay open. It checks pairing like `/request`; the routes below only need the token.
+
+```
+curl -s -X POST http://127.0.0.1:8787/request/async \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer $(cat ~/.config/telegram-ask/token)" \
+  -d '{"text":"Deploy?","options":["Approve","Decline"],"timeoutOption":"Decline","timeout":3600}'
+```
+
+```json
+{ "id": "6f1c...", "state": "pending", "expiresAt": "2026-10-19T12:00:00.000Z" }
+```
+
+The `Location` header is `/request/{id}`. `GET /request/{id}` returns the state: `pending` as above, `{ "id": "...", "state": "done", "answer": "Approve", "timedOut": false }` once settled, or `{ "id": "...", "state": "cancelled" }` after a cancel. Add `?wait=SECONDS` (max 120, larger values are clamped) to hold the request until the question settles or the time runs out; it returns the moment the question settles. Loop on it until `state` isn't `pending`. A `wait` that isn't a non-negative number is a `400`. Closing a long-poll doesn't cancel the question.
+
+`DELETE /request/{id}` cancels a pending question (the Telegram message becomes a "cancelled" line) and returns its state, and a following `GET` agrees. On an already settled question it just returns that state. An unknown id answers `404` with `{ "error": "unknown request" }`. Settled questions are kept for 24 h.
+
+Version skew: a service from before this release clamps `timeout` to 300 s and answers `404` to these paths, so a client that needs long timeouts should check the service version first (`info.version` in `GET /openapi.yaml`). A restart drops background questions (`404` afterwards), and their Telegram messages get the expired line on the next start.
 
 ### Send a notification
 
