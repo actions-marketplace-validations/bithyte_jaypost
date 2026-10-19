@@ -1,13 +1,15 @@
-import { CANCELLED_RESULT, EXPIRED_ENDING } from './constants.ts'
+import { CANCELLED_RESULT, EXPIRED_ENDING, HISTORY_LIMIT } from './constants.ts'
 import { formatFinalText } from './formatter.ts'
 import { PendingRequests } from './pending.ts'
 import type { RequestRecord } from '../state/index.ts'
 import type {
   ApprovalRequest,
   ApprovalServiceOptions,
+  HistoryEntry,
   MessageEnding,
   MessageReference,
   Messenger,
+  PendingSummary,
   RequestResult,
   RequestStore,
 } from './types.ts'
@@ -15,13 +17,17 @@ import type {
 /** The messenger failed to send the request; the original error is in `cause`. */
 export class SendError extends Error {}
 
-/** Sends each request to the owner and waits for a tap, the timeout or an abort. */
+/**
+ * Sends each request to the owner and waits for a tap, the timeout or an abort. Also keeps the last
+ * `HISTORY_LIMIT` settled requests in memory.
+ */
 export class ApprovalService {
   #messenger: Messenger
   #now: () => Date
   #newId: () => string
   #store: RequestStore | undefined
   #pending = new PendingRequests()
+  #history: HistoryEntry[] = []
 
   constructor(
     messenger: Messenger,
@@ -50,7 +56,7 @@ export class ApprovalService {
     if (this.#messenger.finalize !== undefined) {
       this.#store?.addRequest({ id, reference, text: request.text })
     }
-    const settled = this.#pending.open(id, request)
+    const settled = this.#pending.open(id, request, this.#now())
     const onAbort = () => {
       this.#pending.cancel(id)
     }
@@ -62,7 +68,12 @@ export class ApprovalService {
     }
     const settlement = await settled
     signal?.removeEventListener('abort', onAbort)
-    await this.#finalize(reference, request.text, settlement)
+    const settledAt = this.#now()
+    this.#history.push({ text: request.text, settlement, settledAt })
+    if (this.#history.length > HISTORY_LIMIT) {
+      this.#history.shift()
+    }
+    await this.#finalize(reference, request.text, settlement, settledAt)
     this.#store?.removeRequest(id)
     if (settlement.kind === 'cancelled') {
       return CANCELLED_RESULT
@@ -81,23 +92,49 @@ export class ApprovalService {
     return this.#pending.answer(id, optionIndex) ? 'accepted' : 'expired'
   }
 
+  /** Open requests, oldest first. */
+  listPending(): readonly PendingSummary[] {
+    return this.#pending.list()
+  }
+
+  /**
+   * Settles every open request as rejected with its timeout option; callers get `timedOut: false`.
+   * Returns what it rejected, oldest first.
+   */
+  rejectAll(): readonly PendingSummary[] {
+    return this.#pending.rejectAll()
+  }
+
+  /** The last `count` settled requests, newest first; empty for `count <= 0`. Never throws. */
+  history(count: number): readonly HistoryEntry[] {
+    if (!(count > 0)) {
+      return []
+    }
+    return this.#history.slice(-count).toReversed()
+  }
+
   /**
    * Marks requests left over from a previous run as expired and removes their records. Never
    * rejects; without `messenger.finalize` the records are only removed.
    */
   async expireOrphans(records: readonly RequestRecord[]): Promise<void> {
     for (const record of records) {
-      await this.#finalize(record.reference, record.text, EXPIRED_ENDING)
+      await this.#finalize(record.reference, record.text, EXPIRED_ENDING, this.#now())
       this.#store?.removeRequest(record.id)
     }
   }
 
-  async #finalize(reference: MessageReference, text: string, ending: MessageEnding): Promise<void> {
+  async #finalize(
+    reference: MessageReference,
+    text: string,
+    ending: MessageEnding,
+    endedAt: Date,
+  ): Promise<void> {
     if (this.#messenger.finalize === undefined) {
       return
     }
     try {
-      await this.#messenger.finalize(reference, formatFinalText(text, ending, this.#now()), ending)
+      await this.#messenger.finalize(reference, formatFinalText(text, ending, endedAt), ending)
     } catch (error) {
       console.error('failed to finalize approval message', error)
     }

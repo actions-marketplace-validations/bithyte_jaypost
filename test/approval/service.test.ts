@@ -242,6 +242,118 @@ test('no finalize part: request still settles', async () => {
   expect(spy).not.toHaveBeenCalled()
 })
 
+test('rejectAll resolves completed with timedOut false and finalizes with the rejected line', async () => {
+  const { m, svc } = setup()
+  const r = svc.request(req)
+  await flush()
+  expect(svc.rejectAll().map((summary) => summary.id)).toEqual(['id1'])
+  await expect(r).resolves.toEqual({
+    kind: 'completed',
+    outcome: { answer: 'Decline', timedOut: false },
+  })
+  expect(m.finalized[0]?.text).toBe('Deploy?\n\n⛔ Rejected, Decline, 09:05')
+})
+
+test('listPending shows open requests with openedAt', async () => {
+  const { svc } = setup()
+  void svc.request(req)
+  await flush()
+  expect(svc.listPending()).toEqual([{ id: 'id1', request: req, openedAt: at }])
+})
+
+test('history records every kind newest first', async () => {
+  const m = new FakeMessenger()
+  let counter = 0
+  const svc = new ApprovalService(
+    m,
+    () => at,
+    () => `id${(counter += 1)}`,
+  )
+  const answered = svc.request(req)
+  await flush()
+  svc.tap('id1', 0)
+  await answered
+  const timedOut = svc.request(req)
+  await flush()
+  await vi.advanceTimersByTimeAsync(30_000)
+  await timedOut
+  const rejected = svc.request(req)
+  await flush()
+  svc.rejectAll()
+  await rejected
+  const controller = new AbortController()
+  const cancelled = svc.request(req, controller.signal)
+  await flush()
+  controller.abort()
+  await cancelled
+  expect(svc.history(10).map((entry) => entry.settlement.kind)).toEqual([
+    'cancelled',
+    'rejected',
+    'timedOut',
+    'answered',
+  ])
+  expect(svc.history(10)[0]).toEqual({
+    text: 'Deploy?',
+    settlement: { kind: 'cancelled' },
+    settledAt: at,
+  })
+})
+
+test('history keeps the last 20 and honours count', async () => {
+  const m = new FakeMessenger()
+  let counter = 0
+  const svc = new ApprovalService(
+    m,
+    () => at,
+    () => `id${(counter += 1)}`,
+  )
+  for (let index = 0; index <= 20; index += 1) {
+    const result = svc.request({ ...req, text: `q${index}` })
+    await flush()
+    svc.tap(`id${index + 1}`, 0)
+    await result
+  }
+  const entries = svc.history(50)
+  expect(entries).toHaveLength(20)
+  expect(entries[0]?.text).toBe('q20')
+  expect(entries.at(-1)?.text).toBe('q1')
+  expect(svc.history(2).map((entry) => entry.text)).toEqual(['q20', 'q19'])
+  expect(svc.history(0)).toEqual([])
+})
+
+test('history entry and final text share one clock read', async () => {
+  const m = new FakeMessenger()
+  let calls = 0
+  const svc = new ApprovalService(
+    m,
+    () => new Date(2026, 0, 1, 9, (calls += 1)),
+    () => 'id1',
+  )
+  const result = svc.request(req)
+  await flush()
+  svc.tap('id1', 0)
+  await result
+  const [entry] = svc.history(1)
+  expect(entry?.settledAt).toEqual(new Date(2026, 0, 1, 9, 2))
+  expect(m.finalized[0]?.text).toBe('Deploy?\n\n✅ Approve, 09:02')
+  expect(calls).toBe(2)
+})
+
+test('history is recorded even when there is no finalize', async () => {
+  const svc = new ApprovalService(
+    { sendRequest: async () => ({}) },
+    () => at,
+    () => 'id1',
+  )
+  const result = svc.request(req)
+  await flush()
+  svc.tap('id1', 1)
+  await result
+  expect(svc.history(1)).toEqual([
+    { text: 'Deploy?', settlement: { kind: 'answered', answer: 'Decline' }, settledAt: at },
+  ])
+})
+
 test('records the request after send and removes it after the answer', async () => {
   const { svc, store } = setupWithStore()
   const r = svc.request(req)

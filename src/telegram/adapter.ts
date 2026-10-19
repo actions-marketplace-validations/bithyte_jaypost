@@ -1,5 +1,6 @@
+import { GrammyError } from 'grammy'
 import type { Bot } from 'grammy'
-import type { MessageReference, Messenger } from '../approval/index.ts'
+import type { MessageReference, Messenger, OwnerCommand } from '../approval/index.ts'
 import type { Notifier } from '../notify/index.ts'
 import { formatCode } from '../pairing/index.ts'
 import type { PairResult } from '../pairing/index.ts'
@@ -10,6 +11,7 @@ import {
   START_COMMAND_PATTERN,
 } from './constants.ts'
 import type {
+  CommandMessage,
   Dismiss,
   Owner,
   PairingMessage,
@@ -187,4 +189,59 @@ export function registerPairingHandler(
       await context.reply(reply)
     }
   })
+}
+
+/** True only for the paired owner writing in a private chat; channel posts have no sender. */
+export function isOwnerCommand(message: CommandMessage, ownerId: number | undefined): boolean {
+  return message.chatType === 'private' && ownerId !== undefined && message.fromId === ownerId
+}
+
+/**
+ * Registers one handler per command. Replies with `command`'s text when it returns one; anyone but
+ * the owner in a private chat is ignored, and the update goes no further (so a stranger's command
+ * never reaches the pairing handler).
+ */
+export function registerCommandHandler(
+  bot: Bot,
+  owner: Owner,
+  commands: readonly OwnerCommand[],
+  command: (name: string, argument: string) => string | undefined,
+): void {
+  for (const { name } of commands) {
+    bot.command(name, async (context) => {
+      if (!isOwnerCommand({ fromId: context.from?.id, chatType: context.chat.type }, owner.id)) {
+        return
+      }
+      const reply = command(name, context.match)
+      if (reply !== undefined) {
+        await context.reply(reply)
+      }
+    })
+  }
+}
+
+/**
+ * Shows `commands` in the owner's chat menu only, so lists set in BotFather stay. Fire and forget:
+ * a failure is logged by error code, never by text (it can embed the token), and never thrown.
+ */
+export function setCommandMenu(
+  bot: Bot,
+  chatId: number,
+  commands: readonly OwnerCommand[],
+  log: (line: string) => void,
+): void {
+  void (async () => {
+    try {
+      await bot.api.setMyCommands(
+        commands.map(({ name, description }) => ({ command: name, description })),
+        { scope: { type: 'chat', chat_id: chatId } },
+      )
+    } catch (error) {
+      log(
+        error instanceof GrammyError
+          ? `failed to set bot commands (${error.error_code})`
+          : 'failed to set bot commands',
+      )
+    }
+  })()
 }

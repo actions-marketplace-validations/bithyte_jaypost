@@ -1,4 +1,4 @@
-import type { MessageEnding, RequestResult, Settlement } from './types.ts'
+import type { MessageEnding, OwnerCommand, RequestResult, Settlement } from './types.ts'
 
 /** Hard cap on a request's timeout; also the timeout when the client sends none. */
 export const MAX_TIMEOUT_SECONDS = 300
@@ -12,3 +12,15 @@ export const CANCELLED_SETTLEMENT = { kind: 'cancelled' } as const satisfies Set
 export const EXPIRED_ENDING = { kind: 'expired' } as const satisfies MessageEnding
 /** Shared result for `ApprovalService.request` when its signal aborted. */
 export const CANCELLED_RESULT = { kind: 'cancelled' } as const satisfies RequestResult
+/** How many settled requests the service remembers; the oldest drop first. */
+export const HISTORY_LIMIT = 20
+/** Longest request summary in a command reply, in UTF-16 code units. */
+export const SUMMARY_MAX_LENGTH = 80
+/** How many history entries `/history` shows without an argument. */
+export const DEFAULT_HISTORY_COUNT = 10
+/** The commands the owner can send, in menu order. */
+export const OWNER_COMMANDS: readonly OwnerCommand[] = [
+  { name: 'pending', description: 'List open requests' },
+  { name: 'cancel', description: 'Reject all open requests with their timeout answers' },
+  { name: 'history', description: 'Show recent answers' },
+]

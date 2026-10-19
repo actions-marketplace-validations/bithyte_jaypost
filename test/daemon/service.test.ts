@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
+import { OWNER_COMMANDS } from '../../src/approval/index.ts'
 import { NO_AUTH } from '../../src/auth/index.ts'
 import type { Config } from '../../src/config/index.ts'
 import { startService } from '../../src/daemon/index.ts'
@@ -211,6 +212,23 @@ test('owner setting without pairing support is refused at start', async () => {
       log: vi.fn(),
     }),
   ).rejects.toThrow('provider "fake" has an owner setting but no pairing support')
+})
+
+test('cancel command answers a pending request with its timeout option', async () => {
+  const { url, runtime } = await start(createFakeProvider())
+  const response = post(url, '/request', REQUEST)
+  await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
+  expect(runtime.handlers?.command('cancel', '')).toMatch(/^Rejected 1\n\nDeploy\?\n→ Decline/)
+  const result = await response
+  expect(result.status).toBe(200)
+  expect(await result.json()).toEqual({ answer: 'Decline', timedOut: false })
+})
+
+test('handlers carry the owner commands and stay silent for unknown ones', async () => {
+  const { runtime } = await start(createFakeProvider())
+  expect(runtime.handlers?.commands).toEqual(OWNER_COMMANDS)
+  expect(runtime.handlers?.command('nope', '')).toBeUndefined()
+  expect(runtime.handlers?.command('pending', '')).toBe('Nothing pending.')
 })
 
 test('a request pending at stop is expired by the next start', async () => {

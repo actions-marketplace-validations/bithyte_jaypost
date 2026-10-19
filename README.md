@@ -155,7 +155,7 @@ The request stays open until you tap a button or the timeout fires, then returns
 { "answer": "Approve", "timedOut": false }
 ```
 
-On timeout, `answer` is `timeoutOption` and `timedOut` is `true`. Many requests can be pending at once.
+On timeout, `answer` is `timeoutOption` and `timedOut` is `true`. If the owner sends `/cancel`, every open request returns its `timeoutOption` with `timedOut: false`. Many requests can be pending at once.
 
 `POST /request` body:
 
@@ -293,6 +293,16 @@ telegram-ask reset-owner
 ```
 
 It asks first, clears the owner, restarts the service and waits for a new pairing.
+
+## Bot commands
+
+Send these to the bot in your private chat:
+
+- `/pending` lists the open requests, with the time left and the answer each gets on timeout.
+- `/cancel` rejects every open request with its `timeoutOption`.
+- `/history [N]` shows the last N answers, newest first (default 10, max 20).
+
+Only the paired owner's private chat gets replies. History is kept in memory and resets on restart. A request that is still being sent when you run `/cancel` isn't rejected.
 
 ## Commands
 

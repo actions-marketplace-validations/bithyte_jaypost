@@ -8,8 +8,10 @@ import type {
 import {
   createTelegramMessenger,
   formatPairingInstructions,
+  registerCommandHandler,
   registerPairingHandler,
   registerTapHandler,
+  setCommandMenu,
 } from './adapter.ts'
 import type { Owner } from './types.ts'
 
@@ -55,10 +57,15 @@ export function createTelegramRuntime(
         log(`bot error: ${describeError(error.error)}`)
       })
       registerTapHandler(bot, owner, handlers.answer, handlers.dismiss, log)
+      registerCommandHandler(bot, owner, handlers.commands, handlers.command)
       if (handlers.pair !== undefined) {
         registerPairingHandler(bot, handlers.pair, (id) => {
           owner.id = id
+          setCommandMenu(bot, id, handlers.commands, log)
         })
+      }
+      if (owner.id !== undefined) {
+        setCommandMenu(bot, owner.id, handlers.commands, log)
       }
       bot
         .start({ onStart: (botUser) => log(`bot @${botUser.username} polling`) })

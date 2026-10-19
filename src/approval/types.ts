@@ -20,11 +20,13 @@ export type RequestResult =
   | { readonly kind: 'cancelled' }
 
 /**
- * How a pending request ended; `answer` is the chosen option, or the timeout option for `timedOut`.
+ * How a pending request ended; `answer` is the chosen option, or the timeout option for `timedOut`
+ * and `rejected`.
  */
 export type Settlement =
   | { readonly kind: 'answered'; readonly answer: string }
   | { readonly kind: 'timedOut'; readonly answer: string }
+  | { readonly kind: 'rejected'; readonly answer: string }
   | { readonly kind: 'cancelled' }
 
 /**
@@ -73,6 +75,33 @@ export type ApprovalServiceOptions = {
 /** A pending request with its timeout timer and the resolver that settles it. */
 export type PendingEntry = {
   readonly request: ApprovalRequest
+  readonly openedAt: Date
   readonly timer: ReturnType<typeof setTimeout>
   readonly resolve: (settlement: Settlement) => void
+}
+
+/** A settled request as kept in the service's in-memory history. */
+export type HistoryEntry = {
+  readonly text: string
+  readonly settlement: Settlement
+  readonly settledAt: Date
+}
+
+/** An open request as listed to the owner, oldest first. */
+export type PendingSummary = {
+  readonly id: string
+  readonly request: ApprovalRequest
+  readonly openedAt: Date
+}
+
+/** A command the owner can send to the bot; `description` is its menu text. */
+export type OwnerCommand = {
+  readonly name: 'pending' | 'cancel' | 'history'
+  readonly description: string
+}
+
+/** Inputs `runOwnerCommand` can't get from the service: the clock and the reply length limit. */
+export type OwnerCommandOptions = {
+  readonly now: () => Date
+  readonly maxTextLength: number
 }

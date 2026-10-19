@@ -1,8 +1,8 @@
 import { CANCELLED_SETTLEMENT } from './constants.ts'
-import type { ApprovalRequest, PendingEntry, Settlement } from './types.ts'
+import type { ApprovalRequest, PendingEntry, PendingSummary, Settlement } from './types.ts'
 
 /**
- * Open requests by id, each settling exactly once (answer, timeout or cancel); settling clears its
+ * Open requests by id, each settling exactly once (answer, timeout, reject or cancel); settling clears its
  * timer.
  */
 export class PendingRequests {
@@ -16,13 +16,13 @@ export class PendingRequests {
    * Registers `request` and resolves with how it settled. The timeout settles it with the request's
    * timeout option.
    */
-  open(id: string, request: ApprovalRequest): Promise<Settlement> {
+  open(id: string, request: ApprovalRequest, openedAt: Date): Promise<Settlement> {
     return new Promise((resolve) => {
       const timer = setTimeout(
         () => this.#settle(id, { kind: 'timedOut', answer: request.timeoutOption }),
         request.timeoutSeconds * 1000,
       )
-      this.#entries.set(id, { request, timer, resolve })
+      this.#entries.set(id, { request, openedAt, timer, resolve })
     })
   }
 
@@ -42,6 +42,23 @@ export class PendingRequests {
   /** Settles as cancelled; false when the id is unknown or already settled. */
   cancel(id: string): boolean {
     return this.#settle(id, CANCELLED_SETTLEMENT)
+  }
+
+  /** Open requests, oldest first. */
+  list(): readonly PendingSummary[] {
+    return [...this.#entries].map(([id, { request, openedAt }]) => ({ id, request, openedAt }))
+  }
+
+  /**
+   * Settles every open request as rejected with its timeout option, and returns what it rejected,
+   * oldest first.
+   */
+  rejectAll(): readonly PendingSummary[] {
+    const rejected = this.list()
+    for (const { id, request } of rejected) {
+      this.#settle(id, { kind: 'rejected', answer: request.timeoutOption })
+    }
+    return rejected
   }
 
   #settle(id: string, settlement: Settlement): boolean {

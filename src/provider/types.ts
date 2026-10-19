@@ -1,4 +1,4 @@
-import type { MessageEnding, MessageReference } from '../approval/index.ts'
+import type { MessageEnding, MessageReference, OwnerCommand } from '../approval/index.ts'
 import type { PairResult } from '../pairing/index.ts'
 
 export type SettingValue = string | number
@@ -44,6 +44,10 @@ export type RuntimeHandlers = {
   readonly dismiss: (id: string) => boolean
   /** Present only while pairing. */
   readonly pair?: (senderId: string, text: string) => PairResult
+  /** Commands the owner can send; the provider shows them in its menu if it has one. */
+  readonly commands: readonly OwnerCommand[]
+  /** Reply text for an owner command, or undefined to stay silent. Never throws. */
+  readonly command: (name: string, argument: string) => string | undefined
   /** The provider can't continue; the daemon logs `message` and exits 1. */
   readonly fatal: (message: string) => void
 }

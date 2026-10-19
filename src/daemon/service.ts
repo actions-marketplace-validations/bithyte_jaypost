@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { ApprovalService } from '../approval/index.ts'
+import { ApprovalService, OWNER_COMMANDS, runOwnerCommand } from '../approval/index.ts'
 import { loadConfig, resolveConfigPath, updateConfigFile } from '../config/index.ts'
 import type { Config } from '../config/index.ts'
 import { NotificationService } from '../notify/index.ts'
@@ -119,6 +119,12 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   const handlers: RuntimeHandlers = {
     answer: (id, optionIndex) => service.tap(id, optionIndex),
     dismiss: (id) => notifications?.dismiss(id) ?? false,
+    commands: OWNER_COMMANDS,
+    command: (name, argument) =>
+      runOwnerCommand(service, name, argument, {
+        now: () => new Date(),
+        maxTextLength: provider.maxTextLength,
+      }),
     fatal: options.fatal,
     ...(pairing === undefined ? {} : { pair }),
   }

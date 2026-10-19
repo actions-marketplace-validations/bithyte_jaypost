@@ -6,6 +6,12 @@ export type Owner = {
 /** What happened to a button tap: not from the owner, handled, or no longer valid. */
 export type TapRoute = 'ignored' | 'accepted' | 'expired'
 
+/** Who sent a command and where; `fromId` is absent for channel posts. */
+export type CommandMessage = {
+  readonly fromId: number | undefined
+  readonly chatType: string
+}
+
 /** The parts of an incoming Telegram message that pairing looks at. */
 export type PairingMessage = {
   readonly fromId: number

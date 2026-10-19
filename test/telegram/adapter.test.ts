@@ -1,11 +1,16 @@
 import { expect, test, vi } from 'vite-plus/test'
+import { GrammyError } from 'grammy'
 import type { Bot } from 'grammy'
+import { OWNER_COMMANDS } from '../../src/approval/index.ts'
 import {
   formatCallbackData,
   formatDismissData,
   parseDismissData,
   createTelegramMessenger,
   handlePairingMessage,
+  isOwnerCommand,
+  registerCommandHandler,
+  setCommandMenu,
   registerPairingHandler,
   registerTapHandler,
   routeTap,
@@ -331,4 +336,152 @@ test('formatLegacyInstructions takes the dashed code', () => {
   expect(formatLegacyInstructions('K7QM-4XPD', 'mybot')).toBe(
     'Send "/start K7QM-4XPD" to @mybot, or open https://t.me/mybot?start=K7QM4XPD',
   )
+})
+
+const TOKEN = '123:secret-token'
+
+type CommandContext = {
+  from?: { id: number }
+  chat: { type: string }
+  match: string
+  reply: ReturnType<typeof vi.fn>
+}
+
+function createCommandBot() {
+  const handlers = new Map<
+    string,
+    (context: CommandContext, next: () => Promise<void>) => unknown
+  >()
+  const command = vi.fn((name: string, handler: (context: CommandContext) => unknown) => {
+    handlers.set(name, handler)
+  })
+  return { bot: { command } as unknown as Bot, handlers }
+}
+
+function createCommandContext(overrides: Partial<CommandContext> = {}): CommandContext {
+  return {
+    from: { id: 9 },
+    chat: { type: 'private' },
+    match: '',
+    reply: vi.fn(async () => {}),
+    ...overrides,
+  }
+}
+
+test('isOwnerCommand: owner in private chat only', () => {
+  expect(isOwnerCommand({ fromId: 9, chatType: 'private' }, 9)).toBe(true)
+  expect(isOwnerCommand({ fromId: 8, chatType: 'private' }, 9)).toBe(false)
+  expect(isOwnerCommand({ fromId: 9, chatType: 'group' }, 9)).toBe(false)
+  expect(isOwnerCommand({ fromId: 9, chatType: 'private' }, undefined)).toBe(false)
+  expect(isOwnerCommand({ fromId: undefined, chatType: 'channel' }, 9)).toBe(false)
+})
+
+test('command handler replies to the owner with the core text', async () => {
+  const { bot, handlers } = createCommandBot()
+  const command = vi.fn((name: string, argument: string) => `${name}:${argument}`)
+  registerCommandHandler(bot, { id: 9 }, OWNER_COMMANDS, command)
+  expect([...handlers.keys()]).toEqual(['pending', 'cancel', 'history'])
+  const context = createCommandContext({ match: '5' })
+  await handlers.get('history')?.(
+    context,
+    vi.fn(async () => {}),
+  )
+  expect(context.reply).toHaveBeenCalledWith('history:5')
+})
+
+test('command handler is silent for strangers, groups and channel posts', async () => {
+  const { bot, handlers } = createCommandBot()
+  const command = vi.fn(() => 'text')
+  registerCommandHandler(bot, { id: 9 }, OWNER_COMMANDS, command)
+  const next = vi.fn(async () => {})
+  const contexts = [
+    createCommandContext({ from: { id: 8 } }),
+    createCommandContext({ chat: { type: 'group' } }),
+    createCommandContext({ from: undefined, chat: { type: 'channel' } }),
+  ]
+  for (const context of contexts) {
+    await handlers.get('pending')?.(context, next)
+    expect(context.reply).not.toHaveBeenCalled()
+  }
+  expect(command).not.toHaveBeenCalled()
+  expect(next).not.toHaveBeenCalled()
+})
+
+test('command handler is silent while no owner is paired', async () => {
+  const { bot, handlers } = createCommandBot()
+  const command = vi.fn(() => 'text')
+  registerCommandHandler(bot, { id: undefined }, OWNER_COMMANDS, command)
+  const context = createCommandContext()
+  await handlers.get('pending')?.(
+    context,
+    vi.fn(async () => {}),
+  )
+  expect(command).not.toHaveBeenCalled()
+  expect(context.reply).not.toHaveBeenCalled()
+})
+
+test('command handler sends nothing when the core returns undefined', async () => {
+  const { bot, handlers } = createCommandBot()
+  registerCommandHandler(bot, { id: 9 }, OWNER_COMMANDS, () => undefined)
+  const context = createCommandContext()
+  await handlers.get('pending')?.(
+    context,
+    vi.fn(async () => {}),
+  )
+  expect(context.reply).not.toHaveBeenCalled()
+})
+
+function createMenuBot(setMyCommands: ReturnType<typeof vi.fn>): Bot {
+  return { api: { setMyCommands } } as unknown as Bot
+}
+
+test('setCommandMenu sets the owner chat scope', async () => {
+  const setMyCommands = vi.fn(async () => true)
+  setCommandMenu(createMenuBot(setMyCommands), 9, OWNER_COMMANDS, vi.fn())
+  await vi.waitFor(() => expect(setMyCommands).toHaveBeenCalledTimes(1))
+  expect(setMyCommands).toHaveBeenCalledWith(
+    [
+      { command: 'pending', description: 'List open requests' },
+      { command: 'cancel', description: 'Reject all open requests with their timeout answers' },
+      { command: 'history', description: 'Show recent answers' },
+    ],
+    { scope: { type: 'chat', chat_id: 9 } },
+  )
+})
+
+test('setCommandMenu logs the code and never the error text', async () => {
+  const log = vi.fn()
+  const grammyError = new GrammyError(
+    `Call to setMyCommands failed for ${TOKEN}`,
+    { ok: false, error_code: 400, description: TOKEN },
+    'setMyCommands',
+    {},
+  )
+  setCommandMenu(
+    createMenuBot(vi.fn(async () => Promise.reject(grammyError))),
+    9,
+    OWNER_COMMANDS,
+    log,
+  )
+  await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(1))
+  setCommandMenu(
+    createMenuBot(vi.fn(async () => Promise.reject(new Error(TOKEN)))),
+    9,
+    OWNER_COMMANDS,
+    log,
+  )
+  await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(2))
+  expect(log.mock.calls.map((call) => call[0])).toEqual([
+    'failed to set bot commands (400)',
+    'failed to set bot commands',
+  ])
+})
+
+test('setCommandMenu survives a synchronous throw', async () => {
+  const log = vi.fn()
+  const setMyCommands = vi.fn(() => {
+    throw new Error(TOKEN)
+  })
+  expect(() => setCommandMenu(createMenuBot(setMyCommands), 9, OWNER_COMMANDS, log)).not.toThrow()
+  await vi.waitFor(() => expect(log).toHaveBeenCalledWith('failed to set bot commands'))
 })
