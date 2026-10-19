@@ -184,11 +184,11 @@ It fails open. If the service is down or not paired, the hook does nothing and t
 `telegram-ask send` wraps `/request` and `/notify` so scripts don't need curl:
 
 ```
-answer=$(telegram-ask send request 'Deploy?' -o Approve -o Decline --timeout-option Decline --timeout 60)
+answer=$(telegram-ask send request 'Deploy?' -o Approve -d Decline --timeout 60)
 telegram-ask send notify 'backup finished' --project nas
 ```
 
-`send request` prints the answer on stdout (the timeout option on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button. `send notify` prints nothing and exits 0 once sent. Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
+`send request` prints the answer on stdout (the `-d` default on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button; `-d` adds the default as the last button unless an `-o` already names it. `send notify` prints nothing and exits 0 once sent. Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
 
 ### From Node
 
@@ -471,7 +471,7 @@ telegram-ask start
 telegram-ask mcp [--port N]
 telegram-ask hook [--port N] [--project NAME] [--timeout S]
 telegram-ask openapi [FILE] [--port N]
-telegram-ask send request TEXT -o OPTION... --timeout-option OPTION [--timeout S] [--project NAME] [--json] [--port N]
+telegram-ask send request TEXT -o OPTION... -d DEFAULT [--timeout S] [--project NAME] [--json] [--port N]
 telegram-ask send notify TEXT [--project NAME] [--port N]
 ```
 

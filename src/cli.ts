@@ -373,7 +373,10 @@ export async function main(argv: readonly string[]): Promise<number> {
     .description('ask a question with buttons and print the tapped answer')
     .argument('<text>', 'question to show')
     .requiredOption('-o, --option <label>', 'button label, repeat for each button', collect)
-    .requiredOption('--timeout-option <label>', 'answer printed on timeout; one of the options')
+    .requiredOption(
+      '-d, --default <label>',
+      'answer printed on timeout; added as the last button unless an -o already names it',
+    )
     .option(
       '--timeout <seconds>',
       'seconds to wait; default 300, max 86400 (24 h); longer values are capped',
@@ -387,7 +390,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         text: string,
         options: {
           readonly option: readonly string[]
-          readonly timeoutOption: string
+          readonly default: string
           readonly timeout?: number
           readonly project?: string
           readonly json?: boolean
@@ -398,8 +401,10 @@ export async function main(argv: readonly string[]): Promise<number> {
           runSendRequest(
             {
               text,
-              options: options.option,
-              timeoutOption: options.timeoutOption,
+              options: options.option.includes(options.default)
+                ? options.option
+                : [...options.option, options.default],
+              timeoutOption: options.default,
               ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
               ...(options.project === undefined ? {} : { project: options.project }),
               ...(options.json === undefined ? {} : { json: options.json }),

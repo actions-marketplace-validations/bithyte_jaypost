@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -57,13 +59,41 @@ test('mcp rejects a bad port with 2', async () => {
   expect(await main(['mcp', '--port', 'abc'])).toBe(2)
 })
 
-test('send request requires options and timeout option, and rejects a bad timeout', async () => {
+test('send request requires options and a default, and rejects a bad timeout', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-  expect(await main(['send', 'request', 'Deploy?', '--timeout-option', 'No'])).toBe(2)
+  expect(await main(['send', 'request', 'Deploy?', '-d', 'No'])).toBe(2)
   expect(await main(['send', 'request', 'Deploy?', '-o', 'Yes', '-o', 'No'])).toBe(2)
-  const ask = ['send', 'request', 'Deploy?', '-o', 'Yes', '--timeout-option', 'Yes']
+  expect(await main(['send', 'request', 'Deploy?', '-o', 'Yes', '--timeout-option', 'No'])).toBe(2)
+  const ask = ['send', 'request', 'Deploy?', '-o', 'Yes', '-d', 'No']
   expect(await main([...ask, '--timeout', '0'])).toBe(2)
   expect(await main([...ask, '--timeout', 'soon'])).toBe(2)
+})
+
+test('send request adds the default as the last button unless an option already names it', async () => {
+  const bodies: unknown[] = []
+  const server = createServer((request, response) => {
+    let body = ''
+    request.on('data', (chunk: Buffer) => (body += chunk.toString()))
+    request.on('end', () => {
+      bodies.push(JSON.parse(body))
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ answer: 'Decline', timedOut: true }))
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = String((server.address() as AddressInfo).port)
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  try {
+    const ask = ['send', 'request', 'Deploy?', '--port', port]
+    expect(await main([...ask, '-o', 'Approve', '-d', 'Decline'])).toBe(0)
+    expect(await main([...ask, '-o', 'Decline', '-o', 'Approve', '--default', 'Decline'])).toBe(0)
+  } finally {
+    server.close()
+  }
+  expect(bodies).toEqual([
+    { text: 'Deploy?', options: ['Approve', 'Decline'], timeoutOption: 'Decline' },
+    { text: 'Deploy?', options: ['Decline', 'Approve'], timeoutOption: 'Decline' },
+  ])
 })
 
 test('send notify requires text', async () => {
