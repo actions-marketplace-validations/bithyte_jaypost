@@ -61,6 +61,13 @@ test('send notify requires text', async () => {
   expect(await main(['send', 'notify'])).toBe(2)
 })
 
+test('hook rejects a bad port, a bad timeout and positional arguments with 2', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  expect(await main(['hook', '--port', 'abc'])).toBe(2)
+  expect(await main(['hook', '--timeout', '0'])).toBe(2)
+  expect(await main(['hook', 'extra'])).toBe(2)
+})
+
 test('send exits 1 with the message on an invalid TELEGRAM_ASK_TOKEN', async () => {
   vi.stubEnv('TELEGRAM_ASK_TOKEN', 'short-secret')
   const error = vi.spyOn(console, 'error').mockImplementation(() => {})

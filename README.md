@@ -108,6 +108,54 @@ The service has to be running. A call made while it's down returns an error to t
 
 `project` needs a service at least as new as this release. An older service sends the message without the project line, and `notify_user` reports that the service is too old. Re-run `init` to upgrade.
 
+## Claude Code hook
+
+`telegram-ask hook` is a Claude Code hook command. It sends permission prompts to your phone and hands your tap back to Claude Code as the decision. It also forwards a few notifications (Claude is idle, needs input) as plain messages. Claude Code doesn't need to know about telegram-ask; it just runs the command.
+
+Add this to `~/.claude/settings.json`, or to a project's `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [{ "type": "command", "command": "telegram-ask hook", "timeout": 360 }]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt|elicitation_dialog|agent_needs_input",
+        "hooks": [{ "type": "command", "command": "telegram-ask hook" }]
+      }
+    ]
+  }
+}
+```
+
+Not verified yet: whether Claude Code shows the terminal dialog while the hook is still running. The supported flow is to answer on the phone, or tap `Ask in terminal` to hand the prompt back to the keyboard. If a terminal answer doesn't stop the hook, the question stays in Telegram until its timeout. `--timeout 120` shortens that.
+
+The buttons:
+
+| Button            | Effect                                                                                                                                                               |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Allow`           | Allows this one call.                                                                                                                                                |
+| `Always allow`    | Allows it and adds the rule Claude Code suggests, the same as its "don't ask again" choice. Only shown when Claude Code offers one and the rule fits in the message. |
+| `Deny`            | Denies the call.                                                                                                                                                     |
+| `Ask in terminal` | Makes no decision, so Claude Code shows its normal prompt.                                                                                                           |
+
+A timeout behaves like `Ask in terminal`. Long inputs that don't fit in the message offer only `Deny` and `Ask in terminal`. `AskUserQuestion` always stays in the terminal.
+
+- `PermissionRequest` has no matcher in the snippet, so every prompt goes to the phone. To narrow it, add `"matcher": "Bash|Edit|Write"` to that entry.
+- The `Notification` matcher leaves out `permission_prompt` on purpose. That notification fires a few seconds after a prompt appears, and the `PermissionRequest` hook has already asked.
+- `timeout: 360` is the 300 s wait, the 30 s HTTP grace and some slack, so Claude Code doesn't kill the hook before the service answers.
+- Without the package on `PATH`, use `npx -y telegram-ask hook` as the command. npx adds startup time to every prompt.
+- `--project NAME` sets the `[name]` line. Default is the Claude Code project folder.
+- `--timeout S` is how long to wait for a tap on a permission prompt. Default and max 300.
+- `--port N` picks the port as for [`mcp`](#agents-mcp), including `PORT`. Hooks inherit Claude Code's environment, so a `PORT` meant for your own app (say `PORT=3000`) points the hook at the wrong place. Pass `--port` then.
+- It finds the API token the same way `mcp` and `send` do: `TELEGRAM_ASK_TOKEN`, else `~/.config/telegram-ask/token`.
+
+It fails open. If the service is down or not paired, the hook does nothing and the terminal prompt works as usual. In `-p` (non-interactive) mode there's no terminal prompt, so no decision means Claude Code denies.
+
 ## Scripts and tools (HTTP API)
 
 ### From the shell
@@ -314,6 +362,7 @@ telegram-ask reset-owner
 telegram-ask uninstall
 telegram-ask start
 telegram-ask mcp [--port N]
+telegram-ask hook [--port N] [--project NAME] [--timeout S]
 telegram-ask openapi [FILE] [--port N]
 telegram-ask send request TEXT -o OPTION... --timeout-option OPTION [--timeout S] [--project NAME] [--json] [--port N]
 telegram-ask send notify TEXT [--project NAME] [--port N]
@@ -326,6 +375,7 @@ telegram-ask send notify TEXT [--project NAME] [--port N]
 - `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. For systemd, `state.json` stays. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files (for systemd that includes `state.json`). For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
+- `hook`: a Claude Code hook that sends permission prompts to Telegram. See [Claude Code hook](#claude-code-hook).
 - `openapi`: prints the API's OpenAPI spec, or writes it to `FILE`. See [OpenAPI spec](#openapi-spec).
 - `send request` / `send notify`: the HTTP API from a shell. See [From the shell](#from-the-shell).
 

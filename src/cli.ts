@@ -21,6 +21,8 @@ import {
 import type { InitArgs, SendDeps } from './commands/index.ts'
 import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
 import { runService } from './daemon/index.ts'
+import { readHookInput, runHook } from './hook/index.ts'
+import type { HookDeps } from './hook/index.ts'
 import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
 import { resolveMcpPort, runMcp } from './mcp/index.ts'
 import type { InstallPaths, Target, TargetName } from './install/index.ts'
@@ -69,6 +71,18 @@ function createSendDeps(flagPort: number | undefined, signal: AbortSignal): Send
   }
 }
 
+function createHookDeps(flagPort: number | undefined, signal: AbortSignal): HookDeps {
+  return {
+    port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
+    token: resolveClientToken(process.env, resolveTokenFile(process.env)),
+    signal,
+    readInput: () => readHookInput(process.stdin, signal),
+    print: (line) => console.log(line),
+    printError: (line) => console.error(line),
+    env: process.env,
+  }
+}
+
 function resolveMaxTextLength(): number {
   try {
     return loadConfig().provider.maxTextLength
@@ -100,7 +114,7 @@ function runOpenApiCommand(file: string | undefined, flagPort: number | undefine
 function runInitCommand(args: InitArgs): Promise<number> {
   const paths = resolveInstallPaths()
   const targets = createRealTargets(paths)
-  return runWithSigint((controller) =>
+  return runWithSignals((controller) =>
     runInit(args, {
       targets,
       paths,
@@ -128,16 +142,21 @@ function createRealTargets(paths: InstallPaths): Readonly<Record<TargetName, Tar
   )
 }
 
-async function runWithSigint(
+async function runWithSignals(
   run: (controller: AbortController) => Promise<number>,
+  signals: readonly NodeJS.Signals[] = ['SIGINT'],
 ): Promise<number> {
   const controller = new AbortController()
-  const onSigint = () => controller.abort()
-  process.on('SIGINT', onSigint)
+  const onSignal = () => controller.abort()
+  for (const signal of signals) {
+    process.on(signal, onSignal)
+  }
   try {
     return await run(controller)
   } finally {
-    process.off('SIGINT', onSigint)
+    for (const signal of signals) {
+      process.off(signal, onSignal)
+    }
   }
 }
 
@@ -158,7 +177,7 @@ function runResetOwnerCommand(): Promise<number> {
   const token = resolveClientToken(process.env, resolveTokenFile(process.env))
   const paths = resolveInstallPaths()
   const targets = createRealTargets(paths)
-  return runWithSigint((controller) =>
+  return runWithSignals((controller) =>
     runResetOwner({
       targets,
       paths,
@@ -175,7 +194,7 @@ function runResetOwnerCommand(): Promise<number> {
 function runUninstallCommand(): Promise<number> {
   const paths = resolveInstallPaths()
   const targets = createRealTargets(paths)
-  return runWithSigint((controller) =>
+  return runWithSignals((controller) =>
     runUninstall({
       targets,
       paths,
@@ -300,7 +319,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           readonly port?: number
         },
       ) => {
-        code = await runWithSigint((controller) =>
+        code = await runWithSignals((controller) =>
           runSendRequest(
             {
               text,
@@ -323,11 +342,39 @@ export async function main(argv: readonly string[]): Promise<number> {
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
     .action(
       async (text: string, options: { readonly project?: string; readonly port?: number }) => {
-        code = await runWithSigint((controller) =>
+        code = await runWithSignals((controller) =>
           runSendNotify(
             { text, ...(options.project === undefined ? {} : { project: options.project }) },
             createSendDeps(options.port, controller.signal),
           ),
+        )
+      },
+    )
+  program
+    .command('hook')
+    .description(
+      'answer Claude Code permission prompts and forward notifications (reads a hook event on stdin)',
+    )
+    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .option('--project <name>', 'shown as [name] (default: the Claude Code project folder)')
+    .option(
+      '--timeout <seconds>',
+      'seconds to wait for an answer; default and max 300',
+      parseTimeout,
+    )
+    .action(
+      async (options: {
+        readonly port?: number
+        readonly project?: string
+        readonly timeout?: number
+      }) => {
+        const args = {
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+        }
+        code = await runWithSignals(
+          (controller) => runHook(args, createHookDeps(options.port, controller.signal)),
+          ['SIGINT', 'SIGTERM'],
         )
       },
     )
