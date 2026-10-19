@@ -11,10 +11,13 @@ export { PendingRequests } from './pending.ts'
 export { ApprovalService, SendError } from './service.ts'
 export type {
   ApprovalRequest,
+  ApprovalServiceOptions,
+  MessageEnding,
   MessageReference,
   Messenger,
   Outcome,
   ParseResult,
   RequestResult,
+  RequestStore,
   Settlement,
 } from './types.ts'

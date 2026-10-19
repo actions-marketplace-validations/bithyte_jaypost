@@ -1,0 +1,61 @@
+import { expect, test } from 'vite-plus/test'
+import { parseState } from '../../src/state/index.ts'
+
+const VALID = {
+  version: 1,
+  provider: 'telegram',
+  requests: [{ id: 'r1', reference: { chatId: 1, messageId: 2 }, text: 'Deploy?' }],
+  notifications: [
+    { id: 'n1', reference: { chatId: 1, messageId: 3 }, expiresAtMs: 1_792_400_000_000 },
+  ],
+}
+const VALID_RESULT = {
+  ok: true,
+  state: { requests: VALID.requests, notifications: VALID.notifications },
+}
+
+test('parses a valid file', () => {
+  expect(parseState(VALID, 'telegram')).toEqual(VALID_RESULT)
+})
+
+test('rejects an unknown version', () => {
+  expect(parseState({ ...VALID, version: 2 }, 'telegram')).toEqual({
+    ok: false,
+    reason: 'unsupported version',
+  })
+})
+
+test('rejects a file without a version', () => {
+  const { version: _version, ...raw } = VALID
+  expect(parseState(raw, 'telegram')).toEqual({ ok: false, reason: 'invalid or missing fields' })
+})
+
+test('rejects a wrong shape', () => {
+  const invalid = { ok: false, reason: 'invalid or missing fields' }
+  expect(parseState({ ...VALID, requests: 'x' }, 'telegram')).toEqual(invalid)
+  expect(parseState('nope', 'telegram')).toEqual(invalid)
+})
+
+test('rejects a provider mismatch', () => {
+  expect(parseState(VALID, 'fake')).toEqual({
+    ok: false,
+    reason: 'written for provider "telegram"',
+  })
+})
+
+test('rejects a record without a reference', () => {
+  const requests = [{ id: 'r1', text: 'Deploy?' }]
+  expect(parseState({ ...VALID, requests }, 'telegram')).toEqual({
+    ok: false,
+    reason: 'invalid or missing fields',
+  })
+})
+
+test('drops extra fields', () => {
+  const raw = {
+    ...VALID,
+    extra: 1,
+    requests: [{ ...VALID.requests[0], more: true }],
+  }
+  expect(parseState(raw, 'telegram')).toEqual(VALID_RESULT)
+})

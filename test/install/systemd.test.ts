@@ -155,12 +155,16 @@ test('already global: no npm install', async () => {
 test('remove without purge keeps config; with purge deletes it', async () => {
   const { t, paths } = make()
   const rec = await t.install(base)
+  const stateFile = join(dirname(paths.configFile), 'state.json')
+  writeFileSync(stateFile, '{}')
   await t.remove(rec, false)
   expect(existsSync(paths.systemdUnit)).toBe(false)
   expect(existsSync(paths.configFile)).toBe(true)
+  expect(existsSync(stateFile)).toBe(true)
   expect(calls).toContainEqual(['systemctl', ['--user', 'disable', '--now', 'telegram-ask']])
   await t.remove(rec, true)
   expect(existsSync(paths.configFile)).toBe(false)
+  expect(existsSync(stateFile)).toBe(false)
 })
 
 test('available, isRunning, restart, logsHint', async () => {
@@ -198,6 +202,8 @@ test('relative TELEGRAM_ASK_CONFIG is resolved to an absolute path and recorded'
 test('readSecrets, clearOwner and purge use the recorded configFile, not the env', async () => {
   const recorded = join(tmp, 'recorded.json')
   writeFileSync(recorded, JSON.stringify({ botToken: 'rt', ownerId: 5 }))
+  const recordedState = join(tmp, 'state.json')
+  writeFileSync(recordedState, '{}')
   const { t, paths } = make({ TELEGRAM_ASK_CONFIG: join(tmp, 'other.json') })
   const rec = { target: 'systemd' as const, port: 1, version: 'v', configFile: recorded }
   expect(await t.readSecrets(rec)).toEqual({
@@ -209,6 +215,7 @@ test('readSecrets, clearOwner and purge use the recorded configFile, not the env
   vi.spyOn(console, 'log').mockImplementation(() => {})
   await t.remove(rec, true)
   expect(existsSync(recorded)).toBe(false)
+  expect(existsSync(recordedState)).toBe(false)
   expect(existsSync(paths.configFile)).toBe(false)
 })
 

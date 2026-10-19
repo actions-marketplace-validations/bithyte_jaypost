@@ -14,3 +14,5 @@ test('formatFinalText appends line', () =>
   expect(formatFinalText('Deploy?', { kind: 'answered', answer: 'Yes' }, at)).toBe(
     'Deploy?\n\n✅ Yes, 09:05',
   ))
+test('expired', () =>
+  expect(formatResultLine({ kind: 'expired' }, at)).toBe('⌛ Expired (service restarted), 09:05'))

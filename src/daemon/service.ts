@@ -9,6 +9,7 @@ import { findOwnerSetting } from '../provider/index.ts'
 import type { RuntimeHandlers } from '../provider/index.ts'
 import { createApiServer } from '../server/index.ts'
 import type { StatusInfo } from '../server/index.ts'
+import { resolveStatePath, StateStore } from '../state/index.ts'
 
 export type ServiceOptions = {
   readonly config: Config
@@ -21,7 +22,12 @@ export type ServiceOptions = {
 
 export type RunningService = {
   readonly server: FastifyInstance
-  /** Closes the server and the provider runtime; never rejects. */
+  /** Starts cleanup of the previous run's messages once; resolves when done; never rejects. */
+  readonly recover: () => Promise<void>
+  /**
+   * Freezes the saved state first (so pending requests stay saved for the next start), then closes
+   * the server and the provider runtime; never rejects.
+   */
   readonly stop: () => Promise<void>
 }
 
@@ -36,7 +42,9 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
     throw new Error(check.reason)
   }
   const displayName = check.displayName
-  const service = new ApprovalService(runtime)
+  const store = new StateStore(resolveStatePath(configPath), provider.name, log)
+  const saved = store.load()
+  const service = new ApprovalService(runtime, undefined, undefined, { store })
   const sendNotification = runtime.sendNotification
   const notifications =
     sendNotification === undefined
@@ -45,7 +53,18 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
           { sendNotification, deleteMessage: runtime.deleteMessage },
           undefined,
           log,
+          { store },
         )
+  let recovery: Promise<void> | undefined
+  // Deferred to the caller so a second instance that fails to bind its port has no side effects.
+  const recover = (): Promise<void> => {
+    recovery ??= (async () => {
+      notifications?.restore(saved.notifications)
+      await service.expireOrphans(saved.requests)
+      await notifications?.deleteOverdue()
+    })().catch(() => undefined)
+    return recovery
+  }
   const ownerSetting = findOwnerSetting(provider)
   let pairing: Pairing | undefined
   let instructions: string | undefined
@@ -106,7 +125,10 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   runtime.start(handlers)
   return {
     server,
+    recover,
     stop: async () => {
+      store.freeze()
+      notifications?.stop()
       await Promise.allSettled([server.close(), runtime.stop()])
     },
   }
@@ -143,10 +165,12 @@ export async function runService(env: NodeJS.ProcessEnv = process.env): Promise<
     process.exit(1)
   }
   running.server.listen({ port: config.port, host: config.host }).then(
-    () =>
+    () => {
       console.log(
         `listening on ${config.host}:${config.port} (${config.auth.kind === 'token' ? 'token required' : 'no token'})`,
-      ),
+      )
+      void running.recover()
+    },
     (error: unknown) => {
       console.error('http server error:', error instanceof Error ? error.message : String(error))
       process.exit(1)

@@ -1,4 +1,4 @@
-import type { MessageReference, Settlement } from '../approval/index.ts'
+import type { MessageEnding, MessageReference } from '../approval/index.ts'
 import type { PairResult } from '../pairing/index.ts'
 
 export type SettingValue = string | number
@@ -50,17 +50,19 @@ export type RuntimeHandlers = {
 
 export type ProviderRuntime = {
   readonly checkCredentials: () => Promise<CredentialCheck>
+  /** The returned reference must be JSON-serializable (it's saved to the state file). */
   readonly sendRequest: (
     id: string,
     text: string,
     options: readonly string[],
   ) => Promise<MessageReference>
-  /** Request ended; called once per settled request. Absent means skipped. */
+  /** Request ended; called once per ended request, `expired` included. Absent means skipped. */
   readonly finalize?: (
     reference: MessageReference,
     text: string,
-    settlement: Settlement,
+    ending: MessageEnding,
   ) => Promise<void>
+  /** The returned reference must be JSON-serializable (it's saved to the state file). */
   readonly sendNotification?: (id: string, text: string) => Promise<MessageReference>
   readonly deleteMessage?: (reference: MessageReference) => Promise<void>
   /** Present iff the provider pairs; `code` is raw (no dash). */

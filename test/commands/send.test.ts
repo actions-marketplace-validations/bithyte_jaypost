@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, expect, test } from 'vite-plus/test'
 import { ApprovalService } from '../../src/approval/index.ts'
-import type { MessageReference, Messenger, Settlement } from '../../src/approval/index.ts'
+import type { MessageEnding, MessageReference, Messenger } from '../../src/approval/index.ts'
 import { runSendNotify, runSendRequest } from '../../src/commands/index.ts'
 import type { SendDeps } from '../../src/commands/index.ts'
 import { NotificationService } from '../../src/notify/index.ts'
@@ -18,7 +18,7 @@ const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
 
 class RecordingMessenger implements Messenger {
   sent: { id: string; text: string }[] = []
-  finalized: Settlement[] = []
+  finalized: MessageEnding[] = []
 
   async sendRequest(id: string, text: string): Promise<MessageReference> {
     this.sent.push({ id, text })
@@ -28,7 +28,7 @@ class RecordingMessenger implements Messenger {
   async finalize(
     _reference: MessageReference,
     _text: string,
-    settlement: Settlement,
+    settlement: MessageEnding,
   ): Promise<void> {
     this.finalized.push(settlement)
   }

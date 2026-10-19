@@ -12,7 +12,7 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, expect, test } from 'vite-plus/test'
 import { ApprovalService } from '../../src/approval/index.ts'
-import type { MessageReference, Messenger, Settlement } from '../../src/approval/index.ts'
+import type { MessageEnding, MessageReference, Messenger } from '../../src/approval/index.ts'
 import { NotificationService } from '../../src/notify/index.ts'
 import type { Notifier } from '../../src/notify/index.ts'
 import { NO_AUTH, writeTokenFile } from '../../src/auth/index.ts'
@@ -25,7 +25,7 @@ const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
 
 class RecordingMessenger implements Messenger {
   sent: { id: string; text: string; options: readonly string[] }[] = []
-  finalized: { text: string; settlement: Settlement }[] = []
+  finalized: { text: string; settlement: MessageEnding }[] = []
 
   async sendRequest(
     id: string,
@@ -39,7 +39,7 @@ class RecordingMessenger implements Messenger {
   async finalize(
     _reference: MessageReference,
     text: string,
-    settlement: Settlement,
+    settlement: MessageEnding,
   ): Promise<void> {
     this.finalized.push({ text, settlement })
   }

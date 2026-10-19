@@ -179,7 +179,7 @@ Errors are JSON `{ "error": "..." }`:
 | 404    | Path isn't `/request`, `/notify`, `/status` or `/openapi.yaml`.         |
 | 405    | Method isn't POST.                                                      |
 
-If the caller disconnects early, the request is dropped and the Telegram message is edited to a "cancelled" line. Pending requests live in memory, so a restart drops them (callers see a connection error).
+If the caller disconnects early, the request is dropped and the Telegram message is edited to a "cancelled" line. A restart still drops pending requests (callers see a connection error), but when the service comes back it edits their Telegram messages to an expired line.
 
 ### Send a notification
 
@@ -214,8 +214,6 @@ Errors are JSON `{ "error": "..." }`:
 | 405    | Method isn't POST.                                                      |
 | 500    | Internal error.                                                         |
 
-Known issue: the 8-hour timers live in memory. If the service restarts before a notification's 8 hours are up, that message stays in the chat until you dismiss it (Dismiss still works after a restart).
-
 ### Status
 
 `GET /status` needs the token too. It returns `provider` and `displayName` along with `paired` and `bot`, plus `code` and `instructions` while unpaired. `telegram-ask status` is the friendlier way to read it.
@@ -245,7 +243,7 @@ Needs Podman 4.4 or newer and a systemd user session. Written:
 
 - `~/.config/telegram-ask/quadlet/` with a `Dockerfile`, `.env` (bot token, port, owner, `TELEGRAM_ASK_TOKEN`) and a `.dockerignore` that keeps `.env` out of the image build
 - `~/.config/containers/systemd/telegram-ask.container`
-- image `localhost/telegram-ask:<version>`, volume `telegram-ask-data` (holds the pairing state)
+- image `localhost/telegram-ask:<version>`, volume `telegram-ask-data` (holds the pairing state and `state.json`)
 
 Runs as a user service named `telegram-ask`. `init` enables linger (`loginctl enable-linger`) if needed so it survives logout; it tells you if that needs a password. Logs:
 
@@ -258,7 +256,7 @@ journalctl --user -u telegram-ask -f
 Needs Docker with the compose v2 plugin, and your user in the `docker` group (otherwise `init` reports it can't talk to docker and skips this target). Written:
 
 - `~/.config/telegram-ask/compose/` with `Dockerfile`, `compose.yaml`, `.env` (bot token, port, owner, `TELEGRAM_ASK_TOKEN`) and `.dockerignore`
-- a named volume `data` in the `telegram-ask` compose project
+- a named volume `data` in the `telegram-ask` compose project (holds the pairing state and `state.json`)
 
 Logs:
 
@@ -273,6 +271,7 @@ This target is untested on real Docker so far.
 No container. `init` installs the package globally with npm (`npm i -g`), or into `~/.local/share/telegram-ask/npm` if the global prefix isn't writable. If you ran `init` from an already-installed copy, it uses that. Written:
 
 - `~/.config/telegram-ask/config.json` (bot token, port, owner, `apiToken`)
+- `~/.config/telegram-ask/state.json` (pending requests and notification expiries, written by the service)
 - `~/.config/systemd/user/telegram-ask.service` with absolute paths to `node`, the CLI and the config file (`TELEGRAM_ASK_CONFIG` is always set in the unit, and `install.json` records the same path)
 
 Logs: `journalctl --user -u telegram-ask -f`. Linger is handled as for Quadlet.
@@ -314,7 +313,7 @@ telegram-ask send notify TEXT [--project NAME] [--port N]
 - `status`: target, version, port, where the token comes from (never its value), whether it's running, and pairing state (with the code and instructions if unpaired).
 - `test`: sends "This is a test" with Approve/Decline buttons (Decline on timeout) and prints the response.
 - `reset-owner`: clears the paired owner. See [Pairing](#pairing).
-- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
+- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. For systemd, `state.json` stays. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files (for systemd that includes `state.json`). For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
 - `openapi`: prints the API's OpenAPI spec, or writes it to `FILE`. See [OpenAPI spec](#openapi-spec).

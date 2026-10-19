@@ -1,4 +1,4 @@
-import type { Settlement } from './types.ts'
+import type { MessageEnding } from './types.ts'
 
 function formatTime(at: Date): string {
   const hours = String(at.getHours()).padStart(2, '0')
@@ -7,27 +7,29 @@ function formatTime(at: Date): string {
 }
 
 /**
- * One-line outcome shown under the request: answer, timeout or cancellation, with the local time as
- * HH:MM.
+ * One-line outcome shown under the request: answer, timeout, cancellation or expiry (service
+ * restarted), with the local time as HH:MM.
  */
-export function formatResultLine(settlement: Settlement, at: Date): string {
+export function formatResultLine(ending: MessageEnding, at: Date): string {
   const time = formatTime(at)
-  switch (settlement.kind) {
+  switch (ending.kind) {
     case 'answered':
-      return `✅ ${settlement.answer}, ${time}`
+      return `✅ ${ending.answer}, ${time}`
     case 'timedOut':
-      return `⏱ Timed out, ${settlement.answer}, ${time}`
+      return `⏱ Timed out, ${ending.answer}, ${time}`
     case 'cancelled':
       return `🚫 Cancelled, ${time}`
+    case 'expired':
+      return `⌛ Expired (service restarted), ${time}`
   }
 }
 
 /**
- * The original request text, a blank line, then the result line; this replaces the message once
- * settled.
+ * The original request text, a blank line, then the result line (see `formatResultLine`, including
+ * the expired line); this replaces the message once ended.
  */
-export function formatFinalText(original: string, settlement: Settlement, at: Date): string {
-  return `${original}\n\n${formatResultLine(settlement, at)}`
+export function formatFinalText(original: string, ending: MessageEnding, at: Date): string {
+  return `${original}\n\n${formatResultLine(ending, at)}`
 }
 
 /** The project name in brackets on its own first line, a blank line, then the text. */

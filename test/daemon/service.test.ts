@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { NO_AUTH } from '../../src/auth/index.ts'
 import type { Config } from '../../src/config/index.ts'
@@ -42,12 +42,48 @@ async function start(
   })
   await running.server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = running.server.server.address() as AddressInfo
-  const runtime = provider.runtimes[0]
+  const runtime = provider.runtimes.at(-1)
   if (runtime === undefined) {
     throw new Error('no runtime created')
   }
   return { url: `http://127.0.0.1:${port}`, runtime }
 }
+
+const EXPIRED_TEXT_PATTERN = /^Deploy\?\n\n⌛ Expired \(service restarted\), \d\d:\d\d$/
+
+function createRecordingProvider() {
+  const finalized: { reference: unknown; text: string; ending: unknown }[] = []
+  const deleted: unknown[] = []
+  const provider = createFakeProvider({
+    runtime: {
+      finalize: async (reference, text, ending) => {
+        finalized.push({ reference, text, ending })
+      },
+      sendNotification: async () => ({ n: 1000 }),
+      deleteMessage: async (reference) => {
+        deleted.push(reference)
+      },
+    },
+  })
+  return { provider, finalized, deleted }
+}
+
+function statePathOf(configPath: string): string {
+  return join(dirname(configPath), 'state.json')
+}
+
+function writeState(configPath: string, state: Record<string, unknown>): void {
+  writeFileSync(
+    statePathOf(configPath),
+    JSON.stringify({ version: 1, provider: 'fake', requests: [], notifications: [], ...state }),
+  )
+}
+
+const recoverRunning = async (): Promise<void> => {
+  await running?.recover()
+}
+
+const readState = (configPath: string) => JSON.parse(readFileSync(statePathOf(configPath), 'utf8'))
 
 const post = (url: string, path: string, body: unknown, signal?: AbortSignal) =>
   fetch(`${url}${path}`, {
@@ -175,6 +211,96 @@ test('owner setting without pairing support is refused at start', async () => {
       log: vi.fn(),
     }),
   ).rejects.toThrow('provider "fake" has an owner setting but no pairing support')
+})
+
+test('a request pending at stop is expired by the next start', async () => {
+  const configPath = createConfigPath()
+  const { provider, finalized } = createRecordingProvider()
+  const first = await start(provider, { configPath })
+  void post(first.url, '/request', REQUEST).catch(() => undefined)
+  await vi.waitFor(() => expect(first.runtime.sent).toHaveLength(1))
+  await running?.stop()
+  running = undefined
+  await start(provider, { configPath })
+  await recoverRunning()
+  expect(finalized).toContainEqual({
+    reference: { n: 1 },
+    text: expect.stringMatching(EXPIRED_TEXT_PATTERN),
+    ending: { kind: 'expired' },
+  })
+  expect(readState(configPath).requests).toEqual([])
+})
+
+test('a request left by a crash is expired on start', async () => {
+  const configPath = createConfigPath()
+  writeState(configPath, { requests: [{ id: 'old', reference: { n: 99 }, text: 'Deploy?' }] })
+  const { provider, finalized } = createRecordingProvider()
+  await start(provider, { configPath })
+  await recoverRunning()
+  expect(finalized).toEqual([
+    {
+      reference: { n: 99 },
+      text: expect.stringMatching(EXPIRED_TEXT_PATTERN),
+      ending: { kind: 'expired' },
+    },
+  ])
+  expect(readState(configPath).requests).toEqual([])
+})
+
+test('notifications are restored across a restart', async () => {
+  const configPath = createConfigPath()
+  writeState(configPath, {
+    notifications: [
+      { id: 'due', reference: { n: 98 }, expiresAtMs: Date.now() - 1 },
+      { id: 'later', reference: { n: 97 }, expiresAtMs: Date.now() + 60_000 },
+    ],
+  })
+  const { provider, deleted } = createRecordingProvider()
+  const { runtime } = await start(provider, { configPath })
+  await recoverRunning()
+  expect(deleted).toEqual([{ n: 98 }])
+  expect(runtime.handlers?.dismiss('later')).toBe(true)
+})
+
+test('state from another provider is discarded', async () => {
+  const configPath = createConfigPath()
+  writeState(configPath, {
+    provider: 'other',
+    requests: [{ id: 'old', reference: { n: 99 }, text: 'Deploy?' }],
+  })
+  const { provider, finalized } = createRecordingProvider()
+  const log = vi.fn()
+  await start(provider, { configPath, log })
+  await recoverRunning()
+  expect(finalized).toEqual([])
+  expect(log).toHaveBeenCalledWith(
+    `ignoring state file ${JSON.stringify(statePathOf(configPath))}: written for provider "other"`,
+  )
+})
+
+test("a corrupt state file doesn't stop startup", async () => {
+  const configPath = createConfigPath()
+  writeFileSync(statePathOf(configPath), '{')
+  const log = vi.fn()
+  const { url } = await start(createRecordingProvider().provider, { configPath, log })
+  expect((await fetch(`${url}/status`)).status).toBe(200)
+  expect(log).toHaveBeenCalledWith(
+    `ignoring state file ${JSON.stringify(statePathOf(configPath))}: invalid JSON`,
+  )
+})
+
+test("an unwritable state file doesn't fail /request or /notify", async () => {
+  const configPath = createConfigPath()
+  mkdirSync(statePathOf(configPath))
+  const log = vi.fn()
+  const { url, runtime } = await start(createRecordingProvider().provider, { configPath, log })
+  const notified = await post(url, '/notify', { text: 'hi' })
+  expect(notified.status).toBe(200)
+  const response = post(url, '/request', REQUEST)
+  await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
+  runtime.handlers?.answer(runtime.sent[0]?.id ?? '', 0)
+  expect((await response).status).toBe(200)
+  expect(log).toHaveBeenCalledWith(expect.stringContaining('failed to save state to'))
 })
 
 test('the service puts the configured token on the api', async () => {

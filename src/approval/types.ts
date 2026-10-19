@@ -1,3 +1,5 @@
+import type { RequestRecord } from '../state/index.ts'
+
 /** As produced by `parseApprovalRequest`: timeout is clamped, `timeoutOption` is in `options`. */
 export type ApprovalRequest = {
   readonly text: string
@@ -25,16 +27,25 @@ export type Settlement =
   | { readonly kind: 'timedOut'; readonly answer: string }
   | { readonly kind: 'cancelled' }
 
+/**
+ * How a request message ends; `expired` is only used by startup recovery, never by `PendingRequests`.
+ */
+export type MessageEnding = Settlement | { readonly kind: 'expired' }
+
 /** Outcome of validating a request body; `error` is the client-facing message. */
 export type ParseResult =
   | { readonly ok: true; readonly value: ApprovalRequest }
   | { readonly ok: false; readonly error: string }
 
-/** Opaque handle to a sent message; the core only hands it back to the messenger. */
+/**
+ * Opaque handle to a sent message; the core only hands it back to the messenger. Must be
+ * JSON-serializable, since references are saved to the state file.
+ */
 export type MessageReference = unknown
 
 /** Chat transport the service uses, so the approval logic stays independent of any provider. */
 export type Messenger = {
+  /** The returned reference must be JSON-serializable (it's saved to the state file). */
   readonly sendRequest: (
     id: string,
     text: string,
@@ -44,8 +55,19 @@ export type Messenger = {
   readonly finalize?: (
     reference: MessageReference,
     text: string,
-    settlement: Settlement,
+    ending: MessageEnding,
   ) => Promise<void>
+}
+
+/** Where in-flight requests are saved so a restart can expire them; calls must not throw. */
+export type RequestStore = {
+  readonly addRequest: (record: RequestRecord) => void
+  readonly removeRequest: (id: string) => void
+}
+
+/** Optional collaborators of `ApprovalService`. */
+export type ApprovalServiceOptions = {
+  readonly store?: RequestStore
 }
 
 /** A pending request with its timeout timer and the resolver that settles it. */

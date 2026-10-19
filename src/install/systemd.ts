@@ -3,6 +3,7 @@ import { dirname, join, resolve, sep } from 'node:path'
 import { readConfigFile, updateConfigFile } from '../config/index.ts'
 import { collectSettings, DEFAULT_PROVIDER, findProvider } from '../provider/index.ts'
 import type { Provider } from '../provider/index.ts'
+import { resolveStatePath } from '../state/index.ts'
 import { ensureLinger } from '../system/index.ts'
 import {
   CONFIG_ENV_PREFIX,
@@ -184,6 +185,7 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       await systemctl('daemon-reload')
       if (purge) {
         rmSync(resolveConfigFile(record), { force: true })
+        rmSync(resolveStatePath(resolveConfigFile(record)), { force: true })
         const prefix =
           record.cliPath !== undefined && isUnder(record.cliPath, fallbackRoot)
             ? `--prefix ${paths.userNpmPrefix} `
