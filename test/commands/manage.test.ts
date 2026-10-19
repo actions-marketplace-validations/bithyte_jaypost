@@ -43,6 +43,7 @@ function fake(name: TargetName, running = true): Mutable<Target> {
       order.push('clearOwner')
     }),
     isRunning: vi.fn(async () => running),
+    readAuditLog: vi.fn(),
     logsHint: vi.fn(() => 'logs hint'),
   } as unknown as Mutable<Target>
 }
@@ -275,7 +276,7 @@ test('uninstall passes purge answer through and removes install.json', async () 
     const d = base({ confirm: vi.fn(async () => ans) })
     expect(await runUninstall(d)).toBe(0)
     expect(d.confirm).toHaveBeenCalledWith(
-      'Also delete the saved credentials, API token and paired owner?',
+      'Also delete the saved credentials, API token, paired owner and question log?',
       false,
     )
     expect(d.targets.compose.remove).toHaveBeenCalledWith(
@@ -293,7 +294,7 @@ test('uninstall purge removes the token file; no purge keeps it', async () => {
     const d = base({ confirm: vi.fn(async () => purge) })
     expect(await runUninstall(d)).toBe(0)
     expect(d.confirm).toHaveBeenCalledWith(
-      'Also delete the saved credentials, API token and paired owner?',
+      'Also delete the saved credentials, API token, paired owner and question log?',
       false,
     )
     expect(existsSync(paths.tokenFile)).toBe(!purge)

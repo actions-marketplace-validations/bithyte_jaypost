@@ -3,6 +3,7 @@ import { PendingRequests } from '../../src/approval/index.ts'
 
 const req = {
   text: 't',
+  question: 't',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
   timeoutSeconds: 10,

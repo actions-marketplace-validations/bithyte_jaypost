@@ -178,6 +178,30 @@ export function createQuadletTarget(deps: TargetDeps): Target {
         throw new Error(`couldn't clear the owner in the container: ${result.stderr.trim()}`)
       }
     },
+    async readAuditLog(record) {
+      try {
+        const result = await exec('podman', ['exec', SERVICE_NAME, SERVICE_NAME, 'audit', 'dump'])
+        if (result.code === 0) {
+          return result.stdout
+        }
+      } catch {
+        // fall through to the one-off container
+      }
+      const result = await exec('podman', [
+        'run',
+        '--rm',
+        '-v',
+        `${VOLUME_NAME}:/data`,
+        formatImageTag(record.version),
+        SERVICE_NAME,
+        'audit',
+        'dump',
+      ])
+      if (result.code !== 0) {
+        throw new Error(`couldn't read the log from the container: ${result.stderr.trim()}`)
+      }
+      return result.stdout
+    },
     async isRunning() {
       return (await systemctl('is-active', '--quiet', SERVICE_NAME)).code === 0
     },

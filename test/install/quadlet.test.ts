@@ -12,6 +12,7 @@ let tmp: string
 let calls: [string, readonly string[]][]
 let podmanVersion: string
 let ownerOut: string
+let execOut: string
 let failBuild: boolean
 let failArgs: (args: readonly string[]) => string | undefined
 let failCtl: (args: readonly string[]) => boolean
@@ -30,6 +31,9 @@ const fakeExec: Exec = async (cmd, args) => {
   }
   if (cmd === 'podman' && args[0] === 'build' && failBuild) {
     return { code: 1, stdout: '', stderr: 'bad' }
+  }
+  if (cmd === 'podman' && args[0] === 'exec') {
+    return { code: 0, stdout: execOut, stderr: '' }
   }
   if (cmd === 'podman' && args[0] === 'run') {
     return { code: 0, stdout: ownerOut, stderr: '' }
@@ -68,6 +72,7 @@ beforeEach(() => {
   calls = []
   podmanVersion = '5.0.0'
   ownerOut = ''
+  execOut = ''
   failBuild = false
   failArgs = () => undefined
   failCtl = () => false
@@ -229,6 +234,34 @@ test('clearOwner throws when exec and fallback both fail', async () => {
   await t.install(base)
   failArgs = (a) => (a.includes('clear') ? 'boom' : undefined)
   await expect(t.clearOwner(rec)).rejects.toThrow(/clear the owner/)
+})
+
+test('readAuditLog execs audit dump in the running container', async () => {
+  const { t } = make()
+  execOut = 'LINES'
+  calls = []
+  expect(await t.readAuditLog(rec)).toBe('LINES')
+  expect(calls).toEqual([['podman', ['exec', 'telegram-ask', 'telegram-ask', 'audit', 'dump']]])
+})
+
+test('readAuditLog falls back to a one-off container when exec fails', async () => {
+  const { t } = make()
+  failArgs = (a) => (a[0] === 'exec' ? 'no such container' : undefined)
+  ownerOut = 'FROM RUN'
+  calls = []
+  expect(await t.readAuditLog(rec)).toBe('FROM RUN')
+  expect(calls).toContainEqual([
+    'podman',
+    ['run', '--rm', '-v', 'telegram-ask-data:/data', TAG, 'telegram-ask', 'audit', 'dump'],
+  ])
+})
+
+test('readAuditLog throws with stderr when both fail', async () => {
+  const { t } = make()
+  failArgs = () => 'boom'
+  await expect(t.readAuditLog(rec)).rejects.toThrow(
+    "couldn't read the log from the container: boom",
+  )
 })
 
 test('purge tolerates not-found errors', async () => {

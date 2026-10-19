@@ -4,11 +4,14 @@ import { realpathSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseSince } from './audit/index.ts'
 import { resolveClientToken, resolveTokenFile } from './auth/index.ts'
 import {
   createClackPrompts,
   defaultFetchStatus,
+  runAudit,
   runInit,
+  runLog,
   runOwner,
   runResetOwner,
   runSendNotify,
@@ -17,8 +20,9 @@ import {
   runTest,
   runUninstall,
   waitForPairing,
+  writeAll,
 } from './commands/index.ts'
-import type { InitArgs, SendDeps } from './commands/index.ts'
+import type { InitArgs, LogArgs, SendDeps } from './commands/index.ts'
 import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
 import { runService } from './daemon/index.ts'
 import { readHookInput, runHook } from './hook/index.ts'
@@ -55,6 +59,32 @@ function parseTimeout(rawTimeout: string): number {
     throw new InvalidArgumentError('must be a positive number of seconds')
   }
   return timeout
+}
+
+function parseSinceOption(raw: string): Date {
+  const since = parseSince(raw, new Date())
+  if (since === undefined || Number.isNaN(since.getTime())) {
+    throw new InvalidArgumentError(
+      'must be a duration like 12h, a date like 2026-10-18, or an ISO date-time',
+    )
+  }
+  return since
+}
+
+function parseProjectOption(raw: string): string {
+  const project = raw.trim()
+  if (project === '') {
+    throw new InvalidArgumentError('must not be empty')
+  }
+  return project
+}
+
+function parseLimit(raw: string): number {
+  const limit = PORT_PATTERN.test(raw) ? Number(raw) : NaN
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new InvalidArgumentError('must be a positive integer')
+  }
+  return limit
 }
 
 function collect(value: string, previous: readonly string[] | undefined): readonly string[] {
@@ -175,6 +205,19 @@ function runStatusCommand(): Promise<number> {
   })
 }
 
+function runLogCommand(args: LogArgs): Promise<number> {
+  const paths = resolveInstallPaths()
+  return runLog(args, {
+    targets: createRealTargets(paths),
+    paths,
+    env: process.env,
+    version: VERSION,
+    now: () => new Date(),
+    print: (text) => writeAll(`${text}\n`),
+    printError: (text) => console.error(text),
+  })
+}
+
 function runResetOwnerCommand(): Promise<number> {
   const token = resolveClientToken(process.env, resolveTokenFile(process.env))
   const paths = resolveInstallPaths()
@@ -254,6 +297,32 @@ export async function main(argv: readonly string[]): Promise<number> {
     .action(async () => {
       code = await runStatusCommand()
     })
+  program
+    .command('log')
+    .description('show the questions the service asked and how they ended')
+    .option(
+      '--since <when>',
+      'only newer questions: 12h, 7d, 2026-10-18 or an ISO date-time',
+      parseSinceOption,
+    )
+    .option('--project <name>', 'only questions from this project', parseProjectOption)
+    .option('-n, --limit <n>', 'show the last N (default 20, or all with --since)', parseLimit)
+    .option('--json', 'print one JSON entry per line')
+    .action(
+      async (options: {
+        readonly since?: Date
+        readonly project?: string
+        readonly limit?: number
+        readonly json?: boolean
+      }) => {
+        code = await runLogCommand({
+          ...(options.since === undefined ? {} : { since: options.since }),
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.limit === undefined ? {} : { limit: options.limit }),
+          ...(options.json === undefined ? {} : { json: options.json }),
+        })
+      },
+    )
   program
     .command('test')
     .description('send a test approval request')
@@ -390,6 +459,13 @@ export async function main(argv: readonly string[]): Promise<number> {
     .argument('[args...]')
     .action((args: string[]) => {
       code = runOwner(args)
+    })
+  // Runs inside containers to dump the audit log from the data volume.
+  program
+    .command('audit', { hidden: true })
+    .argument('[args...]')
+    .action((args: string[]) => {
+      code = runAudit(args)
     })
   try {
     await program.parseAsync(argv.length === 0 ? ['--help'] : argv, { from: 'user' })

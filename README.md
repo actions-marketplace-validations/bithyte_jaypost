@@ -399,6 +399,45 @@ Send these to the bot in your private chat:
 
 Only the paired owner's private chat gets replies. History is kept in memory and resets on restart. A request that is still being sent when you run `/cancel` isn't rejected.
 
+## Question log
+
+The service keeps a log of every question and how it ended: answered, timed out, cancelled, or still open. Notifications aren't logged. `telegram-ask log` prints it, oldest first, newest at the bottom:
+
+```
+2026-10-19 00:41  deploy  Approve              Force-push main to origin?
+2026-10-19 01:12  nas     Decline (timed out)  Delete 14 old snapshots?
+2026-10-19 02:03          cancelled            Run migrations on prod?
+2026-10-19 03:30  ci      interrupted          Merge #212?
+```
+
+The columns are the time asked (local), the project, the result and the first line of the question.
+
+- `--since WHEN` shows questions asked at or after WHEN: a duration (`30m`, `12h`, `7d`), a local date (`2026-10-18`, meaning local midnight) or an ISO date-time.
+- `--project NAME` matches the project name exactly.
+- `-n N` (or `--limit N`) shows the last N. Without `--since` the default is 20; with `--since` you get all of them. An explicit `-n` always wins.
+- `--json` prints one JSON object per line with the full text, the answer and both timestamps. For example, `telegram-ask log --since 7d --json | jq -r 'select(.status == "timedOut") | .text'`.
+
+Statuses are `answered`, `rejected` (shown as `<answer> (rejected)`), `timedOut`, `cancelled`, `pending` (still waiting), `interrupted` (the service stopped before the question ended) and `expired` where the service recorded one. An outcome this version doesn't know is shown as is.
+
+Where the log lives:
+
+| Install                     | File                                                                      |
+| --------------------------- | ------------------------------------------------------------------------- |
+| systemd                     | `audit.jsonl` next to the config file, normally `~/.config/telegram-ask/` |
+| Quadlet                     | `/data/audit.jsonl` in the `telegram-ask-data` volume                     |
+| Compose                     | `/data/audit.jsonl` in the compose project's `data` volume                |
+| no install, `start` by hand | next to `$TELEGRAM_ASK_CONFIG` or the default config path                 |
+
+At 10 MiB the file rotates to `audit.jsonl.1`, and the old `.1` is dropped, so about two files' worth of history is kept. `log` reads both. To delete the log by hand:
+
+```
+rm -f ~/.config/telegram-ask/audit.jsonl*
+podman exec telegram-ask rm -f /data/audit.jsonl /data/audit.jsonl.1
+docker compose -f ~/.config/telegram-ask/compose/compose.yaml exec bot rm -f /data/audit.jsonl /data/audit.jsonl.1
+```
+
+`uninstall` removes the log only when you also purge the credentials. Installs from 0.4.0 or earlier don't keep a log; run `telegram-ask init` to upgrade, then `log` works.
+
 ## Quiet hours
 
 Notifications can go out silently: they still show up in the chat, but without a sound or buzz. Approvals always ping, quiet or not, since an agent is blocked waiting on you.
@@ -424,6 +463,7 @@ A notification sent while quiet is deleted 8 hours after the quiet period ends, 
 ```
 telegram-ask init [systemd|compose|quadlet] [--port N] [--provider NAME] [--token|--no-token]
 telegram-ask status
+telegram-ask log [--since WHEN] [--project NAME] [-n N | --limit N] [--json]
 telegram-ask test
 telegram-ask reset-owner
 telegram-ask uninstall
@@ -437,9 +477,10 @@ telegram-ask send notify TEXT [--project NAME] [--port N]
 
 - `init`: installs or replaces the service. See [Install options](#install-options).
 - `status`: target, version, port, where the token comes from (never its value), whether it's running, and pairing state (with the code and instructions if unpaired).
+- `log`: prints the questions the service asked and how they ended. See [Question log](#question-log).
 - `test`: sends "This is a test" with Approve/Decline buttons (Decline on timeout) and prints the response.
 - `reset-owner`: clears the paired owner. See [Pairing](#pairing).
-- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. For systemd, `state.json` stays. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files (for systemd that includes `state.json`). For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
+- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token, paired owner and question log. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. For systemd, `state.json` and the question log stay. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files (for systemd that includes `state.json` and `audit.jsonl`). For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
 - `hook`: a Claude Code hook that sends permission prompts to Telegram. See [Claude Code hook](#claude-code-hook).
@@ -463,6 +504,8 @@ The API is meant for localhost only; don't expose it. The container targets publ
 On top of that, `init` makes an API token and the service answers 401 without it. It stops other users on the machine, a browser page or a container that can reach the port from calling the API. It doesn't stop a process running as you: it can read `~/.config/telegram-ask/token` (mode 0600) like the CLI does. `init --no-token` turns it off, which leaves any local process able to ask or notify.
 
 To rotate it, delete the token file and re-run `init`.
+
+The [question log](#question-log) keeps question text and answers on disk (mode 0600, or inside the data volume). Agents sometimes put secrets in their questions, so treat the file like the other secrets under `~/.config/telegram-ask/`.
 
 ## Releasing
 

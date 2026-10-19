@@ -219,6 +219,40 @@ test('readSecrets, clearOwner and purge use the recorded configFile, not the env
   expect(existsSync(paths.configFile)).toBe(false)
 })
 
+test('readAuditLog reads both files next to the recorded configFile', async () => {
+  const directory = join(tmp, 'recorded-dir')
+  mkdirSync(directory)
+  writeFileSync(join(directory, 'audit.jsonl.1'), 'old\n')
+  writeFileSync(join(directory, 'audit.jsonl'), 'new\n')
+  const { t } = make({ TELEGRAM_ASK_CONFIG: join(tmp, 'other.json') })
+  const rec = {
+    target: 'systemd' as const,
+    port: 1,
+    version: 'v',
+    configFile: join(directory, 'config.json'),
+  }
+  expect(await t.readAuditLog(rec)).toBe('old\nnew\n')
+  expect(await t.readAuditLog({ ...rec, configFile: join(tmp, 'empty', 'config.json') })).toBe('')
+})
+
+test('purge deletes audit.jsonl and audit.jsonl.1; remove without purge keeps them', async () => {
+  const configFile = join(tmp, 'config.json')
+  writeFileSync(configFile, '{}')
+  const current = join(tmp, 'audit.jsonl')
+  const rotated = join(tmp, 'audit.jsonl.1')
+  writeFileSync(current, 'a\n')
+  writeFileSync(rotated, 'b\n')
+  const { t } = make()
+  const rec = { target: 'systemd' as const, port: 1, version: 'v', configFile }
+  await t.remove(rec, false)
+  expect(existsSync(current)).toBe(true)
+  expect(existsSync(rotated)).toBe(true)
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  await t.remove(rec, true)
+  expect(existsSync(current)).toBe(false)
+  expect(existsSync(rotated)).toBe(false)
+})
+
 test('install without ownerId keeps a stored owner', async () => {
   const { t, paths } = make()
   mkdirSync(dirname(paths.configFile), { recursive: true })

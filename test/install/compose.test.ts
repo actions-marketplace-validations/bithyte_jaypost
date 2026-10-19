@@ -18,6 +18,9 @@ const fakeExec: Exec = async (cmd, args) => {
   if (fail(cmd, args)) {
     return { code: 1, stdout: '', stderr: 'x' }
   }
+  if (args.includes('audit')) {
+    return { code: 0, stdout: 'LINES', stderr: '' }
+  }
   if (args.includes('owner') && args.includes('get')) {
     return { code: 0, stdout: ownerOut, stderr: '' }
   }
@@ -136,6 +139,35 @@ test('readSecrets prefers OWNER_ID in .env, falls back to owner get', async () =
   )
   ownerOut = ''
   expect(await t.readSecrets(rec)).toEqual({ provider: 'telegram', settings: { botToken: 't' } })
+})
+
+test('readAuditLog runs audit dump without a tty', async () => {
+  const { t, paths } = make()
+  expect(await t.readAuditLog(rec)).toBe('LINES')
+  expect(calls).toEqual([
+    [
+      'docker',
+      [
+        'compose',
+        '-f',
+        join(paths.composeDirectory, 'compose.yaml'),
+        'run',
+        '--rm',
+        '--no-deps',
+        '-T',
+        'bot',
+        'telegram-ask',
+        'audit',
+        'dump',
+      ],
+    ],
+  ])
+})
+
+test('readAuditLog throws with stderr when compose run fails', async () => {
+  const { t } = make()
+  fail = (_c, a) => a.includes('audit')
+  await expect(t.readAuditLog(rec)).rejects.toThrow("couldn't read the log from the container: x")
 })
 
 test('readSecrets on an old env file reads as telegram', async () => {

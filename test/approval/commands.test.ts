@@ -6,6 +6,7 @@ const AT = new Date(2026, 0, 1, 9, 5)
 const OPTIONS = { now: () => AT, maxTextLength: 3900 }
 const REQUEST: ApprovalRequest = {
   text: 'Deploy?',
+  question: 'Deploy?',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
   timeoutSeconds: 300,

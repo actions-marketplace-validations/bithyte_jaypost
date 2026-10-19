@@ -3,6 +3,7 @@ import { ApprovalService, RESULT_TTL_MS, SendError } from '../../src/approval/in
 import type { RequestRecord } from '../../src/state/index.ts'
 import type {
   ApprovalRequest,
+  AuditSink,
   MessageEnding,
   MessageReference,
   Messenger,
@@ -13,6 +14,7 @@ const at = new Date(2026, 0, 1, 9, 5)
 
 const req: ApprovalRequest = {
   text: 'Deploy?',
+  question: 'Deploy?',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
   timeoutSeconds: 30,
@@ -24,6 +26,7 @@ class FakeMessenger implements Messenger {
   finalized: { ref: MessageReference; text: string; settlement: MessageEnding }[] = []
   sendError: Error | undefined
   finalizeError: Error | undefined
+  order: string[] | undefined
 
   async sendRequest(
     id: string,
@@ -38,6 +41,7 @@ class FakeMessenger implements Messenger {
   }
 
   async finalize(ref: MessageReference, text: string, settlement: MessageEnding): Promise<void> {
+    this.order?.push('finalize')
     this.finalized.push({ ref, text, settlement })
     if (this.finalizeError) {
       throw this.finalizeError
@@ -62,6 +66,20 @@ function setup() {
     () => 'id1',
   )
   return { m, svc }
+}
+
+function createAudit(order?: string[]) {
+  const events: unknown[][] = []
+  const audit: AuditSink = {
+    asked: (id, request, when) => {
+      events.push(['asked', id, request, when])
+    },
+    settled: (id, ending, when) => {
+      order?.push('settled')
+      events.push(['settled', id, ending, when])
+    },
+  }
+  return { events, audit }
 }
 
 function createStore() {
@@ -457,6 +475,108 @@ test('expireOrphans without finalize drops the records', async () => {
   })
   await svc.expireOrphans(ORPHANS)
   expect(store.removed).toEqual(['a', 'b'])
+})
+
+test('audit records asked after the send and settled with the answer', async () => {
+  const m = new FakeMessenger()
+  const { events, audit } = createAudit()
+  const svc = new ApprovalService(
+    m,
+    () => at,
+    () => 'id1',
+    { audit },
+  )
+  const r = svc.request(req)
+  await flush()
+  svc.tap('id1', 0)
+  await r
+  expect(events).toEqual([
+    ['asked', 'id1', req, at],
+    ['settled', 'id1', { kind: 'answered', answer: 'Approve' }, at],
+  ])
+})
+
+test('audit records settled for timeout, abort and rejectAll', async () => {
+  const m = new FakeMessenger()
+  const { events, audit } = createAudit()
+  const svc = new ApprovalService(
+    m,
+    () => at,
+    () => 'id1',
+    { audit },
+  )
+  const timedOut = svc.request(req)
+  await flush()
+  await vi.advanceTimersByTimeAsync(30_000)
+  await timedOut
+  const controller = new AbortController()
+  const cancelled = svc.request(req, controller.signal)
+  await flush()
+  controller.abort()
+  await cancelled
+  const rejected = svc.request(req)
+  await flush()
+  svc.rejectAll()
+  await rejected
+  expect(events.filter((event) => event[0] === 'settled').map((event) => event[2])).toEqual([
+    { kind: 'timedOut', answer: 'Decline' },
+    { kind: 'cancelled' },
+    { kind: 'rejected', answer: 'Decline' },
+  ])
+})
+
+test('audit records settled before the final edit, even when finalize throws', async () => {
+  const m = new FakeMessenger()
+  const order: string[] = []
+  m.order = order
+  m.finalizeError = new Error('x')
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const { events, audit } = createAudit(order)
+  const svc = new ApprovalService(
+    m,
+    () => at,
+    () => 'id1',
+    { audit },
+  )
+  const r = svc.request(req)
+  await flush()
+  svc.tap('id1', 0)
+  await r
+  expect(order).toEqual(['settled', 'finalize'])
+  expect(events).toHaveLength(2)
+})
+
+test('audit records nothing when the send fails', async () => {
+  const m = new FakeMessenger()
+  m.sendError = new Error('down')
+  const { events, audit } = createAudit()
+  const svc = new ApprovalService(
+    m,
+    () => at,
+    () => 'id1',
+    { audit },
+  )
+  await expect(svc.request(req)).rejects.toBeInstanceOf(SendError)
+  expect(events).toEqual([])
+})
+
+test('expireOrphans records each orphan as expired', async () => {
+  const m = new FakeMessenger()
+  const { events, audit } = createAudit()
+  const svc = new ApprovalService(
+    m,
+    () => at,
+    () => 'id1',
+    { audit },
+  )
+  await svc.expireOrphans([
+    { id: 'old1', reference: m.ref, text: 'a' },
+    { id: 'old2', reference: m.ref, text: 'b' },
+  ])
+  expect(events).toEqual([
+    ['settled', 'old1', { kind: 'expired' }, at],
+    ['settled', 'old2', { kind: 'expired' }, at],
+  ])
 })
 
 test('start sends and returns the id and expiry without waiting', async () => {

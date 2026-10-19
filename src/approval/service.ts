@@ -11,6 +11,7 @@ import type { RequestRecord } from '../state/index.ts'
 import type {
   ApprovalRequest,
   ApprovalServiceOptions,
+  AuditSink,
   BackgroundEntry,
   HistoryEntry,
   MessageEnding,
@@ -38,6 +39,7 @@ export class ApprovalService {
   #now: () => Date
   #newId: () => string
   #store: RequestStore | undefined
+  #audit: AuditSink | undefined
   #pending = new PendingRequests()
   #history: HistoryEntry[] = []
   #background = new Map<string, BackgroundEntry>()
@@ -52,6 +54,7 @@ export class ApprovalService {
     this.#now = now
     this.#newId = newId
     this.#store = options.store
+    this.#audit = options.audit
   }
 
   /**
@@ -179,7 +182,9 @@ export class ApprovalService {
    */
   async expireOrphans(records: readonly RequestRecord[]): Promise<void> {
     for (const record of records) {
-      await this.#finalize(record.reference, record.text, EXPIRED_ENDING, this.#now())
+      const endedAt = this.#now()
+      this.#audit?.settled(record.id, EXPIRED_ENDING, endedAt)
+      await this.#finalize(record.reference, record.text, EXPIRED_ENDING, endedAt)
       this.#store?.removeRequest(record.id)
     }
   }
@@ -196,6 +201,7 @@ export class ApprovalService {
       this.#store?.addRequest({ id, reference, text: request.text })
     }
     const openedAt = this.#now()
+    this.#audit?.asked(id, request, openedAt)
     const settlement = this.#pending.open(id, request, openedAt)
     return { id, reference, openedAt, settlement }
   }
@@ -207,6 +213,7 @@ export class ApprovalService {
     settlement: Settlement,
   ): Promise<void> {
     const settledAt = this.#now()
+    this.#audit?.settled(id, settlement, settledAt)
     this.#history.push({ text: request.text, settlement, settledAt })
     if (this.#history.length > HISTORY_LIMIT) {
       this.#history.shift()

@@ -30,7 +30,7 @@ test('expired', () =>
 const OPENED_AT = new Date(2026, 9, 18, 9, 0, 0)
 const pendingOf = (text: string, timeoutSeconds = 300, options = ['Approve', 'Decline']) => ({
   id: text,
-  request: { text, options, timeoutOption: options.at(-1) ?? '', timeoutSeconds },
+  request: { text, question: text, options, timeoutOption: options.at(-1) ?? '', timeoutSeconds },
   openedAt: OPENED_AT,
 })
 const after = (ms: number) => new Date(OPENED_AT.getTime() + ms)

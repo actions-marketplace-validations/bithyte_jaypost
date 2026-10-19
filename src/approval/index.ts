@@ -31,6 +31,7 @@ export { ApprovalService, SendError } from './service.ts'
 export type {
   ApprovalRequest,
   ApprovalServiceOptions,
+  AuditSink,
   HistoryEntry,
   MessageEnding,
   MessageReference,

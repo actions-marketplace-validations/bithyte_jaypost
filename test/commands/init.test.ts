@@ -79,6 +79,7 @@ function fake(name: TargetName, ok = true, secrets: Secrets = NO_SECRETS): Mutab
     restart: vi.fn(),
     clearOwner: vi.fn(),
     isRunning: vi.fn(async () => true),
+    readAuditLog: vi.fn(),
     logsHint: vi.fn(() => `logs for ${name}`),
   } as unknown as Mutable<Target>
 }

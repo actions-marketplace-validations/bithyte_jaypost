@@ -108,6 +108,26 @@ export type StatusDeps = {
   readonly print: (text: string) => void
 }
 
+/** Parsed `log` flags; absent fields mean the user didn't pass them. */
+export type LogArgs = {
+  readonly since?: Date
+  readonly project?: string
+  readonly limit?: number
+  readonly json?: boolean
+}
+
+/** Everything `runLog` touches outside itself, injected for tests. */
+export type LogDeps = {
+  readonly targets: Readonly<Record<TargetName, Target>>
+  readonly paths: InstallPaths
+  readonly env: NodeJS.ProcessEnv
+  /** The running CLI's version, for the development exemption on the too-old check. */
+  readonly version: string
+  readonly now: () => Date
+  readonly print: (text: string) => void
+  readonly printError: (text: string) => void
+}
+
 /** Everything `runUninstall` touches outside itself, injected for tests. */
 export type UninstallDeps = {
   readonly targets: Readonly<Record<TargetName, Target>>

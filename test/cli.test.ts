@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -26,6 +27,15 @@ test('init rejects bad port and unknown target with 2', async () => {
   expect(await main(['init', '--port', 'abc'])).toBe(2)
   expect(await main(['init', '--port', '70000'])).toBe(2)
   expect(await main(['init', 'nope'])).toBe(2)
+})
+
+test('log rejects bad --since, --limit and empty --project with 2', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  expect(await main(['log', '--since', 'soon'])).toBe(2)
+  expect(await main(['log', '--since', '99999999999d'])).toBe(2)
+  expect(await main(['log', '-n', '0'])).toBe(2)
+  expect(await main(['log', '-n', 'x'])).toBe(2)
+  expect(await main(['log', '--project', ' '])).toBe(2)
 })
 
 test('init --help lists --provider', async () => {
@@ -97,4 +107,98 @@ test('openapi prints the spec without a file', async () => {
 test('openapi returns 1 when the file cannot be written', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   expect(await main(['openapi', '/nonexistent-directory/openapi.yaml'])).toBe(1)
+})
+
+function runAuditDump(args: readonly string[], directory: string) {
+  return spawnSync(process.execPath, ['src/cli.ts', 'audit', ...args], {
+    env: { ...process.env, TELEGRAM_ASK_CONFIG: join(directory, 'config.json') },
+    maxBuffer: 8 * 1024 * 1024,
+    encoding: 'utf8',
+  })
+}
+
+test('audit dump writes .1 then current from the config directory, whole', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'cli-audit-'))
+  try {
+    const current = `${'x'.repeat(2 * 1024 * 1024)}\n`
+    writeFileSync(join(directory, 'audit.jsonl.1'), 'old\n')
+    writeFileSync(join(directory, 'audit.jsonl'), current)
+    const result = runAuditDump(['dump'], directory)
+    expect(result.status).toBe(0)
+    expect(result.stdout.length).toBe(`old\n${current}`.length)
+    expect(result.stdout === `old\n${current}`).toBe(true)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('audit dump with no files prints nothing and exits 0', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'cli-audit-'))
+  try {
+    const result = runAuditDump(['dump'], directory)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('audit with an unknown subcommand exits 2', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'cli-audit-'))
+  try {
+    const result = runAuditDump(['nope'], directory)
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('Usage: audit dump')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+function bigAuditLog(count: number): string {
+  return Array.from({ length: count }, (_, index) =>
+    JSON.stringify({
+      v: 1,
+      event: 'asked',
+      id: `id${index}`,
+      at: '2026-10-19T07:00:00.000Z',
+      text: `question ${index} ${'x'.repeat(100)}`,
+      options: ['Approve', 'Decline'],
+      timeoutOption: 'Decline',
+      timeoutSeconds: 300,
+    }),
+  ).join('\n')
+}
+
+function runLogCli(args: readonly string[], directory: string) {
+  return spawnSync(process.execPath, ['src/cli.ts', 'log', ...args], {
+    env: {
+      ...process.env,
+      HOME: directory,
+      XDG_CONFIG_HOME: join(directory, 'xdg'),
+      TELEGRAM_ASK_CONFIG: join(directory, 'config.json'),
+    },
+    maxBuffer: 16 * 1024 * 1024,
+    encoding: 'utf8',
+  })
+}
+
+test('log writes output larger than a pipe buffer whole, as json and as a table', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'cli-log-'))
+  try {
+    writeFileSync(join(directory, 'audit.jsonl'), `${bigAuditLog(2500)}\n`)
+    const json = runLogCli(['--since', '2000-01-01', '--json'], directory)
+    expect(json.status).toBe(0)
+    expect(json.stdout.length).toBeGreaterThan(65_536 * 3)
+    const lines = json.stdout.split('\n')
+    expect(lines.at(-1)).toBe('')
+    expect(lines).toHaveLength(2501)
+    expect(JSON.parse(lines[2499] ?? '').id).toBe('id2499')
+    const table = runLogCli(['--since', '2000-01-01'], directory)
+    expect(table.status).toBe(0)
+    expect(table.stdout.length).toBeGreaterThan(65_536)
+    expect(table.stdout.endsWith('\n')).toBe(true)
+    expect(table.stdout.split('\n')).toHaveLength(2501)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })

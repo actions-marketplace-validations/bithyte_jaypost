@@ -63,6 +63,8 @@ export type Target = {
   readonly restart: (record: InstallRecord) => Promise<void>
   readonly clearOwner: (record: InstallRecord) => Promise<void>
   readonly isRunning: (record: InstallRecord) => Promise<boolean>
+  /** Raw contents of audit.jsonl.1 then audit.jsonl; '' when neither exists. Throws when it can't read. */
+  readonly readAuditLog: (record: InstallRecord) => Promise<string>
   readonly logsHint: (record: InstallRecord) => string
 }
 

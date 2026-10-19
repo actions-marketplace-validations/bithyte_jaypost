@@ -2,7 +2,12 @@ import type { RequestRecord } from '../state/index.ts'
 
 /** As produced by `parseApprovalRequest`: timeout is clamped, `timeoutOption` is in `options`. */
 export type ApprovalRequest = {
+  /** The text sent to the chat: the question, with a `[project]` line first when there is a project. */
   readonly text: string
+  /** The question as the caller sent it, without the `[project]` prefix. */
+  readonly question: string
+  /** Trimmed project name; omitted when the caller sent none. */
+  readonly project?: string
   readonly options: readonly string[]
   readonly timeoutOption: string
   readonly timeoutSeconds: number
@@ -90,6 +95,14 @@ export type RequestStore = {
 /** Optional collaborators of `ApprovalService`. */
 export type ApprovalServiceOptions = {
   readonly store?: RequestStore
+  readonly audit?: AuditSink
+}
+
+/** Records what happened to each request; implementations must not throw. */
+export type AuditSink = {
+  readonly asked: (id: string, request: ApprovalRequest, at: Date) => void
+  /** `ending` is a `Settlement`, or `expired` from startup recovery. */
+  readonly settled: (id: string, ending: MessageEnding, at: Date) => void
 }
 
 /** A pending request with its timeout timer and the resolver that settles it. */

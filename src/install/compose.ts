@@ -114,6 +114,22 @@ export function createComposeTarget(deps: TargetDeps): Target {
         throw new Error(`couldn't clear the owner in the container: ${result.stderr.trim()}`)
       }
     },
+    async readAuditLog() {
+      const result = await compose([
+        'run',
+        '--rm',
+        '--no-deps',
+        '-T',
+        'bot',
+        PACKAGE_NAME,
+        'audit',
+        'dump',
+      ])
+      if (result.code !== 0) {
+        throw new Error(`couldn't read the log from the container: ${result.stderr.trim()}`)
+      }
+      return result.stdout
+    },
     async isRunning() {
       const result = await compose(['ps', '--status', 'running', '-q', 'bot'])
       return result.code === 0 && result.stdout.trim() !== ''

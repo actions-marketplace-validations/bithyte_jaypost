@@ -1,5 +1,6 @@
 import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
+import { readAuditFiles, removeAuditFiles, resolveAuditPath } from '../audit/index.ts'
 import { readConfigFile, updateConfigFile } from '../config/index.ts'
 import { collectSettings, DEFAULT_PROVIDER, findProvider } from '../provider/index.ts'
 import type { Provider } from '../provider/index.ts'
@@ -186,6 +187,7 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       if (purge) {
         rmSync(resolveConfigFile(record), { force: true })
         rmSync(resolveStatePath(resolveConfigFile(record)), { force: true })
+        removeAuditFiles(resolveAuditPath(resolveConfigFile(record)))
         const prefix =
           record.cliPath !== undefined && isUnder(record.cliPath, fallbackRoot)
             ? `--prefix ${paths.userNpmPrefix} `
@@ -205,6 +207,9 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       updateConfigFile(resolveConfigFile(record), {
         [requireRecordOwner(providers, record).configKey]: null,
       })
+    },
+    async readAuditLog(record) {
+      return readAuditFiles(resolveAuditPath(resolveConfigFile(record)))
     },
     async isRunning() {
       return (await systemctl('is-active', '--quiet', SERVICE_NAME)).code === 0

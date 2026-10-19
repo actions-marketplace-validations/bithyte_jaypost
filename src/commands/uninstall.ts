@@ -4,8 +4,8 @@ import { PromptAborted } from './prompts.ts'
 import type { UninstallDeps } from './types.ts'
 
 /**
- * Removes the service after asking whether to purge the credentials, API token and owner. Returns
- * 0 on success or when nothing is installed, 1 on failure, 130 on interrupt.
+ * Removes the service after asking whether to purge the credentials, API token, owner and
+ * question log. Returns 0 on success or when nothing is installed, 1 on failure, 130 on interrupt.
  */
 export async function runUninstall(deps: UninstallDeps): Promise<number> {
   const { print } = deps
@@ -17,7 +17,7 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
   const { record } = existing
   try {
     const purge = await deps.confirm(
-      'Also delete the saved credentials, API token and paired owner?',
+      'Also delete the saved credentials, API token, paired owner and question log?',
       false,
     )
     await deps.targets[record.target].remove(record, purge)

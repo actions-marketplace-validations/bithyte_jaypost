@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { ApprovalService, OWNER_COMMANDS, runOwnerCommand } from '../approval/index.ts'
+import { AuditLog, resolveAuditPath } from '../audit/index.ts'
 import { loadConfig, resolveConfigPath, updateConfigFile } from '../config/index.ts'
 import type { Config } from '../config/index.ts'
 import { NotificationService } from '../notify/index.ts'
@@ -45,7 +46,8 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   const displayName = check.displayName
   const store = new StateStore(resolveStatePath(configPath), provider.name, log)
   const saved = store.load()
-  const service = new ApprovalService(runtime, undefined, undefined, { store })
+  const audit = new AuditLog(resolveAuditPath(configPath), { log })
+  const service = new ApprovalService(runtime, undefined, undefined, { store, audit })
   const quiet = new QuietService((patch) => updateConfigFile(configPath, patch), {
     ...(config.quietHours === undefined ? {} : { quietHours: config.quietHours }),
     ...(config.mutedUntil === undefined ? {} : { mutedUntil: config.mutedUntil }),

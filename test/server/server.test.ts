@@ -97,6 +97,7 @@ test('200 with outcome', async () => {
   expect(await res.json()).toEqual({ answer: 'Approve', timedOut: false })
   expect(request.mock.calls[0]?.[0]).toEqual({
     text: 'Deploy?',
+    question: 'Deploy?',
     options: ['Approve', 'Decline'],
     timeoutOption: 'Decline',
     timeoutSeconds: 30,

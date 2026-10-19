@@ -94,6 +94,8 @@ export function createApprovalRequestSchema(maxTextLength: number) {
       }
       return {
         text: checked.text,
+        question: text,
+        ...(project === undefined ? {} : { project }),
         options,
         timeoutOption,
         timeoutSeconds: Math.min(timeout ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS),

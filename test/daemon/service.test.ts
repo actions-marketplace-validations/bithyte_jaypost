@@ -426,3 +426,20 @@ test('the service puts the configured token on the api', async () => {
     (await fetch(`${url}/status`, { headers: { authorization: `Bearer ${token}` } })).status,
   ).toBe(200)
 })
+
+test('answered request is written to audit.jsonl next to the config', async () => {
+  const configPath = createConfigPath()
+  const { url, runtime } = await start(createFakeProvider(), { configPath })
+  const response = post(url, '/request', REQUEST)
+  await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
+  const id = runtime.sent[0]?.id ?? ''
+  runtime.handlers?.answer(id, 0)
+  await response
+  const records = readFileSync(join(dirname(configPath), 'audit.jsonl'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  expect(records).toHaveLength(2)
+  expect(records[0]).toMatchObject({ event: 'asked', id })
+  expect(records[1]).toMatchObject({ event: 'settled', id, outcome: 'answered', answer: 'Approve' })
+})

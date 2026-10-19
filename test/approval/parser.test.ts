@@ -6,7 +6,7 @@ const base = { text: 'This is a test', options: ['Approve', 'Decline'], timeoutO
 test('valid, default timeout', () =>
   expect(parseApprovalRequest(base, 3900)).toEqual({
     ok: true,
-    value: { ...base, timeoutSeconds: 300 },
+    value: { ...base, question: base.text, timeoutSeconds: 300 },
   }))
 test('custom timeout', () =>
   expect(parseApprovalRequest({ ...base, timeout: 30 }, 3900)).toMatchObject({
@@ -70,10 +70,35 @@ test('text limit comes from the caller', () => {
   })
 })
 
+test('request with a project keeps project and bare question, combined text for the chat', () => {
+  expect(parseApprovalRequest({ ...base, text: 'Deploy?', project: '  api ' }, 3900)).toEqual({
+    ok: true,
+    value: {
+      ...base,
+      text: '[api]\n\nDeploy?',
+      question: 'Deploy?',
+      project: 'api',
+      timeoutSeconds: 300,
+    },
+  })
+})
+
+test('request without a project has no project key and question equals text', () => {
+  const result = parseApprovalRequest({ ...base, text: 'Deploy?' }, 3900)
+  expect(result.ok && Object.hasOwn(result.value, 'project')).toBe(false)
+  expect(result.ok && result.value.question).toBe('Deploy?')
+})
+
 test('project goes on its own first line, trimmed', () =>
   expect(parseApprovalRequest({ ...base, project: ' api ' }, 3900)).toEqual({
     ok: true,
-    value: { ...base, text: '[api]\n\nThis is a test', timeoutSeconds: 300 },
+    value: {
+      ...base,
+      text: '[api]\n\nThis is a test',
+      question: base.text,
+      project: 'api',
+      timeoutSeconds: 300,
+    },
   }))
 test('project counts toward the text limit', () => {
   expect(parseApprovalRequest({ ...base, text: 'xxxx', project: 'ab' }, 10).ok).toBe(true)
