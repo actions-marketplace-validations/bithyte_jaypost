@@ -4,10 +4,11 @@ import { parseApprovalRequest, SendError } from '../approval/index.ts'
 import type { ApprovalService } from '../approval/index.ts'
 import { parseNotifyRequest } from '../notify/index.ts'
 import { MAX_BODY_BYTES } from './constants.ts'
+import { formatOpenApiYaml } from './openapi.ts'
 import type { ApiServerOptions, StatusInfo } from './types.ts'
 
 /**
- * Builds the HTTP API (POST /request, POST /notify, GET /status) without listening. Aborting the
+ * Builds the HTTP API (POST /request, POST /notify, GET /status, GET /openapi.yaml) without listening. Aborting the
  * connection cancels the pending request; errors return JSON bodies. Without `options.notifications`,
  * POST /notify answers 501.
  */
@@ -28,7 +29,7 @@ export function createApiServer(
     if (path === '/request' || path === '/notify') {
       return reply.code(405).header('Allow', 'POST').send({ error: 'method not allowed' })
     }
-    if (path === '/status') {
+    if (path === '/status' || path === '/openapi.yaml') {
       return reply.code(405).header('Allow', 'GET').send({ error: 'method not allowed' })
     }
     return reply.code(404).send({ error: 'not found' })
@@ -51,6 +52,12 @@ export function createApiServer(
     return reply.code(500).send({ error: 'internal server error' })
   })
   app.get('/status', async () => status())
+  // Containers publish the same port on the host, so the local port is the one clients use.
+  app.get('/openapi.yaml', async (request, reply) =>
+    reply
+      .type('application/yaml; charset=utf-8')
+      .send(formatOpenApiYaml({ port: request.socket.localPort ?? 0, maxTextLength })),
+  )
   app.post<{ Body: string | undefined }>('/request', async (request, reply) => {
     if (!status().paired) {
       return reply.code(503).send({ error: 'not paired' })

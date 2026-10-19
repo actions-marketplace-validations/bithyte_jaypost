@@ -2,9 +2,9 @@ import { z } from 'zod'
 import { checkProjectText, createProjectSchema, createTextSchema } from '../approval/index.ts'
 import type { NotifyParseResult } from './types.ts'
 
-/** Validates a /notify body; never throws. Returns the first problem as `error`. */
-export function parseNotifyRequest(body: unknown, maxTextLength: number): NotifyParseResult {
-  const schema = z
+/** Schema of a /notify body; also the source of the OpenAPI spec. */
+export function createNotifyRequestSchema(maxTextLength: number) {
+  return z
     .object(
       { text: createTextSchema(), project: createProjectSchema() },
       { error: 'body must be a JSON object' },
@@ -17,7 +17,11 @@ export function parseNotifyRequest(body: unknown, maxTextLength: number): Notify
       }
       return { text: checked.text }
     })
-  const result = schema.safeParse(body)
+}
+
+/** Validates a /notify body; never throws. Returns the first problem as `error`. */
+export function parseNotifyRequest(body: unknown, maxTextLength: number): NotifyParseResult {
+  const result = createNotifyRequestSchema(maxTextLength).safeParse(body)
   if (result.success) {
     return { ok: true, value: result.data }
   }

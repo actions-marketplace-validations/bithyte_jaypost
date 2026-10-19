@@ -156,7 +156,7 @@ Errors are JSON `{ "error": "..." }`:
 | 413    | Body over 64 KiB.                                                       |
 | 502    | Message couldn't be sent.                                               |
 | 500    | Internal error, or the request was cancelled.                           |
-| 404    | Path isn't `/request`, `/notify` or `/status`.                          |
+| 404    | Path isn't `/request`, `/notify`, `/status` or `/openapi.yaml`.         |
 | 405    | Method isn't POST.                                                      |
 
 If the caller disconnects early, the request is dropped and the Telegram message is edited to a "cancelled" line. Pending requests live in memory, so a restart drops them (callers see a connection error).
@@ -197,6 +197,10 @@ Known issue: the 8-hour timers live in memory. If the service restarts before a 
 ### Status
 
 `GET /status` returns `provider` and `displayName` along with `paired` and `bot`, plus `code` and `instructions` while unpaired. `telegram-ask status` is the friendlier way to read it.
+
+### OpenAPI spec
+
+The API is described in OpenAPI 3.1: [`docs/openapi.yaml`](docs/openapi.yaml) (port 8787, Telegram's text limit), `GET /openapi.yaml` on a running service, or `telegram-ask openapi [FILE]`. The last two use the install's port and its provider's text limit. Regenerate the docs copy with `npm run openapi`.
 
 ## Install options
 
@@ -278,6 +282,7 @@ telegram-ask reset-owner
 telegram-ask uninstall
 telegram-ask start
 telegram-ask mcp [--port N]
+telegram-ask openapi [FILE] [--port N]
 telegram-ask send request TEXT -o OPTION... --timeout-option OPTION [--timeout S] [--project NAME] [--json] [--port N]
 telegram-ask send notify TEXT [--project NAME] [--port N]
 ```
@@ -289,6 +294,7 @@ telegram-ask send notify TEXT [--project NAME] [--port N]
 - `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials and paired owner. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the token and owner without asking. Yes also removes the target's image, volume and files. For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `start`: runs the service in the foreground. The installed services use this.
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
+- `openapi`: prints the API's OpenAPI spec, or writes it to `FILE`. See [OpenAPI spec](#openapi-spec).
 - `send request` / `send notify`: the HTTP API from a shell. See [From the shell](#from-the-shell).
 
 ### One instance per token

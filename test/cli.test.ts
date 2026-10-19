@@ -1,4 +1,8 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
+import { parse } from 'yaml'
 import { main } from '../src/cli.ts'
 import { VERSION } from '../src/config/index.ts'
 
@@ -43,4 +47,26 @@ test('send request requires options and timeout option, and rejects a bad timeou
 test('send notify requires text', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   expect(await main(['send', 'notify'])).toBe(2)
+})
+
+test('openapi writes the spec with the given port to a file', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'telegram-ask-openapi-'))
+  try {
+    const file = join(directory, 'openapi.yaml')
+    expect(await main(['openapi', '--port', '9999', file])).toBe(0)
+    expect(parse(readFileSync(file, 'utf8')).servers).toEqual([{ url: 'http://127.0.0.1:9999' }])
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('openapi prints the spec without a file', async () => {
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  expect(await main(['openapi', '--port', '9999'])).toBe(0)
+  expect(String(write.mock.calls[0]?.[0])).toMatch(/^openapi: 3\.1\.0\n/)
+})
+
+test('openapi returns 1 when the file cannot be written', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(await main(['openapi', '/nonexistent-directory/openapi.yaml'])).toBe(1)
 })

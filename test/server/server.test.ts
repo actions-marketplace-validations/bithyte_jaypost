@@ -2,6 +2,7 @@ import net from 'node:net'
 import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
+import { parse } from 'yaml'
 import { SendError } from '../../src/approval/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
 import type { StatusInfo } from '../../src/server/index.ts'
@@ -145,6 +146,23 @@ test('500 on unexpected error without leaking details', async () => {
   const text = await res.text()
   expect(text).not.toContain('secret')
   expect(JSON.parse(text)).toHaveProperty('error')
+})
+
+test('GET /openapi.yaml serves the spec with the listening port and text limit', async () => {
+  const url = await start(vi.fn<RequestFn>(), unpaired)
+  const res = await fetch(`${url}/openapi.yaml`)
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-type')).toContain('application/yaml')
+  const document = parse(await res.text())
+  expect(document.servers).toEqual([{ url }])
+  expect(document.components.schemas.ApprovalRequest.properties.text.maxLength).toBe(3900)
+})
+
+test('405 on POST /openapi.yaml', async () => {
+  const url = await start(vi.fn<RequestFn>())
+  const res = await fetch(`${url}/openapi.yaml`, { method: 'POST' })
+  expect(res.status).toBe(405)
+  expect(res.headers.get('allow')).toBe('GET')
 })
 
 test('404 on GET /other, 405 on GET /request', async () => {

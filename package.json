@@ -34,6 +34,8 @@
     "test": "vp test",
     "check": "vp check",
     "build": "tsc -p tsconfig.build.json",
+    "openapi": "node scripts/openapi.ts",
+    "version": "npm run openapi && git add docs/openapi.yaml",
     "prepack": "npm run build"
   },
   "dependencies": {
@@ -42,6 +44,7 @@
     "commander": "^15.0.0",
     "fastify": "^5.12.7",
     "grammy": "^1.46.0",
+    "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

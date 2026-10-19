@@ -1,0 +1,224 @@
+openapi: 3.1.0
+info:
+  title: telegram-ask
+  version: 0.2.0
+  description: Local HTTP API that asks you a question in a chat app with buttons and returns your answer.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: http://127.0.0.1:8787
+security: []
+paths:
+  /request:
+    post:
+      operationId: request
+      summary: Ask a question with buttons and wait for the answer
+      description: Stays open until a button is tapped or the timeout fires. Disconnecting cancels the question.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalRequest"
+      responses:
+        "200":
+          description: The tapped answer, or `timeoutOption` on timeout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Outcome"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          description: Internal error, or the request was cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          $ref: "#/components/responses/SendFailed"
+        "503":
+          $ref: "#/components/responses/NotPaired"
+  /notify:
+    post:
+      operationId: notify
+      summary: Send a message that doesn't need an answer
+      description: Returns once the message is sent. The message has a Dismiss button and is deleted automatically later.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotifyRequest"
+      responses:
+        "200":
+          description: Sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    const: true
+                required:
+                  - ok
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "502":
+          $ref: "#/components/responses/SendFailed"
+        "503":
+          $ref: "#/components/responses/NotPaired"
+  /status:
+    get:
+      operationId: status
+      summary: Pairing state
+      responses:
+        "200":
+          description: "`code` and `instructions` are present only while unpaired."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+  /openapi.yaml:
+    get:
+      operationId: openapi
+      summary: This document
+      responses:
+        "200":
+          description: OpenAPI document for this service.
+          content:
+            application/yaml:
+              schema:
+                type: string
+components:
+  schemas:
+    ApprovalRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 3900
+          description: Message shown in the chat. Must not be blank. With `project`, the limit covers the `[project]` line too, so the text gets `project.length + 4` fewer characters.
+        project:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Shown as `[project]` on the first line. Trimmed.
+        options:
+          minItems: 1
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+          description: Button labels, unique.
+        timeoutOption:
+          type: string
+          description: Answer returned on timeout. Must be one of `options`.
+        timeout:
+          type: number
+          exclusiveMinimum: 0
+          description: Seconds to wait. Default and max 300; larger values are clamped.
+      required:
+        - text
+        - options
+        - timeoutOption
+    Outcome:
+      type: object
+      properties:
+        answer:
+          type: string
+          description: The tapped option, or `timeoutOption`.
+        timedOut:
+          type: boolean
+      required:
+        - answer
+        - timedOut
+    NotifyRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 3900
+          description: Message shown in the chat. Must not be blank. With `project`, the limit covers the `[project]` line too, so the text gets `project.length + 4` fewer characters.
+        project:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Shown as `[project]` on the first line. Trimmed.
+      required:
+        - text
+    Status:
+      oneOf:
+        - type: object
+          properties:
+            paired:
+              type: boolean
+              const: true
+            provider:
+              type: string
+            displayName:
+              type: string
+            bot:
+              type: string
+          required:
+            - paired
+          additionalProperties: {}
+        - type: object
+          properties:
+            paired:
+              type: boolean
+              const: false
+            code:
+              type: string
+            provider:
+              type: string
+            displayName:
+              type: string
+            instructions:
+              type: string
+            bot:
+              type: string
+          required:
+            - paired
+            - code
+          additionalProperties: {}
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+  responses:
+    BadRequest:
+      description: Body is not valid JSON or fails validation; `error` is the first problem found. Nothing is sent.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: Body over 65536 bytes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SendFailed:
+      description: The message couldn't be sent.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotPaired:
+      description: No owner is paired yet.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

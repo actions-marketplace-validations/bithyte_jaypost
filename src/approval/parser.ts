@@ -48,8 +48,11 @@ export function checkProjectText(
   return { ok: true, text: combined }
 }
 
-// Messages are part of the API (README error table); only the first issue is reported.
-function createApprovalRequestSchema(maxTextLength: number) {
+/**
+ * Schema of a /request body; also the source of the OpenAPI spec. Messages are part of the API
+ * (README error table); only the first issue is reported.
+ */
+export function createApprovalRequestSchema(maxTextLength: number) {
   return z
     .object(
       {

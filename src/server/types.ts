@@ -11,3 +11,9 @@ export type ApiServerOptions = {
   readonly providerName: string
   readonly notifications?: Pick<NotificationService, 'notify'>
 }
+
+/** What varies between installs in the OpenAPI document. */
+export type OpenApiOptions = {
+  readonly port: number
+  readonly maxTextLength: number
+}

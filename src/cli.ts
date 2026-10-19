@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Argument, Command, CommanderError, InvalidArgumentError, Option } from 'commander'
-import { realpathSync } from 'node:fs'
+import { realpathSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,7 +23,8 @@ import { runService } from './daemon/index.ts'
 import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
 import { resolveMcpPort, runMcp } from './mcp/index.ts'
 import type { InstallPaths, Target, TargetName } from './install/index.ts'
-import { PROVIDERS } from './provider/index.ts'
+import { DEFAULT_PROVIDER, PROVIDERS, requireProvider } from './provider/index.ts'
+import { formatOpenApiYaml } from './server/index.ts'
 import { isPortFree, realExec } from './system/index.ts'
 
 const PORT_PATTERN = /^\d+$/
@@ -64,6 +65,34 @@ function createSendDeps(flagPort: number | undefined, signal: AbortSignal): Send
     print: (text) => console.log(text),
     printError: (text) => console.error(text),
   }
+}
+
+function resolveMaxTextLength(): number {
+  try {
+    return loadConfig().provider.maxTextLength
+  } catch {
+    return requireProvider(PROVIDERS, DEFAULT_PROVIDER).maxTextLength
+  }
+}
+
+function runOpenApiCommand(file: string | undefined, flagPort: number | undefined): number {
+  const yaml = formatOpenApiYaml({
+    port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
+    maxTextLength: resolveMaxTextLength(),
+  })
+  if (file === undefined) {
+    process.stdout.write(yaml)
+    return 0
+  }
+  try {
+    writeFileSync(file, yaml)
+  } catch (error) {
+    console.error(
+      `couldn't write ${file}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    return 1
+  }
+  return 0
 }
 
 function runInitCommand(args: InitArgs): Promise<number> {
@@ -220,6 +249,14 @@ export async function main(argv: readonly string[]): Promise<number> {
       code = await runMcp(
         resolveMcpPort(options.port, process.env, resolveInstallPaths().installFile),
       )
+    })
+  program
+    .command('openapi')
+    .description('print the OpenAPI spec of the HTTP API, or write it to a file')
+    .argument('[file]', 'file to write; prints to stdout without one')
+    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .action((file: string | undefined, options: { readonly port?: number }) => {
+      code = runOpenApiCommand(file, options.port)
     })
   const send = program
     .command('send')

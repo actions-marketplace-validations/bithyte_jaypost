@@ -2,6 +2,7 @@ export { MAX_OPTION_LENGTH, MAX_PROJECT_LENGTH, MAX_TIMEOUT_SECONDS } from './co
 export { formatFinalText, formatProjectText, formatResultLine } from './formatter.ts'
 export {
   checkProjectText,
+  createApprovalRequestSchema,
   createProjectSchema,
   createTextSchema,
   parseApprovalRequest,
