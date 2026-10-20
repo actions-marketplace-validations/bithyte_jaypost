@@ -32,7 +32,7 @@ export function createTelegramRuntime(
   const bot = createBot(String(settings.botToken))
   const owner: Owner = { id: typeof settings.ownerId === 'number' ? settings.ownerId : undefined }
   const openQuestions: OpenQuestions = new Map()
-  const messenger = createTelegramMessenger(bot, owner, openQuestions)
+  const messenger = createTelegramMessenger(bot, owner, openQuestions, log)
   let stopped = false
   return {
     async checkCredentials(): Promise<CredentialCheck> {

@@ -11,6 +11,7 @@ import { createApiServer } from '../../src/server/index.ts'
 import type { StatusInfo } from '../../src/server/index.ts'
 import type { ApprovalRequest, RequestResult } from '../../src/approval/index.ts'
 import type { NotifyRequest } from '../../src/notify/index.ts'
+import type { FormattedText } from '../../src/format/index.ts'
 
 type RequestFn = (req: ApprovalRequest, signal?: AbortSignal) => Promise<RequestResult>
 type NotifyFn = (req: NotifyRequest) => Promise<void>
@@ -96,7 +97,7 @@ test('200 with outcome', async () => {
   expect(res.headers.get('content-type')).toContain('application/json')
   expect(await res.json()).toEqual({ answer: 'Approve', timedOut: false })
   expect(request.mock.calls[0]?.[0]).toEqual({
-    text: 'Deploy?',
+    message: { text: 'Deploy?', spans: [] },
     question: 'Deploy?',
     options: ['Approve', 'Decline'],
     timeoutOption: 'Decline',
@@ -189,7 +190,7 @@ test('GET /openapi.yaml serves the spec with the listening port and text limit',
   expect(res.headers.get('content-type')).toContain('application/yaml')
   const document = parse(await res.text())
   expect(document.servers).toEqual([{ url }])
-  expect(document.components.schemas.ApprovalRequest.properties.text.maxLength).toBe(3900)
+  expect(document.components.schemas.ApprovalRequest.properties.text.description).toContain('3900')
 })
 
 test('405 on POST /openapi.yaml', async () => {
@@ -323,7 +324,7 @@ test('project is folded into the request text', async () => {
   const url = await start(request)
   const res = await post(url, JSON.stringify({ ...valid, project: 'api' }))
   expect(res.status).toBe(200)
-  expect(request.mock.calls[0]?.[0].text).toBe('[api]\n\nDeploy?')
+  expect(request.mock.calls[0]?.[0].message.text).toBe('[api]\n\nDeploy?')
 })
 
 test('project is folded into the notification text', async () => {
@@ -331,7 +332,7 @@ test('project is folded into the notification text', async () => {
   const url = await start(vi.fn<RequestFn>(), undefined, notify)
   const res = await postNotify(url, JSON.stringify({ text: 'hi', project: 'api' }))
   expect(res.status).toBe(200)
-  expect(notify).toHaveBeenCalledWith({ text: '[api]\n\nhi' })
+  expect(notify).toHaveBeenCalledWith({ message: { text: '[api]\n\nhi', spans: [] } })
 })
 
 test('POST /notify returns ok once sent', async () => {
@@ -340,7 +341,7 @@ test('POST /notify returns ok once sent', async () => {
   const res = await postNotify(url, JSON.stringify({ text: 'hi' }))
   expect(res.status).toBe(200)
   expect(await res.json()).toEqual({ ok: true })
-  expect(notify).toHaveBeenCalledWith({ text: 'hi' })
+  expect(notify).toHaveBeenCalledWith({ message: { text: 'hi', spans: [] } })
 })
 
 test('POST /notify 400 on bad JSON and bad text, notify not called', async () => {
@@ -486,6 +487,38 @@ test('without a token a stray authorization header is ignored', async () => {
   expect(res.status).toBe(200)
 })
 
+test('markdown request reaches the provider as spans', async () => {
+  const request = vi.fn<RequestFn>(async () => ({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  }))
+  const notify = vi.fn<NotifyFn>(async () => {})
+  const url = await start(request, undefined, notify)
+  const body = { text: 'Run `ls`?', format: 'markdown' }
+  expect((await post(url, JSON.stringify({ ...valid, ...body }))).status).toBe(200)
+  expect(request.mock.calls[0]?.[0].message).toEqual({
+    text: 'Run ls?',
+    spans: [{ kind: 'code', offset: 4, length: 2 }],
+  })
+  expect((await postNotify(url, JSON.stringify(body))).status).toBe(200)
+  expect(notify).toHaveBeenCalledWith({
+    message: { text: 'Run ls?', spans: [{ kind: 'code', offset: 4, length: 2 }] },
+  })
+})
+
+test('an unknown format is a 400 on both endpoints', async () => {
+  const notify = vi.fn<NotifyFn>()
+  const url = await start(vi.fn<RequestFn>(), undefined, notify)
+  for (const [send, body] of [
+    [post, { ...valid, format: 'html' }],
+    [postNotify, { text: 'hi', format: 'html' }],
+  ] as const) {
+    const res = await send(url, JSON.stringify(body))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'format must be "plain" or "markdown"' })
+  }
+})
+
 test('held requests have no server-side time limit', async () => {
   await start(async () => ({ kind: 'cancelled' }))
   expect(server?.server.requestTimeout).toBe(0)
@@ -498,16 +531,20 @@ class RecordingMessenger implements Messenger {
   finalized: { text: string; ending: MessageEnding }[] = []
   failSend = false
 
-  async sendRequest(id: string, text: string): Promise<MessageReference> {
+  async sendRequest(id: string, message: FormattedText): Promise<MessageReference> {
     if (this.failSend) {
       throw new Error('telegram down')
     }
-    this.sent.push({ id, text })
+    this.sent.push({ id, text: message.text })
     return { chatId: 1, messageId: this.sent.length }
   }
 
-  async finalize(_reference: MessageReference, text: string, ending: MessageEnding): Promise<void> {
-    this.finalized.push({ text, ending })
+  async finalize(
+    _reference: MessageReference,
+    message: FormattedText,
+    ending: MessageEnding,
+  ): Promise<void> {
+    this.finalized.push({ text: message.text, ending })
   }
 }
 

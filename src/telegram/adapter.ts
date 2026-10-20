@@ -1,6 +1,9 @@
 import { GrammyError } from 'grammy'
 import type { Bot } from 'grammy'
+import type { MessageEntity } from 'grammy/types'
 import type { MessageReference, Messenger, OwnerCommand } from '../approval/index.ts'
+import { appendText } from '../format/index.ts'
+import type { FormattedText, Span } from '../format/index.ts'
 import type { Notifier } from '../notify/index.ts'
 import { formatCode } from '../pairing/index.ts'
 import type { PairResult } from '../pairing/index.ts'
@@ -80,6 +83,85 @@ export function routeTap(
   return tap(id, Number(rawIndex))
 }
 
+function toEntity(span: Span, offset: number, length: number): MessageEntity {
+  switch (span.kind) {
+    case 'pre':
+      return span.language === undefined
+        ? { type: 'pre', offset, length }
+        : { type: 'pre', offset, length, language: span.language }
+    case 'bold':
+    case 'italic':
+    case 'strikethrough':
+    case 'code':
+    case 'blockquote':
+      return { type: span.kind, offset, length }
+  }
+}
+
+function isCodeSpan(span: Span): boolean {
+  return span.kind === 'code' || span.kind === 'pre'
+}
+
+/**
+ * Maps spans to Telegram entities, obeying its nesting rules: bold, italic and strikethrough are
+ * split around code, and a blockquote holding code is dropped (code wins, it's what gets approved).
+ * Sorted by offset, longer first on ties. Never throws.
+ */
+export function toEntities(spans: readonly Span[]): MessageEntity[] {
+  const codeSpans = spans.filter(isCodeSpan)
+  const entities: MessageEntity[] = []
+  for (const span of spans) {
+    const end = span.offset + span.length
+    const inside = codeSpans.filter(
+      (code) => code !== span && code.offset >= span.offset && code.offset + code.length <= end,
+    )
+    if (isCodeSpan(span) || inside.length === 0) {
+      entities.push(toEntity(span, span.offset, span.length))
+      continue
+    }
+    if (span.kind === 'blockquote') {
+      continue
+    }
+    let pieceStart = span.offset
+    for (const code of inside) {
+      if (code.offset > pieceStart) {
+        entities.push(toEntity(span, pieceStart, code.offset - pieceStart))
+      }
+      pieceStart = code.offset + code.length
+    }
+    if (end > pieceStart) {
+      entities.push(toEntity(span, pieceStart, end - pieceStart))
+    }
+  }
+  return entities.toSorted(
+    (left, right) => left.offset - right.offset || right.length - left.length,
+  )
+}
+
+/**
+ * Runs `send` with the message's entities; when Telegram answers 400 to a call that carried them,
+ * logs once and repeats it without, so formatting never stops a message from arriving.
+ */
+async function sendFormatted<Result>(
+  message: FormattedText,
+  log: (line: string) => void,
+  send: (extra: { readonly entities?: MessageEntity[] }) => Promise<Result>,
+): Promise<Result> {
+  const entities = toEntities(message.spans)
+  if (entities.length === 0) {
+    return send({})
+  }
+  try {
+    return await send({ entities })
+  } catch (error) {
+    if (!(error instanceof GrammyError) || error.error_code !== 400) {
+      throw error
+    }
+    log(`telegram rejected formatting, sent as plain text: ${error.description}`)
+  }
+  return send({})
+}
+
 /**
  * Decides what an incoming message means: a reply to an open text question settles it, a non-reply
  * settles the only open text question, anything else is ignored or reported. Never throws; calls
@@ -133,23 +215,29 @@ export function createTelegramMessenger(
   bot: Bot,
   owner: Owner,
   openQuestions: OpenQuestions = new Map(),
+  log: (line: string) => void = console.error,
 ): Required<Messenger> & Required<Notifier> {
   return {
-    async sendRequest(id, text, options, allowText): Promise<MessageReference> {
-      if (owner.id === undefined) {
+    async sendRequest(id, message, options, allowText): Promise<MessageReference> {
+      const ownerId = owner.id
+      if (ownerId === undefined) {
         throw new Error('bot is not paired yet')
       }
       const hasButtons = options.length > 0
       const hint = hasButtons ? TEXT_HINT_WITH_BUTTONS : TEXT_HINT_WITHOUT_BUTTONS
-      const sent = await bot.api.sendMessage(owner.id, allowText ? `${text}\n\n${hint}` : text, {
-        ...(hasButtons && {
-          reply_markup: {
-            inline_keyboard: options.map((label, index) => [
-              { text: label, callback_data: formatCallbackData(id, index) },
-            ]),
-          },
+      const shown = allowText ? appendText(message, `\n\n${hint}`) : message
+      const sent = await sendFormatted(shown, log, (extra) =>
+        bot.api.sendMessage(ownerId, shown.text, {
+          ...extra,
+          ...(hasButtons && {
+            reply_markup: {
+              inline_keyboard: options.map((label, index) => [
+                { text: label, callback_data: formatCallbackData(id, index) },
+              ]),
+            },
+          }),
         }),
-      })
+      )
       openQuestions.set(formatMessageKey(sent.chat.id, sent.message_id), { id, allowText })
       return {
         chatId: sent.chat.id,
@@ -157,26 +245,30 @@ export function createTelegramMessenger(
         hasButtons,
       } satisfies TelegramMessageReference
     },
-    async finalize(reference, text) {
+    async finalize(reference, message) {
       const { chatId, messageId, hasButtons } = reference as TelegramMessageReference
       openQuestions.delete(formatMessageKey(chatId, messageId))
-      await bot.api.editMessageText(
-        chatId,
-        messageId,
-        text,
-        hasButtons === false ? {} : { reply_markup: { inline_keyboard: [] } },
+      await sendFormatted(message, log, (extra) =>
+        bot.api.editMessageText(chatId, messageId, message.text, {
+          ...extra,
+          ...(hasButtons !== false && { reply_markup: { inline_keyboard: [] } }),
+        }),
       )
     },
-    async sendNotification(id, text, options): Promise<MessageReference> {
-      if (owner.id === undefined) {
+    async sendNotification(id, message, options): Promise<MessageReference> {
+      const ownerId = owner.id
+      if (ownerId === undefined) {
         throw new Error('bot is not paired yet')
       }
-      const sent = await bot.api.sendMessage(owner.id, text, {
-        disable_notification: options.silent,
-        reply_markup: {
-          inline_keyboard: [[{ text: DISMISS_LABEL, callback_data: formatDismissData(id) }]],
-        },
-      })
+      const sent = await sendFormatted(message, log, (extra) =>
+        bot.api.sendMessage(ownerId, message.text, {
+          ...extra,
+          disable_notification: options.silent,
+          reply_markup: {
+            inline_keyboard: [[{ text: DISMISS_LABEL, callback_data: formatDismissData(id) }]],
+          },
+        }),
+      )
       return { chatId: sent.chat.id, messageId: sent.message_id } satisfies TelegramMessageReference
     },
     async deleteMessage(reference) {

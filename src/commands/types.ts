@@ -1,4 +1,5 @@
 import type { ClientToken } from '../auth/index.ts'
+import type { MessageFormat } from '../format/index.ts'
 import type { InstallPaths, Target, TargetName } from '../install/index.ts'
 import type { Provider } from '../provider/index.ts'
 import type { StatusInfo } from '../server/index.ts'
@@ -147,12 +148,17 @@ export type SendRequestArgs = {
   readonly timeoutOption: string
   readonly timeout?: number
   readonly project?: string
+  readonly format?: MessageFormat
   /** Print `{ answer, timedOut }` instead of the bare answer. */
   readonly json?: boolean
 }
 
 /** `send notify` input. */
-export type SendNotifyArgs = { readonly text: string; readonly project?: string }
+export type SendNotifyArgs = {
+  readonly text: string
+  readonly project?: string
+  readonly format?: MessageFormat
+}
 
 /** Where `send` talks to and writes; aborting `signal` cancels the call. */
 export type SendDeps = {

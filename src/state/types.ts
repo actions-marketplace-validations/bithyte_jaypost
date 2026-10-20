@@ -1,8 +1,14 @@
-/** A pending approval request. `reference` is the provider's opaque message reference. */
+import type { Span } from '../format/index.ts'
+
+/**
+ * A pending approval request. `reference` is the provider's opaque message reference; `spans` is
+ * omitted for plain text (and in files written before formatting existed).
+ */
 export type RequestRecord = {
   readonly id: string
   readonly reference: unknown
   readonly text: string
+  readonly spans?: readonly Span[]
 }
 
 /** A sent notification that is still waiting for its expiry. */

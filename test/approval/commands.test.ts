@@ -5,7 +5,7 @@ import type { ApprovalRequest } from '../../src/approval/index.ts'
 const AT = new Date(2026, 0, 1, 9, 5)
 const OPTIONS = { now: () => AT, maxTextLength: 3900 }
 const REQUEST: ApprovalRequest = {
-  text: 'Deploy?',
+  message: { text: 'Deploy?', spans: [] },
   question: 'Deploy?',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
@@ -52,7 +52,7 @@ test('pending lists open requests', async () => {
 test('cancel rejects everything and replies with what it rejected', async () => {
   const service = createService()
   const first = service.request(REQUEST)
-  const second = service.request({ ...REQUEST, text: 'Push?' })
+  const second = service.request({ ...REQUEST, message: { text: 'Push?', spans: [] } })
   await flush()
   const reply = runOwnerCommand(service, 'cancel', '', OPTIONS)
   expect(reply).toBe('Rejected 2\n\nDeploy?\n→ Decline\n\nPush?\n→ Decline')

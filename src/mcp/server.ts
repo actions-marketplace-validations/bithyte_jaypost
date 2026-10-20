@@ -7,6 +7,7 @@ import type {
   ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
+import { MESSAGE_FORMATS } from '../format/index.ts'
 import {
   DEFAULT_TIMEOUT_SECONDS,
   MAX_OPTION_LENGTH,
@@ -40,6 +41,7 @@ const ASK_DESCRIPTION = [
   'Blocks until the user answers or the timeout passes;',
   'on timeout it returns timeout_option, so make that the safe choice.',
   `Default wait ${DEFAULT_TIMEOUT_SECONDS} s, max ${MAX_TIMEOUT_SECONDS} s (24 h).`,
+  'For commands and diffs, set format to "markdown" and put them in a fenced code block.',
 ].join(' ')
 
 const ASK_IN_BACKGROUND_DESCRIPTION = [
@@ -50,6 +52,7 @@ const ASK_IN_BACKGROUND_DESCRIPTION = [
   'On timeout the answer is timeout_option, so make that the safe choice.',
   `Default timeout ${DEFAULT_TIMEOUT_SECONDS} s, max ${MAX_TIMEOUT_SECONDS} s (24 h).`,
   'Questions still open when this session ends are cancelled.',
+  'For commands and diffs, set format to "markdown" and put them in a fenced code block.',
 ].join(' ')
 
 const WAIT_DESCRIPTION = [
@@ -62,6 +65,7 @@ const WAIT_DESCRIPTION = [
 const NOTIFY_DESCRIPTION = [
   "Tell the user something they don't need to answer, for example that a task finished",
   "or that you're stuck and need help. Returns once sent; doesn't wait for the user.",
+  'For commands and diffs, set format to "markdown" and put them in a fenced code block.',
 ].join(' ')
 
 const projectNameSchema = z
@@ -70,11 +74,20 @@ const projectNameSchema = z
   .max(MAX_PROJECT_LENGTH)
   .describe('Short name of the project you are working in, shown as [name] above the message')
 
-const textSchema = z.string().min(1).describe('Message to show the user')
+const textSchema = z
+  .string()
+  .min(1)
+  .describe('Message to show the user; see format for commands and diffs')
+
+const FORMAT_DESCRIPTION =
+  'markdown shows **bold**, *italic*, `inline code` and fenced ``` blocks; put commands and diffs in a fenced block (```diff, ```sh) so the user sees them exactly'
+
+const formatSchema = z.enum(MESSAGE_FORMATS).optional().describe(FORMAT_DESCRIPTION)
 
 const askInputSchema = {
   project_name: projectNameSchema,
   text: textSchema,
+  format: formatSchema,
   options: z
     .array(z.string().min(1).max(MAX_OPTION_LENGTH))
     .optional()
@@ -236,7 +249,7 @@ export function createMcpServer(
     'notify_user',
     {
       description: NOTIFY_DESCRIPTION,
-      inputSchema: { project_name: projectNameSchema, text: textSchema },
+      inputSchema: { project_name: projectNameSchema, text: textSchema, format: formatSchema },
     },
     async (args, extra): Promise<CallToolResult> => {
       const token = address.readToken()
@@ -246,7 +259,11 @@ export function createMcpServer(
       const result = await postApi(
         address.port,
         '/notify',
-        { project: args.project_name, text: args.text },
+        {
+          project: args.project_name,
+          text: args.text,
+          ...(args.format === undefined ? {} : { format: args.format }),
+        },
         {
           signal: AbortSignal.any([extra.signal, signal]),
           timeoutMs: FETCH_GRACE_MS,
@@ -370,6 +387,7 @@ function toAskBody(args: AskArguments): AskBody {
   return {
     project: args.project_name,
     text: args.text,
+    ...(args.format === undefined ? {} : { format: args.format }),
     ...(args.options === undefined ? {} : { options: args.options }),
     ...(args.allow_text === undefined ? {} : { allowText: args.allow_text }),
     timeoutOption: args.timeout_option,

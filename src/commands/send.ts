@@ -20,6 +20,7 @@ export async function runSendRequest(args: SendRequestArgs, deps: SendDeps): Pro
       timeoutOption: args.timeoutOption,
       ...(args.timeout === undefined ? {} : { timeout: args.timeout }),
       ...(args.project === undefined ? {} : { project: args.project }),
+      ...(args.format === undefined ? {} : { format: args.format }),
     },
     { signal: deps.signal, ...toTokenOption(deps.token) },
   )
@@ -41,7 +42,11 @@ export async function runSendNotify(args: SendNotifyArgs, deps: SendDeps): Promi
   const result = await postApi(
     deps.port,
     '/notify',
-    { text: args.text, ...(args.project === undefined ? {} : { project: args.project }) },
+    {
+      text: args.text,
+      ...(args.project === undefined ? {} : { project: args.project }),
+      ...(args.format === undefined ? {} : { format: args.format }),
+    },
     { signal: deps.signal, timeoutMs: FETCH_GRACE_MS, ...toTokenOption(deps.token) },
   )
   if (result.kind === 'failed') {

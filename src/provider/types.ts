@@ -1,4 +1,5 @@
 import type { MessageEnding, MessageReference, OwnerCommand } from '../approval/index.ts'
+import type { FormattedText } from '../format/index.ts'
 import type { PairResult } from '../pairing/index.ts'
 import type { SendNotificationOptions } from '../notify/index.ts'
 
@@ -62,20 +63,20 @@ export type ProviderRuntime = {
   /** The returned reference must be JSON-serializable (it's saved to the state file). */
   readonly sendRequest: (
     id: string,
-    text: string,
+    message: FormattedText,
     options: readonly string[],
     allowText: boolean,
   ) => Promise<MessageReference>
   /** Request ended; called once per ended request, `expired` included. Absent means skipped. */
   readonly finalize?: (
     reference: MessageReference,
-    text: string,
+    message: FormattedText,
     ending: MessageEnding,
   ) => Promise<void>
   /** The returned reference must be JSON-serializable (it's saved to the state file). */
   readonly sendNotification?: (
     id: string,
-    text: string,
+    message: FormattedText,
     options: SendNotificationOptions,
   ) => Promise<MessageReference>
   readonly deleteMessage?: (reference: MessageReference) => Promise<void>

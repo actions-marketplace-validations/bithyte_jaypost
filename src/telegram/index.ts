@@ -15,6 +15,7 @@ export {
   routeReply,
   routeTap,
   setCommandMenu,
+  toEntities,
 } from './adapter.ts'
 export type {
   CommandMessage,

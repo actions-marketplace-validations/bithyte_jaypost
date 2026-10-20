@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
 import { PendingRequests } from '../../src/approval/index.ts'
 
 const req = {
-  text: 't',
+  message: { text: 't', spans: [] },
   question: 't',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
@@ -86,11 +86,11 @@ test('independent concurrent requests', async () => {
 test('list returns open requests oldest first with their fields', () => {
   const p = new PendingRequests()
   p.open('a', req, OPENED_AT)
-  p.open('b', { ...req, text: 'u' }, OPENED_AT)
+  p.open('b', { ...req, message: { text: 'u', spans: [] } }, OPENED_AT)
   p.answer('a', 0)
   p.open('c', req, OPENED_AT)
   expect(p.list()).toEqual([
-    { id: 'b', request: { ...req, text: 'u' }, openedAt: OPENED_AT },
+    { id: 'b', request: { ...req, message: { text: 'u', spans: [] } }, openedAt: OPENED_AT },
     { id: 'c', request: req, openedAt: OPENED_AT },
   ])
 })

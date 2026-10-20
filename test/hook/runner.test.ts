@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import type { FormattedText } from '../../src/format/index.ts'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -26,16 +27,16 @@ class RecordingMessenger implements Messenger {
 
   async sendRequest(
     id: string,
-    text: string,
+    message: FormattedText,
     options: readonly string[],
   ): Promise<MessageReference> {
-    this.sent.push({ id, text, options })
+    this.sent.push({ id, text: message.text, options })
     return REFERENCE
   }
 
   async finalize(
     _reference: MessageReference,
-    _text: string,
+    _message: FormattedText,
     settlement: MessageEnding,
   ): Promise<void> {
     this.finalized.push(settlement)
@@ -45,8 +46,8 @@ class RecordingMessenger implements Messenger {
 class RecordingNotifier implements Notifier {
   sent: string[] = []
 
-  sendNotification = async (_id: string, text: string): Promise<MessageReference> => {
-    this.sent.push(text)
+  sendNotification = async (_id: string, message: FormattedText): Promise<MessageReference> => {
+    this.sent.push(message.text)
     return REFERENCE
   }
 }

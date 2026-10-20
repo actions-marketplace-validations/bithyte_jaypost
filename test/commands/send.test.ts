@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import type { FormattedText } from '../../src/format/index.ts'
 import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, expect, test } from 'vite-plus/test'
@@ -18,16 +19,18 @@ const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
 
 class RecordingMessenger implements Messenger {
   sent: { id: string; text: string }[] = []
+  messages: FormattedText[] = []
   finalized: MessageEnding[] = []
 
-  async sendRequest(id: string, text: string): Promise<MessageReference> {
-    this.sent.push({ id, text })
+  async sendRequest(id: string, message: FormattedText): Promise<MessageReference> {
+    this.sent.push({ id, text: message.text })
+    this.messages.push(message)
     return REFERENCE
   }
 
   async finalize(
     _reference: MessageReference,
-    _text: string,
+    _message: FormattedText,
     settlement: MessageEnding,
   ): Promise<void> {
     this.finalized.push(settlement)
@@ -36,9 +39,11 @@ class RecordingMessenger implements Messenger {
 
 class RecordingNotifier implements Notifier {
   sent: string[] = []
+  messages: FormattedText[] = []
 
-  sendNotification = async (_id: string, text: string): Promise<MessageReference> => {
-    this.sent.push(text)
+  sendNotification = async (_id: string, message: FormattedText): Promise<MessageReference> => {
+    this.sent.push(message.text)
+    this.messages.push(message)
     return REFERENCE
   }
 }
@@ -231,4 +236,26 @@ test('a wrong token prints the rejected message', async () => {
   expect(await runSendRequest(ASK, deps)).toBe(1)
   expect(errors).toEqual([`telegram-ask: ${TOKEN_REJECTED_MESSAGE}`])
   expect(messenger.sent).toEqual([])
+})
+
+test('request --format markdown reaches the provider as spans', async () => {
+  const { port, service, messenger } = await startApi()
+  const { deps } = createDeps(port)
+  const pending = runSendRequest({ ...ASK, text: 'Run `ls`?', format: 'markdown' }, deps)
+  await waitFor(() => messenger.sent.length === 1)
+  expect(messenger.messages[0]).toEqual({
+    text: 'Run ls?',
+    spans: [{ kind: 'code', offset: 4, length: 2 }],
+  })
+  service.tap(messenger.sent[0]?.id ?? '', 0)
+  expect(await pending).toBe(0)
+})
+
+test('notify passes format', async () => {
+  const { port, notifier } = await startApi()
+  const { deps } = createDeps(port)
+  expect(await runSendNotify({ text: 'Run `ls`?', format: 'markdown' }, deps)).toBe(0)
+  expect(notifier.messages).toEqual([
+    { text: 'Run ls?', spans: [{ kind: 'code', offset: 4, length: 2 }] },
+  ])
 })

@@ -155,6 +155,13 @@ test('openapi returns 1 when the file cannot be written', async () => {
   expect(await main(['openapi', '/nonexistent-directory/openapi.yaml'])).toBe(1)
 })
 
+test('send rejects an unknown format with 2', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  const ask = ['send', 'request', 'Deploy?', '-o', 'Yes', '-d', 'Yes']
+  expect(await main([...ask, '--format', 'html'])).toBe(2)
+  expect(await main(['send', 'notify', 'hi', '--format', 'html'])).toBe(2)
+})
+
 function runAuditDump(args: readonly string[], directory: string) {
   return spawnSync(process.execPath, ['src/cli.ts', 'audit', ...args], {
     env: { ...process.env, TELEGRAM_ASK_CONFIG: join(directory, 'config.json') },

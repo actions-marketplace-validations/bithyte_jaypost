@@ -1,3 +1,5 @@
+import type { MessageFormat } from '../format/index.ts'
+
 /** Where `Client` finds the service, and the project name its messages carry by default. */
 export type ClientOptions = {
   /** Default `127.0.0.1`. */
@@ -27,6 +29,8 @@ export type AskRequest = {
   readonly timeoutOption: string
   readonly timeout?: number
   readonly project?: string
+  /** Default plain; markdown renders a subset, see the README. */
+  readonly format?: MessageFormat
   /** Aborting it cancels the question; the Telegram message is edited to a "cancelled" line. */
   readonly signal?: AbortSignal
 }
@@ -38,6 +42,8 @@ export type Answer = { readonly answer: string; readonly timedOut: boolean }
 export type Notification = {
   readonly text: string
   readonly project?: string
+  /** Default plain; markdown renders a subset, see the README. */
+  readonly format?: MessageFormat
   readonly signal?: AbortSignal
 }
 
@@ -70,6 +76,7 @@ export type AskBody = {
   readonly timeoutOption: string
   readonly timeout?: number
   readonly project?: string
+  readonly format?: MessageFormat
 }
 
 /** `now` returns milliseconds; default `performance.now`. */

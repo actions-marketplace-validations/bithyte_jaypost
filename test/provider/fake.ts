@@ -1,3 +1,4 @@
+import type { FormattedText } from '../../src/format/index.ts'
 import type {
   Provider,
   ProviderRuntime,
@@ -6,7 +7,12 @@ import type {
 } from '../../src/provider/index.ts'
 
 export type FakeRuntime = ProviderRuntime & {
-  readonly sent: { id: string; text: string; options: readonly string[]; allowText: boolean }[]
+  readonly sent: {
+    id: string
+    message: FormattedText
+    options: readonly string[]
+    allowText: boolean
+  }[]
   handlers: RuntimeHandlers | undefined
 }
 
@@ -47,8 +53,8 @@ export function createFakeProvider(
         sent: [],
         handlers: undefined,
         checkCredentials: async () => ({ ok: true, displayName: 'fake' }),
-        sendRequest: async (id, text, options, allowText) => {
-          runtime.sent.push({ id, text, options, allowText })
+        sendRequest: async (id, message, options, allowText) => {
+          runtime.sent.push({ id, message, options, allowText })
           counter += 1
           return { n: counter }
         },

@@ -24,7 +24,12 @@ test('cjs build exposes the client to require()', () => {
     /grammy|@clack|commander|fastify/,
   )
   const library = createRequire(import.meta.url)(join(directory, 'index.cjs'))
-  expect(Object.keys(library).toSorted()).toEqual(['Client', 'TelegramAskError'])
+  expect(Object.keys(library).toSorted()).toEqual([
+    'Client',
+    'TelegramAskError',
+    'escapeMarkdown',
+    'formatCodeBlock',
+  ])
   expect(new library.Client({ port: 9 })).toBeInstanceOf(library.Client)
   expect(new library.TelegramAskError('boom')).toBeInstanceOf(Error)
 }, 30_000)

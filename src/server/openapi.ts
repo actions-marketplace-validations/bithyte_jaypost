@@ -15,11 +15,16 @@ import type { OpenApiOptions } from './types.ts'
 
 type JsonSchema = z.core.JSONSchema.BaseSchema
 
-const TEXT_DESCRIPTION =
-  'Message shown in the chat. Must not be blank. With `project`, the limit covers the `[project]` line too, so the text gets `project.length + 4` fewer characters.'
+function toTextDescription(maxTextLength: number): string {
+  return `Message shown in the chat. Must not be blank, at most ${maxTextLength} characters; with \`format: markdown\` the markup is removed before counting. With \`project\`, the limit covers the \`[project]\` line too, so the text gets \`project.length + 4\` fewer characters.`
+}
 
 const BODY_DESCRIPTIONS: Readonly<Record<string, JsonSchema>> = {
   project: { description: 'Shown as `[project]` on the first line. Trimmed.' },
+  format: {
+    description:
+      '`plain` (default) or `markdown`, a small subset: code spans and fenced blocks, bold, italic, strikethrough, headings and quotes. Anything else stays as typed. See Formatting in the README.',
+  },
   allowText: { description: 'Let the owner answer by replying with text. Default false.' },
   options: {
     description:
@@ -45,7 +50,7 @@ function toBodySchema(schema: z.ZodType, maxTextLength: number): JsonSchema {
   const { $schema: _schema, ...json } = z.toJSONSchema(schema, { io: 'input' })
   const extras: Readonly<Record<string, JsonSchema>> = {
     ...BODY_DESCRIPTIONS,
-    text: { minLength: 1, maxLength: maxTextLength, description: TEXT_DESCRIPTION },
+    text: { minLength: 1, description: toTextDescription(maxTextLength) },
   }
   const properties = Object.fromEntries(
     Object.entries(json.properties ?? {}).map(([name, property]) => [

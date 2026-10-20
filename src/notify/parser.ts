@@ -1,21 +1,33 @@
 import { z } from 'zod'
-import { checkProjectText, createProjectSchema, createTextSchema } from '../approval/index.ts'
+import { DEFAULT_FORMAT, toFormattedText } from '../format/index.ts'
+import {
+  BLANK_FORMATTED_ERROR,
+  checkProjectText,
+  createFormatSchema,
+  createProjectSchema,
+  createTextSchema,
+} from '../approval/index.ts'
 import type { NotifyParseResult } from './types.ts'
 
 /** Schema of a /notify body; also the source of the OpenAPI spec. */
 export function createNotifyRequestSchema(maxTextLength: number) {
   return z
     .object(
-      { text: createTextSchema(), project: createProjectSchema() },
+      { text: createTextSchema(), project: createProjectSchema(), format: createFormatSchema() },
       { error: 'body must be a JSON object' },
     )
-    .transform(({ text, project }, context) => {
-      const checked = checkProjectText(text, project, maxTextLength)
+    .transform(({ text, project, format }, context) => {
+      const message = toFormattedText(text, format ?? DEFAULT_FORMAT)
+      if (message.text.trim() === '') {
+        context.addIssue({ code: 'custom', message: BLANK_FORMATTED_ERROR })
+        return z.NEVER
+      }
+      const checked = checkProjectText(message, project, maxTextLength, format ?? DEFAULT_FORMAT)
       if (!checked.ok) {
         context.addIssue({ code: 'custom', message: checked.error })
         return z.NEVER
       }
-      return { text: checked.text }
+      return { message: checked.message }
     })
 }
 

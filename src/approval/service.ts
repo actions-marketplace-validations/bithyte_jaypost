@@ -1,3 +1,4 @@
+import type { FormattedText } from '../format/index.ts'
 import {
   CANCELLED_RESULT,
   CANCELLED_STATE,
@@ -187,9 +188,10 @@ export class ApprovalService {
    */
   async expireOrphans(records: readonly RequestRecord[]): Promise<void> {
     for (const record of records) {
+      const message = { text: record.text, spans: record.spans ?? [] }
       const endedAt = this.#now()
       this.#audit?.settled(record.id, EXPIRED_ENDING, endedAt)
-      await this.#finalize(record.reference, record.text, EXPIRED_ENDING, endedAt)
+      await this.#finalize(record.reference, message, EXPIRED_ENDING, endedAt)
       this.#store?.removeRequest(record.id)
     }
   }
@@ -200,7 +202,7 @@ export class ApprovalService {
     try {
       reference = await this.#messenger.sendRequest(
         id,
-        request.text,
+        request.message,
         request.options,
         request.allowText,
       )
@@ -208,7 +210,12 @@ export class ApprovalService {
       throw new SendError('failed to send approval request', { cause })
     }
     if (this.#messenger.finalize !== undefined) {
-      this.#store?.addRequest({ id, reference, text: request.text })
+      this.#store?.addRequest({
+        id,
+        reference,
+        text: request.message.text,
+        ...(request.message.spans.length > 0 && { spans: request.message.spans }),
+      })
     }
     const openedAt = this.#now()
     this.#audit?.asked(id, request, openedAt)
@@ -224,11 +231,11 @@ export class ApprovalService {
   ): Promise<void> {
     const settledAt = this.#now()
     this.#audit?.settled(id, settlement, settledAt)
-    this.#history.push({ text: request.text, settlement, settledAt })
+    this.#history.push({ text: request.message.text, settlement, settledAt })
     if (this.#history.length > HISTORY_LIMIT) {
       this.#history.shift()
     }
-    await this.#finalize(reference, request.text, settlement, settledAt)
+    await this.#finalize(reference, request.message, settlement, settledAt)
     this.#store?.removeRequest(id)
   }
 
@@ -246,7 +253,7 @@ export class ApprovalService {
 
   async #finalize(
     reference: MessageReference,
-    text: string,
+    message: FormattedText,
     ending: MessageEnding,
     endedAt: Date,
   ): Promise<void> {
@@ -254,7 +261,7 @@ export class ApprovalService {
       return
     }
     try {
-      await this.#messenger.finalize(reference, formatFinalText(text, ending, endedAt), ending)
+      await this.#messenger.finalize(reference, formatFinalText(message, ending, endedAt), ending)
     } catch (error) {
       console.error('failed to finalize approval message', error)
     }

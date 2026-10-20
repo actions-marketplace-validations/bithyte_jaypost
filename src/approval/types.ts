@@ -1,3 +1,4 @@
+import type { FormattedText } from '../format/index.ts'
 import type { RequestRecord } from '../state/index.ts'
 
 /**
@@ -5,9 +6,9 @@ import type { RequestRecord } from '../state/index.ts'
  * is in `options`.
  */
 export type ApprovalRequest = {
-  /** The text sent to the chat: the question, with a `[project]` line first when there is a project. */
-  readonly text: string
-  /** The question as the caller sent it, without the `[project]` prefix. */
+  /** The message sent to the chat: the question, with a `[project]` line first when there is a project. */
+  readonly message: FormattedText
+  /** The question as the caller sent it, without the `[project]` prefix; markdown source unrendered. */
   readonly question: string
   /** Trimmed project name; omitted when the caller sent none. */
   readonly project?: string
@@ -80,7 +81,7 @@ export type Messenger = {
   /** The returned reference must be JSON-serializable (it's saved to the state file). */
   readonly sendRequest: (
     id: string,
-    text: string,
+    message: FormattedText,
     options: readonly string[],
     /** The owner may answer with a text reply. */
     allowText: boolean,
@@ -88,7 +89,7 @@ export type Messenger = {
   /** Request ended: show the final text and stop accepting answers. Absent means skipped. */
   readonly finalize?: (
     reference: MessageReference,
-    text: string,
+    message: FormattedText,
     ending: MessageEnding,
   ) => Promise<void>
 }
@@ -137,7 +138,7 @@ export type BackgroundEntry = {
   readonly settled: Promise<RequestState>
 }
 
-/** A settled request as kept in the service's in-memory history. */
+/** A settled request as kept in the service's in-memory history; `text` is the rendered text. */
 export type HistoryEntry = {
   readonly text: string
   readonly settlement: Settlement

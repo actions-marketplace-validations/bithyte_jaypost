@@ -19,7 +19,7 @@ import {
 
 const AT = new Date('2026-10-18T21:41:07.312Z')
 const REQUEST = {
-  text: '[deploy]\n\nForce-push main?',
+  message: { text: '[deploy]\n\nForce-push main?', spans: [] },
   question: 'Force-push main?',
   project: 'deploy',
   allowText: false,

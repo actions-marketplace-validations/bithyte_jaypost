@@ -199,6 +199,27 @@ test('a rejected token surfaces the rejected message', async () => {
   )
 })
 
+test('request sends format when set', async () => {
+  const { port, seen } = await startStub(200, '{"answer":"Approve","timedOut":false}')
+  await new Client({ port }).request({ ...ASK, format: 'markdown' })
+  expect(seen.body).toEqual({ ...ASK, format: 'markdown' })
+})
+
+test('notify sends format when set', async () => {
+  const { port, seen } = await startStub(200, '{"ok":true}')
+  await new Client({ port }).notify({ text: '`ls`', format: 'markdown' })
+  expect(seen.body).toEqual({ text: '`ls`', format: 'markdown' })
+})
+
+test('format is omitted by default', async () => {
+  const stub = await startStub(200, '{"answer":"Approve","timedOut":false}')
+  const client = new Client({ port: stub.port })
+  await client.request(ASK)
+  expect(stub.seen.body).not.toHaveProperty('format')
+  await client.notify({ text: 'hi' })
+  expect(stub.seen.body).not.toHaveProperty('format')
+})
+
 test('allowText is sent, and options only when given', async () => {
   const { port, seen } = await startStub(200, '{"answer":"feature/x","timedOut":false}')
   const client = new Client({ port })

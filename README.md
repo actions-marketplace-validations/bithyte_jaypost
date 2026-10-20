@@ -57,6 +57,7 @@ It's single owner: one Telegram user, proven by a pairing code. The service can 
 | ----------------- | -------- | ------------------- | --------------------------------------------------------------------------------------------- |
 | `project_name`    | string   | yes                 | Max 100 chars.                                                                                |
 | `text`            | string   | yes                 | The question.                                                                                 |
+| `format`          | string   | no                  | `plain` (default) or `markdown`; see [Formatting](#formatting).                               |
 | `options`         | string[] | unless `allow_text` | Button labels, unique, max 64 chars each. May be empty with `allow_text`.                     |
 | `allow_text`      | boolean  | no                  | Let the user type an answer by replying. Default false.                                       |
 | `timeout_option`  | string   | yes                 | Answer returned on timeout. One of `options`, or with `allow_text` any answer up to 64 chars. |
@@ -87,10 +88,11 @@ Closing the agent session (the MCP server's stdin) cancels the background questi
 
 `notify_user` sends a message that doesn't need an answer and returns `sent` once Telegram accepts it:
 
-| Param          | Type   | Required | Notes          |
-| -------------- | ------ | -------- | -------------- |
-| `project_name` | string | yes      | Max 100 chars. |
-| `text`         | string | yes      | The message.   |
+| Param          | Type   | Required | Notes                                                           |
+| -------------- | ------ | -------- | --------------------------------------------------------------- |
+| `project_name` | string | yes      | Max 100 chars.                                                  |
+| `text`         | string | yes      | The message.                                                    |
+| `format`       | string | no       | `plain` (default) or `markdown`; see [Formatting](#formatting). |
 
 Register it with Claude Code:
 
@@ -130,7 +132,7 @@ The port comes from `--port`, then `PORT`, then the install's `install.json`, th
 
 The service has to be running. A call made while it's down returns an error to the agent; the MCP server stays up, so the next call works once the service is back.
 
-`project` needs a service at least as new as this release. An older service sends the message without the project line, and `notify_user` reports that the service is too old. Re-run `init` to upgrade.
+`project` needs a service at least as new as this release. An older service sends the message without the project line, and `notify_user` reports that the service is too old. Re-run `init` to upgrade. `format` needs a service at least as new as the release that added it; an older one shows the markdown as typed.
 
 ## Claude Code hook
 
@@ -189,9 +191,10 @@ It fails open. If the service is down or not paired, the hook does nothing and t
 ```
 answer=$(telegram-ask send request 'Deploy?' -o Approve -d Decline --timeout 60)
 telegram-ask send notify 'backup finished' --project nas
+telegram-ask send request $'Force-push `main`?' -o Yes -d No --format markdown
 ```
 
-`send request` prints the answer on stdout (the `-d` default on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button; `-d` adds the default as the last button unless an `-o` already names it. `--allow-text` also lets you answer by replying with text; then `-o` is optional and `-d` can be any short answer, not added as a button. `send notify` prints nothing and exits 0 once sent. Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
+`send request` prints the answer on stdout (the `-d` default on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button; `-d` adds the default as the last button unless an `-o` already names it. `--allow-text` also lets you answer by replying with text; then `-o` is optional and `-d` can be any short answer, not added as a button. `send notify` prints nothing and exits 0 once sent. `--format markdown` on either one reads the text as [markdown](#formatting). Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
 
 ### From Node
 
@@ -210,7 +213,7 @@ const { answer, timedOut } = await client.request({
 await client.notify({ text: 'backup finished' })
 ```
 
-`new Client()` takes optional `host` (default `127.0.0.1`), `port` (default 8787), `token` and `project`, which every call sends unless it passes its own. Without `token`, each call looks one up: `TELEGRAM_ASK_TOKEN` if set, else the token file, else none is sent. An invalid `token` throws a `RangeError`. `request` takes the [`/request` fields](#ask-a-question) plus an optional `signal`; aborting it cancels the question and rejects with the signal's reason. Failures (service down, a 400, a send error) throw a `TelegramAskError` with the same message the CLI prints. A timeout isn't a failure: it resolves with `timeoutOption` and `timedOut: true`.
+`new Client()` takes optional `host` (default `127.0.0.1`), `port` (default 8787), `token` and `project`, which every call sends unless it passes its own. Without `token`, each call looks one up: `TELEGRAM_ASK_TOKEN` if set, else the token file, else none is sent. An invalid `token` throws a `RangeError`. `request` takes the [`/request` fields](#ask-a-question) plus an optional `signal`, and `request` and `notify` take `format: 'markdown'` (see [Formatting](#formatting)). When you put untrusted text into a markdown message, `escapeMarkdown(text)` makes it show as typed and `formatCodeBlock(code, language?)` wraps code in a fence that can't be closed from inside. Both are exported from the package; aborting it cancels the question and rejects with the signal's reason. Failures (service down, a 400, a send error) throw a `TelegramAskError` with the same message the CLI prints. A timeout isn't a failure: it resolves with `timeoutOption` and `timedOut: true`.
 
 ### Ask a question
 
@@ -246,12 +249,13 @@ Reply to the question's message in Telegram; if it's the only open text question
 
 | Field           | Type     | Required           | Notes                                                                                                                   |
 | --------------- | -------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `text`          | string   | yes                | Question shown in Telegram. Non-empty, max 3900 chars.                                                                  |
+| `text`          | string   | yes                | Question shown in Telegram. Non-empty, max 3900 chars (with `markdown`, counted after the markup is removed).           |
 | `allowText`     | boolean  | no                 | Default `false`. When true, a text reply from the owner answers the question.                                           |
 | `options`       | string[] | unless `allowText` | Button labels. Non-empty, unique, non-empty strings. With `allowText`, may be omitted or `[]` for a text-only question. |
 | `timeoutOption` | string   | yes                | Answer returned on timeout. Must be one of `options`; with `allowText`, any non-empty string up to 64 chars.            |
 | `timeout`       | number   | no                 | Seconds. Default 300, max 86400 (24 h); longer values are capped. Must be positive.                                     |
 | `project`       | string   | no                 | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900.                                 |
+| `format`        | string   | no                 | `plain` (default) or `markdown`. See [Formatting](#formatting).                                                         |
 
 The cap used to be 300, so a `timeout: 900` was clamped to 300 before and now waits the full 900 s.
 
@@ -307,10 +311,11 @@ It returns `200 { "ok": true }` as soon as Telegram accepts the message. The mes
 
 `POST /notify` body:
 
-| Field     | Type   | Required | Notes                                                                                   |
-| --------- | ------ | -------- | --------------------------------------------------------------------------------------- |
-| `text`    | string | yes      | Shown in Telegram. Non-empty, max 3900 chars. Plain text.                               |
-| `project` | string | no       | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900. |
+| Field     | Type   | Required | Notes                                                                                                |
+| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------- |
+| `text`    | string | yes      | Shown in Telegram. Non-empty, max 3900 chars (with `markdown`, counted after the markup is removed). |
+| `project` | string | no       | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900.              |
+| `format`  | string | no       | `plain` (default) or `markdown`. See [Formatting](#formatting).                                      |
 
 Errors are JSON `{ "error": "..." }`:
 
@@ -324,6 +329,40 @@ Errors are JSON `{ "error": "..." }`:
 | 503    | Not paired yet.                                                         |
 | 405    | Method isn't POST.                                                      |
 | 500    | Internal error.                                                         |
+
+### Formatting
+
+`format` is `plain` by default: the text is sent exactly as given. With `"format": "markdown"` a small subset is rendered and the markers are removed:
+
+| Write                  | You see                                  |
+| ---------------------- | ---------------------------------------- |
+| `` `ls -la` ``         | `ls -la` in monospace                    |
+| ` ```diff ` fence      | a monospace block (language is optional) |
+| `**bold**`, `*italic*` | bold, italic                             |
+| `~~old~~`              | strikethrough                            |
+| `## Heading`           | the heading text in bold                 |
+| `> quote`              | a quote block                            |
+
+An agent can send this:
+
+````
+Force-push `feature/login` to origin?
+
+```diff
+-  return token
++  return token.trim()
+```
+````
+
+and the owner sees the branch name in monospace and the diff as a monospace block, with the backticks gone.
+
+Anything that isn't in the table stays as typed: lists, tables, links, images, HTML and `_underscores`. A marker that doesn't pair up, or sits inside a word (`2*3*4`, `snake_case`, `src/**/*.ts`), stays literal too, so a malformed message still arrives. Put a `\` before a marker to show it as is. Text inside code is never changed. To show a block that itself contains a fence, open it with a longer one (four backticks around three). Line breaks are kept as written.
+
+The 3900 limit counts the text after the markup is removed, so the source may be longer. A message that renders to nothing but whitespace is a 400. Put commands in code: a glob like `ls *foo* bar` looks exactly like emphasis, and in markdown mode it would show as `ls foo bar` in italics.
+
+If Telegram refuses the formatting, the service sends the message again as plain text (the rendered text, without the markers) and logs one line, so the question still gets through.
+
+`format` needs a service at least as new as this release; an older one shows the markdown as typed. Re-run `init` to upgrade.
 
 ### Status
 
@@ -488,8 +527,8 @@ telegram-ask start
 telegram-ask mcp [--port N]
 telegram-ask hook [--port N] [--project NAME] [--timeout S]
 telegram-ask openapi [FILE] [--port N]
-telegram-ask send request TEXT [-o OPTION...] [--allow-text] -d DEFAULT [--timeout S] [--project NAME] [--json] [--port N]
-telegram-ask send notify TEXT [--project NAME] [--port N]
+telegram-ask send request TEXT [-o OPTION...] [--allow-text] -d DEFAULT [--timeout S] [--project NAME] [--format plain|markdown] [--json] [--port N]
+telegram-ask send notify TEXT [--project NAME] [--format plain|markdown] [--port N]
 ```
 
 - `init`: installs or replaces the service. See [Install options](#install-options).

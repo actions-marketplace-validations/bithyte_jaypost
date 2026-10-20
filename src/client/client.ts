@@ -50,6 +50,7 @@ export class Client {
         timeoutOption: request.timeoutOption,
         ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
         ...(project === undefined ? {} : { project }),
+        ...(request.format === undefined ? {} : { format: request.format }),
       },
       { signal, host: this.#host, ...(token === undefined ? {} : { token }) },
     )
@@ -64,7 +65,15 @@ export class Client {
 
   /** Resolves once Telegram accepts the message. Throws like `request`. */
   async notify(notification: Notification): Promise<void> {
-    await this.#post('/notify', { text: notification.text }, notification, FETCH_GRACE_MS)
+    await this.#post(
+      '/notify',
+      {
+        text: notification.text,
+        ...(notification.format === undefined ? {} : { format: notification.format }),
+      },
+      notification,
+      FETCH_GRACE_MS,
+    )
   }
 
   async #post(

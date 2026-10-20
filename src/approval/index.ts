@@ -20,7 +20,9 @@ export {
 } from './formatter.ts'
 export {
   checkProjectText,
+  BLANK_FORMATTED_ERROR,
   createApprovalRequestSchema,
+  createFormatSchema,
   createProjectSchema,
   createTextSchema,
   parseApprovalRequest,

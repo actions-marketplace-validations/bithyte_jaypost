@@ -25,6 +25,8 @@ import {
 import type { InitArgs, LogArgs, SendDeps } from './commands/index.ts'
 import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
 import { runService } from './daemon/index.ts'
+import { MESSAGE_FORMATS } from './format/index.ts'
+import type { MessageFormat } from './format/index.ts'
 import { readHookInput, runHook } from './hook/index.ts'
 import type { HookDeps } from './hook/index.ts'
 import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
@@ -403,6 +405,11 @@ export async function main(argv: readonly string[]): Promise<number> {
       parseTimeout,
     )
     .option('--project <name>', 'shown as [name] above the question')
+    .addOption(
+      new Option('--format <format>', 'how to read TEXT: plain (default) or markdown').choices(
+        MESSAGE_FORMATS,
+      ),
+    )
     .option('--json', 'print {"answer":...,"timedOut":...} instead of the answer')
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
     .action(
@@ -414,6 +421,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           readonly default: string
           readonly timeout?: number
           readonly project?: string
+          readonly format?: MessageFormat
           readonly json?: boolean
           readonly port?: number
         },
@@ -434,6 +442,7 @@ export async function main(argv: readonly string[]): Promise<number> {
               timeoutOption: options.default,
               ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
               ...(options.project === undefined ? {} : { project: options.project }),
+              ...(options.format === undefined ? {} : { format: options.format }),
               ...(options.json === undefined ? {} : { json: options.json }),
             },
             createSendDeps(options.port, controller.signal),
@@ -446,14 +455,27 @@ export async function main(argv: readonly string[]): Promise<number> {
     .description("send a message that doesn't need an answer")
     .argument('<text>', 'message to show')
     .option('--project <name>', 'shown as [name] above the message')
+    .addOption(
+      new Option('--format <format>', 'how to read TEXT: plain (default) or markdown').choices(
+        MESSAGE_FORMATS,
+      ),
+    )
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
     .action(
-      async (text: string, options: { readonly project?: string; readonly port?: number }) => {
+      async (
+        text: string,
+        options: {
+          readonly project?: string
+          readonly format?: MessageFormat
+          readonly port?: number
+        },
+      ) => {
         code = await runWithSignals((controller) =>
           runSendNotify(
             {
               text,
               ...(options.project === undefined ? {} : { project: options.project }),
+              ...(options.format === undefined ? {} : { format: options.format }),
             },
             createSendDeps(options.port, controller.signal),
           ),

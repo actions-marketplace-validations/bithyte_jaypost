@@ -1,5 +1,6 @@
 import type { ClientToken } from '../auth/index.ts'
 import type { StateBody } from '../client/index.ts'
+import type { MessageFormat } from '../format/index.ts'
 import type { OpenQuestions } from './questions.ts'
 
 /** Where the service listens and how to find the token; `readToken` runs once per tool call. */
@@ -19,6 +20,7 @@ export type McpServerOptions = {
 export type AskArguments = {
   readonly project_name: string
   readonly text: string
+  readonly format?: MessageFormat | undefined
   readonly options?: readonly string[] | undefined
   readonly allow_text?: boolean | undefined
   readonly timeout_option: string

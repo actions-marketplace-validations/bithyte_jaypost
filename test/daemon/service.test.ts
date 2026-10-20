@@ -59,8 +59,8 @@ function createRecordingProvider() {
   const deleted: unknown[] = []
   const provider = createFakeProvider({
     runtime: {
-      finalize: async (reference, text, ending) => {
-        finalized.push({ reference, text, ending })
+      finalize: async (reference, message, ending) => {
+        finalized.push({ reference, text: message.text, ending })
       },
       sendNotification: async () => ({ n: 1000 }),
       deleteMessage: async (reference) => {
@@ -103,7 +103,7 @@ test('fake without optional parts: request is sent and an answer settles it', as
   const response = post(url, '/request', REQUEST)
   await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
   const sent = runtime.sent[0]
-  expect(sent?.text).toBe('Deploy?')
+  expect(sent?.message).toEqual({ text: 'Deploy?', spans: [] })
   expect(runtime.handlers?.answer(sent?.id ?? '', 1)).toBe('accepted')
   expect(await (await response).json()).toEqual({ answer: 'Decline', timedOut: false })
 })
@@ -436,7 +436,11 @@ test('a text question over http is answered through handlers.reply', async () =>
   })
   await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
   const [sent] = runtime.sent
-  expect(sent).toMatchObject({ text: 'Which branch?', options: [], allowText: true })
+  expect(sent).toMatchObject({
+    message: { text: 'Which branch?', spans: [] },
+    options: [],
+    allowText: true,
+  })
   expect(runtime.handlers?.reply(sent?.id ?? '', 'feature/x')).toBe('accepted')
   expect(await (await response).json()).toEqual({ answer: 'feature/x', timedOut: false })
   expect(runtime.handlers?.reply(sent?.id ?? '', 'again')).toBe('expired')

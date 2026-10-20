@@ -197,13 +197,18 @@ components:
         text:
           type: string
           minLength: 1
-          maxLength: 3900
-          description: Message shown in the chat. Must not be blank. With `project`, the limit covers the `[project]` line too, so the text gets `project.length + 4` fewer characters.
+          description: "Message shown in the chat. Must not be blank, at most 3900 characters; with `format: markdown` the markup is removed before counting. With `project`, the limit covers the `[project]` line too, so the text gets `project.length + 4` fewer characters."
         project:
           type: string
           minLength: 1
           maxLength: 100
           description: Shown as `[project]` on the first line. Trimmed.
+        format:
+          type: string
+          enum:
+            - plain
+            - markdown
+          description: "`plain` (default) or `markdown`, a small subset: code spans and fenced blocks, bold, italic, strikethrough, headings and quotes. Anything else stays as typed. See Formatting in the README."
         allowText:
           type: boolean
           description: Let the owner answer by replying with text. Default false.
@@ -284,13 +289,18 @@ components:
         text:
           type: string
           minLength: 1
-          maxLength: 3900
-          description: Message shown in the chat. Must not be blank. With `project`, the limit covers the `[project]` line too, so the text gets `project.length + 4` fewer characters.
+          description: "Message shown in the chat. Must not be blank, at most 3900 characters; with `format: markdown` the markup is removed before counting. With `project`, the limit covers the `[project]` line too, so the text gets `project.length + 4` fewer characters."
         project:
           type: string
           minLength: 1
           maxLength: 100
           description: Shown as `[project]` on the first line. Trimmed.
+        format:
+          type: string
+          enum:
+            - plain
+            - markdown
+          description: "`plain` (default) or `markdown`, a small subset: code spans and fenced blocks, bold, italic, strikethrough, headings and quotes. Anything else stays as typed. See Formatting in the README."
       required:
         - text
     Status:

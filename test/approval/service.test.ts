@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
+import type { FormattedText } from '../../src/format/index.ts'
 import { ApprovalService, RESULT_TTL_MS, SendError } from '../../src/approval/index.ts'
 import type { RequestRecord } from '../../src/state/index.ts'
 import type {
@@ -13,7 +14,7 @@ import type {
 const at = new Date(2026, 0, 1, 9, 5)
 
 const req: ApprovalRequest = {
-  text: 'Deploy?',
+  message: { text: 'Deploy?', spans: [] },
   question: 'Deploy?',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
@@ -25,26 +26,32 @@ class FakeMessenger implements Messenger {
   ref: MessageReference = { chatId: 1, messageId: 2 }
   sent: { id: string; text: string; options: readonly string[]; allowText: boolean }[] = []
   finalized: { ref: MessageReference; text: string; settlement: MessageEnding }[] = []
+  finalizedMessages: FormattedText[] = []
   sendError: Error | undefined
   finalizeError: Error | undefined
   order: string[] | undefined
 
   async sendRequest(
     id: string,
-    text: string,
+    message: FormattedText,
     options: readonly string[],
     allowText: boolean,
   ): Promise<MessageReference> {
     if (this.sendError) {
       throw this.sendError
     }
-    this.sent.push({ id, text, options, allowText })
+    this.sent.push({ id, text: message.text, options, allowText })
     return this.ref
   }
 
-  async finalize(ref: MessageReference, text: string, settlement: MessageEnding): Promise<void> {
+  async finalize(
+    ref: MessageReference,
+    message: FormattedText,
+    settlement: MessageEnding,
+  ): Promise<void> {
     this.order?.push('finalize')
-    this.finalized.push({ ref, text, settlement })
+    this.finalized.push({ ref, text: message.text, settlement })
+    this.finalizedMessages.push(message)
     if (this.finalizeError) {
       throw this.finalizeError
     }
@@ -143,7 +150,7 @@ test('tap resolves request and finalizes message', async () => {
 
 test('final text keeps the project line', async () => {
   const { m, svc } = setup()
-  const r = svc.request({ ...req, text: '[api]\n\nDeploy?' })
+  const r = svc.request({ ...req, message: { text: '[api]\n\nDeploy?', spans: [] } })
   await flush()
   expect(svc.tap('id1', 0)).toBe('accepted')
   await r
@@ -338,7 +345,7 @@ test('history keeps the last 20 and honours count', async () => {
     () => `id${(counter += 1)}`,
   )
   for (let index = 0; index <= 20; index += 1) {
-    const result = svc.request({ ...req, text: `q${index}` })
+    const result = svc.request({ ...req, message: { text: `q${index}`, spans: [] } })
     await flush()
     svc.tap(`id${index + 1}`, 0)
     await result
@@ -481,9 +488,40 @@ test('expireOrphans without finalize drops the records', async () => {
   expect(store.removed).toEqual(['a', 'b'])
 })
 
+test('store records spans only when present', async () => {
+  const { m, svc, store } = setupWithStore()
+  const spans = [{ kind: 'code', offset: 4, length: 2 }] as const
+  const first = svc.request({ ...req, message: { text: 'Run ls', spans } })
+  await flush()
+  expect(svc.tap('id1', 0)).toBe('accepted')
+  await first
+  const second = svc.request(req)
+  await flush()
+  expect(svc.tap('id1', 0)).toBe('accepted')
+  await second
+  expect(store.added).toEqual([
+    { id: 'id1', reference: m.ref, text: 'Run ls', spans },
+    { id: 'id1', reference: m.ref, text: 'Deploy?' },
+  ])
+  expect(Object.hasOwn(store.added[1] ?? {}, 'spans')).toBe(false)
+})
+
+test('expired orphans keep their formatting', async () => {
+  const { m, svc } = setupWithStore()
+  const spans = [{ kind: 'code', offset: 4, length: 2 }] as const
+  await svc.expireOrphans([
+    { id: 'r1', reference: { n: 1 }, text: 'Run ls', spans },
+    { id: 'r2', reference: { n: 2 }, text: 'old' },
+  ])
+  expect(m.finalizedMessages).toEqual([
+    { text: 'Run ls\n\n⌛ Expired (service restarted), 09:05', spans },
+    { text: 'old\n\n⌛ Expired (service restarted), 09:05', spans: [] },
+  ])
+})
+
 const textReq = {
   ...req,
-  text: 'Which branch?',
+  message: { text: 'Which branch?', spans: [] },
   options: [],
   allowText: true,
   timeoutOption: 'main',
@@ -739,8 +777,8 @@ test('cancel settles a pending request and get sees it at once', async () => {
 test('cancel resolves and get stays known while the final edit is in flight', async () => {
   const { m, svc } = setup()
   let finishEdit = () => {}
-  m.finalize = (reference, text, settlement) => {
-    m.finalized.push({ ref: reference, text, settlement })
+  m.finalize = (reference, message, settlement) => {
+    m.finalized.push({ ref: reference, text: message.text, settlement })
     return new Promise((resolve) => {
       finishEdit = resolve
     })

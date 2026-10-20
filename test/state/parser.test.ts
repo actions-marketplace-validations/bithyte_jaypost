@@ -59,3 +59,25 @@ test('drops extra fields', () => {
   }
   expect(parseState(raw, 'telegram')).toEqual(VALID_RESULT)
 })
+
+test('a record with spans loads', () => {
+  const spans = [{ kind: 'pre', offset: 0, length: 5, language: 'diff' }]
+  const requests = [{ ...VALID.requests[0], spans }]
+  expect(parseState({ ...VALID, requests }, 'telegram')).toEqual({
+    ok: true,
+    state: { requests, notifications: VALID.notifications },
+  })
+})
+
+test('a 0.4.0 record without spans loads', () => {
+  const result = parseState(VALID, 'telegram')
+  expect(result.ok && Object.hasOwn(result.state.requests[0] ?? {}, 'spans')).toBe(false)
+})
+
+test('a bad span invalidates the file', () => {
+  const requests = [{ ...VALID.requests[0], spans: [{ kind: 'link', offset: 0, length: 1 }] }]
+  expect(parseState({ ...VALID, requests }, 'telegram')).toEqual({
+    ok: false,
+    reason: 'invalid or missing fields',
+  })
+})

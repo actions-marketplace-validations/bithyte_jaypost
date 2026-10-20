@@ -1,3 +1,5 @@
+import { appendText, prependText } from '../format/index.ts'
+import type { FormattedText } from '../format/index.ts'
 import { MAX_REPLY_ANSWER_LENGTH, SUMMARY_MAX_LENGTH } from './constants.ts'
 import type { ApprovalRequest, HistoryEntry, MessageEnding, PendingSummary } from './types.ts'
 
@@ -30,16 +32,20 @@ export function formatResultLine(ending: MessageEnding, at: Date): string {
 }
 
 /**
- * The original request text, a blank line, then the result line (see `formatResultLine`, including
- * the expired line); this replaces the message once ended.
+ * The original request message, a blank line, then the plain result line (see `formatResultLine`,
+ * including the expired line); this replaces the message once ended. The original spans stay put.
  */
-export function formatFinalText(original: string, ending: MessageEnding, at: Date): string {
-  return `${original}\n\n${formatResultLine(ending, at)}`
+export function formatFinalText(
+  original: FormattedText,
+  ending: MessageEnding,
+  at: Date,
+): FormattedText {
+  return appendText(original, `\n\n${formatResultLine(ending, at)}`)
 }
 
 /** The project name in brackets on its own first line, a blank line, then the text. */
-export function formatProjectText(project: string, text: string): string {
-  return `[${project}]\n\n${text}`
+export function formatProjectText(project: string, message: FormattedText): FormattedText {
+  return prependText(`[${project}]\n\n`, message)
 }
 
 const HIGH_SURROGATE_START = 0xd800
@@ -118,7 +124,7 @@ export function formatPendingReply(
   const entries = pending.map((summary) => {
     const options = formatOptionsPart(summary.request)
     const timeLeft = formatTimeLeft(summary, now)
-    return `${formatSummary(summary.request.text)}\n${options}. ${timeLeft} left, then ${summary.request.timeoutOption}`
+    return `${formatSummary(summary.request.message.text)}\n${options}. ${timeLeft} left, then ${summary.request.timeoutOption}`
   })
   return capReply(`${pending.length} pending`, entries, maxTextLength)
 }
@@ -132,7 +138,8 @@ export function formatRejectedReply(
     return 'Nothing pending.'
   }
   const entries = rejected.map(
-    (summary) => `${formatSummary(summary.request.text)}\n→ ${summary.request.timeoutOption}`,
+    (summary) =>
+      `${formatSummary(summary.request.message.text)}\n→ ${summary.request.timeoutOption}`,
   )
   return capReply(`Rejected ${rejected.length}`, entries, maxTextLength)
 }

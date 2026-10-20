@@ -1,9 +1,10 @@
 import type { MessageReference } from '../approval/index.ts'
+import type { FormattedText } from '../format/index.ts'
 import type { NotificationRecord } from '../state/index.ts'
 
 /** As produced by `parseNotifyRequest`. */
 export type NotifyRequest = {
-  readonly text: string
+  readonly message: FormattedText
 }
 
 /** Outcome of validating a /notify body; `error` is the client-facing message. */
@@ -21,10 +22,10 @@ export type SendNotificationOptions = {
  * no expiry.
  */
 export type Notifier = {
-  /** Send `text` to the owner with a dismiss control carrying `id`, if the messenger can delete. */
+  /** Send `message` to the owner with a dismiss control carrying `id`, if the messenger can delete. */
   readonly sendNotification: (
     id: string,
-    text: string,
+    message: FormattedText,
     options: SendNotificationOptions,
   ) => Promise<MessageReference>
   readonly deleteMessage?: (reference: MessageReference) => Promise<void>

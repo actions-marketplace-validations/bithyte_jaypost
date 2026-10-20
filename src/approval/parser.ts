@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { DEFAULT_FORMAT, MESSAGE_FORMATS, toFormattedText } from '../format/index.ts'
+import type { FormattedText, MessageFormat } from '../format/index.ts'
 import {
   DEFAULT_TIMEOUT_SECONDS,
   MAX_OPTION_LENGTH,
@@ -13,6 +15,8 @@ const TEXT_ERROR = 'text must be a non-empty string'
 const OPTIONS_ERROR = 'options must be a non-empty array'
 const OPTION_ERROR = `options must contain only non-empty strings of at most ${MAX_OPTION_LENGTH} characters`
 const PROJECT_ERROR = 'project must be a non-empty string'
+const FORMAT_ERROR = 'format must be "plain" or "markdown"'
+export const BLANK_FORMATTED_ERROR = 'text must not be blank after formatting'
 const TIMEOUT_ERROR = 'timeout must be a finite positive number'
 const WAIT_ERROR = 'wait must be a non-negative number'
 
@@ -31,28 +35,38 @@ export function createProjectSchema() {
     .optional()
 }
 
+/** Optional `format` of the text: `plain` (the default) or `markdown`; shared by /request and /notify. */
+export function createFormatSchema() {
+  return z.enum(MESSAGE_FORMATS, { error: FORMAT_ERROR }).optional()
+}
+
 /**
- * Applies the length limit to the message text; with a project, checks the combined text and
- * returns it. Never throws.
+ * Applies the length limit to the rendered message text; with a project, checks the combined text
+ * and returns it. Markdown limits say "after formatting", since the source may be longer. Never
+ * throws.
  */
 export function checkProjectText(
-  text: string,
+  message: FormattedText,
   project: string | undefined,
   maxTextLength: number,
-): { readonly ok: true; readonly text: string } | { readonly ok: false; readonly error: string } {
+  format: MessageFormat,
+):
+  | { readonly ok: true; readonly message: FormattedText }
+  | { readonly ok: false; readonly error: string } {
+  const suffix = format === 'markdown' ? ' after formatting' : ''
   if (project === undefined) {
-    return text.length <= maxTextLength
-      ? { ok: true, text }
-      : { ok: false, error: `text must be at most ${maxTextLength} characters` }
+    return message.text.length <= maxTextLength
+      ? { ok: true, message }
+      : { ok: false, error: `text must be at most ${maxTextLength} characters${suffix}` }
   }
-  const combined = formatProjectText(project, text)
-  if (combined.length > maxTextLength) {
+  const combined = formatProjectText(project, message)
+  if (combined.text.length > maxTextLength) {
     return {
       ok: false,
-      error: `text must be at most ${maxTextLength - (project.length + 4)} characters`,
+      error: `text must be at most ${maxTextLength - (project.length + 4)} characters${suffix}`,
     }
   }
-  return { ok: true, text: combined }
+  return { ok: true, message: combined }
 }
 
 /**
@@ -65,6 +79,7 @@ export function createApprovalRequestSchema(maxTextLength: number) {
       {
         text: createTextSchema(),
         project: createProjectSchema(),
+        format: createFormatSchema(),
         allowText: z.boolean({ error: 'allowText must be a boolean' }).optional(),
         options: z
           .array(
@@ -101,14 +116,19 @@ export function createApprovalRequestSchema(maxTextLength: number) {
         })
       }
     })
-    .transform(({ text, project, allowText, options, timeoutOption, timeout }, context) => {
-      const checked = checkProjectText(text, project, maxTextLength)
+    .transform(({ text, project, format, allowText, options, timeoutOption, timeout }, context) => {
+      const message = toFormattedText(text, format ?? DEFAULT_FORMAT)
+      if (message.text.trim() === '') {
+        context.addIssue({ code: 'custom', message: BLANK_FORMATTED_ERROR })
+        return z.NEVER
+      }
+      const checked = checkProjectText(message, project, maxTextLength, format ?? DEFAULT_FORMAT)
       if (!checked.ok) {
         context.addIssue({ code: 'custom', message: checked.error })
         return z.NEVER
       }
       return {
-        text: checked.text,
+        message: checked.message,
         question: text,
         ...(project === undefined ? {} : { project }),
         allowText: allowText ?? false,

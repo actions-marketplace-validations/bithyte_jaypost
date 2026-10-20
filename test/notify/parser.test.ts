@@ -2,13 +2,16 @@ import { expect, test } from 'vite-plus/test'
 import { parseNotifyRequest } from '../../src/notify/index.ts'
 
 test('valid body', () => {
-  expect(parseNotifyRequest({ text: 'hi' }, 3900)).toEqual({ ok: true, value: { text: 'hi' } })
+  expect(parseNotifyRequest({ text: 'hi' }, 3900)).toEqual({
+    ok: true,
+    value: { message: { text: 'hi', spans: [] } },
+  })
 })
 
 test('extra fields are dropped', () => {
   expect(parseNotifyRequest({ text: 'hi', foo: 1 }, 3900)).toEqual({
     ok: true,
-    value: { text: 'hi' },
+    value: { message: { text: 'hi', spans: [] } },
   })
 })
 
@@ -44,7 +47,7 @@ test('text limit comes from the caller', () => {
 test('project goes on its own first line, trimmed', () => {
   expect(parseNotifyRequest({ text: 'hi', project: ' api ' }, 3900)).toEqual({
     ok: true,
-    value: { text: '[api]\n\nhi' },
+    value: { message: { text: '[api]\n\nhi', spans: [] } },
   })
 })
 
@@ -68,5 +71,51 @@ test('project length limit', () => {
   expect(parseNotifyRequest({ text: 'hi', project: 'x'.repeat(101) }, 3900)).toEqual({
     ok: false,
     error: 'project must be at most 100 characters',
+  })
+})
+
+const SPAN_CODE_7 = { kind: 'code', offset: 7, length: 2 } as const
+
+test('plain is the default and keeps the text as is', () => {
+  expect(parseNotifyRequest({ text: '  **a**  ' }, 3900)).toEqual({
+    ok: true,
+    value: { message: { text: '  **a**  ', spans: [] } },
+  })
+})
+
+test('bad format', () => {
+  expect(parseNotifyRequest({ text: 'hi', format: 'html' }, 3900)).toEqual({
+    ok: false,
+    error: 'format must be "plain" or "markdown"',
+  })
+})
+
+test.each(['```\n```', '`   `'])('blank after formatting: %j', (text) => {
+  expect(parseNotifyRequest({ text, format: 'markdown' }, 3900)).toEqual({
+    ok: false,
+    error: 'text must not be blank after formatting',
+  })
+})
+
+test('markdown limit counts the rendered text', () => {
+  const fits = parseNotifyRequest({ text: `\`${'x'.repeat(3899)}\``, format: 'markdown' }, 3900)
+  expect(fits.ok && fits.value.message.text.length).toBe(3899)
+  expect(parseNotifyRequest({ text: `**${'x'.repeat(3901)}**`, format: 'markdown' }, 3900)).toEqual(
+    { ok: false, error: 'text must be at most 3900 characters after formatting' },
+  )
+})
+
+test('project shifts spans and stays literal', () => {
+  expect(parseNotifyRequest({ text: '`ls`', project: 'api', format: 'markdown' }, 3900)).toEqual({
+    ok: true,
+    value: { message: { text: '[api]\n\nls', spans: [SPAN_CODE_7] } },
+  })
+  expect(
+    parseNotifyRequest({ text: '**go**', project: '**x**', format: 'markdown' }, 3900),
+  ).toEqual({
+    ok: true,
+    value: {
+      message: { text: '[**x**]\n\ngo', spans: [{ kind: 'bold', offset: 9, length: 2 }] },
+    },
   })
 })

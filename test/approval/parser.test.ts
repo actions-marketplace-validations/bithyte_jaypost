@@ -2,11 +2,16 @@ import { expect, test } from 'vite-plus/test'
 import { parseApprovalRequest, parseWaitSeconds } from '../../src/approval/index.ts'
 
 const base = { text: 'This is a test', options: ['Approve', 'Decline'], timeoutOption: 'Decline' }
+const expectedBase = {
+  message: { text: 'This is a test', spans: [] },
+  options: ['Approve', 'Decline'],
+  timeoutOption: 'Decline',
+}
 
 test('valid, default timeout', () =>
   expect(parseApprovalRequest(base, 3900)).toEqual({
     ok: true,
-    value: { ...base, question: base.text, allowText: false, timeoutSeconds: 300 },
+    value: { ...expectedBase, question: base.text, allowText: false, timeoutSeconds: 300 },
   }))
 test('custom timeout', () =>
   expect(parseApprovalRequest({ ...base, timeout: 30 }, 3900)).toMatchObject({
@@ -74,8 +79,8 @@ test('request with a project keeps project and bare question, combined text for 
   expect(parseApprovalRequest({ ...base, text: 'Deploy?', project: '  api ' }, 3900)).toEqual({
     ok: true,
     value: {
-      ...base,
-      text: '[api]\n\nDeploy?',
+      ...expectedBase,
+      message: { text: '[api]\n\nDeploy?', spans: [] },
       question: 'Deploy?',
       project: 'api',
       allowText: false,
@@ -94,8 +99,8 @@ test('project goes on its own first line, trimmed', () =>
   expect(parseApprovalRequest({ ...base, project: ' api ' }, 3900)).toEqual({
     ok: true,
     value: {
-      ...base,
-      text: '[api]\n\nThis is a test',
+      ...expectedBase,
+      message: { text: '[api]\n\nThis is a test', spans: [] },
       question: base.text,
       project: 'api',
       allowText: false,
@@ -123,6 +128,64 @@ test('project length limit', () => {
   })
 })
 
+const SPAN_CODE_7 = { kind: 'code', offset: 7, length: 2 } as const
+
+test('plain is the default and keeps the text as is', () =>
+  expect(parseApprovalRequest({ ...base, text: '  **a**  ' }, 3900)).toMatchObject({
+    ok: true,
+    value: { message: { text: '  **a**  ', spans: [] } },
+  }))
+test('bad format', () =>
+  expect(parseApprovalRequest({ ...base, format: 'html' }, 3900)).toEqual({
+    ok: false,
+    error: 'format must be "plain" or "markdown"',
+  }))
+test.each(['```\n```', '`   `'])('blank after formatting: %j', (text) =>
+  expect(parseApprovalRequest({ ...base, text, format: 'markdown' }, 3900)).toEqual({
+    ok: false,
+    error: 'text must not be blank after formatting',
+  }),
+)
+test('markdown source over the limit that renders under it passes', () => {
+  const result = parseApprovalRequest(
+    { ...base, text: `\`${'x'.repeat(3899)}\``, format: 'markdown' },
+    3900,
+  )
+  expect(result.ok && result.value.message.text.length).toBe(3899)
+})
+test('markdown rendered one over the limit fails', () =>
+  expect(
+    parseApprovalRequest({ ...base, text: `**${'x'.repeat(3901)}**`, format: 'markdown' }, 3900),
+  ).toEqual({ ok: false, error: 'text must be at most 3900 characters after formatting' }))
+test('plain over the limit keeps its message', () =>
+  expect(parseApprovalRequest({ ...base, text: 'x'.repeat(3901) }, 3900)).toEqual({
+    ok: false,
+    error: 'text must be at most 3900 characters',
+  }))
+test('project shifts spans', () =>
+  expect(
+    parseApprovalRequest({ ...base, text: '`ls`', project: 'api', format: 'markdown' }, 3900),
+  ).toMatchObject({
+    ok: true,
+    value: { message: { text: '[api]\n\nls', spans: [SPAN_CODE_7] } },
+  }))
+test('markup in project stays literal', () =>
+  expect(
+    parseApprovalRequest({ ...base, text: '**go**', project: '**x**', format: 'markdown' }, 3900),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      message: { text: '[**x**]\n\ngo', spans: [{ kind: 'bold', offset: 9, length: 2 }] },
+    },
+  }))
+test('markdown with project over the limit', () =>
+  expect(
+    parseApprovalRequest(
+      { ...base, text: `**${'x'.repeat(3894)}**`, project: 'api', format: 'markdown' },
+      3900,
+    ),
+  ).toEqual({ ok: false, error: 'text must be at most 3893 characters after formatting' }))
+
 const text = { text: 'Which branch?', allowText: true, timeoutOption: 'main' }
 const errorOf = (body: unknown) => {
   const r = parseApprovalRequest(body, 3900)
@@ -132,7 +195,14 @@ const errorOf = (body: unknown) => {
 test('allowText without options is a text-only question', () =>
   expect(parseApprovalRequest(text, 3900)).toEqual({
     ok: true,
-    value: { ...text, question: text.text, options: [], timeoutSeconds: 300 },
+    value: {
+      message: { text: text.text, spans: [] },
+      question: text.text,
+      allowText: true,
+      options: [],
+      timeoutOption: 'main',
+      timeoutSeconds: 300,
+    },
   }))
 test('allowText with empty options', () =>
   expect(parseApprovalRequest({ ...text, options: [] }, 3900)).toMatchObject({

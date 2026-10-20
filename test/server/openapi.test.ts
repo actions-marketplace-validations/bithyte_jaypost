@@ -15,8 +15,17 @@ test('server url and text limits follow the options', () => {
   const document = createOpenApiDocument({ port: 9000, maxTextLength: 1234 })
   expect(document.servers).toEqual([{ url: 'http://127.0.0.1:9000' }])
   const { ApprovalRequest, NotifyRequest } = document.components.schemas
-  expect(ApprovalRequest.properties?.text).toMatchObject({ minLength: 1, maxLength: 1234 })
-  expect(NotifyRequest.properties?.text).toMatchObject({ minLength: 1, maxLength: 1234 })
+  for (const body of [ApprovalRequest, NotifyRequest]) {
+    expect(body.properties?.text).toMatchObject({ minLength: 1 })
+    expect(body.properties?.text).not.toHaveProperty('maxLength')
+    expect(body.properties?.text).toMatchObject({
+      description: expect.stringContaining('1234'),
+    })
+    expect(body.properties?.text).toMatchObject({
+      description: expect.stringContaining('markdown'),
+    })
+    expect(body.properties?.format).toMatchObject({ enum: ['plain', 'markdown'] })
+  }
 })
 
 test('request bodies come from the parser schemas', () => {
@@ -34,7 +43,7 @@ test('request bodies come from the parser schemas', () => {
   expect(ApprovalRequest.properties?.timeout).toMatchObject({ exclusiveMinimum: 0 })
   expect(ApprovalRequest.properties?.project).toMatchObject({ maxLength: 100 })
   expect(NotifyRequest.required).toEqual(['text'])
-  expect(Object.keys(NotifyRequest.properties ?? {})).toEqual(['text', 'project'])
+  expect(Object.keys(NotifyRequest.properties ?? {})).toEqual(['text', 'project', 'format'])
 })
 
 test('yaml parses back to the document', () => {

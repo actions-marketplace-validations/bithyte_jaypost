@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vite-plus/test'
 import { Bot, GrammyError } from 'grammy'
 import type { UserFromGetMe } from 'grammy/types'
+import type { Span } from '../../src/format/index.ts'
 import { ApprovalService, OWNER_COMMANDS } from '../../src/approval/index.ts'
 import {
   formatCallbackData,
@@ -16,12 +17,15 @@ import {
   registerTapHandler,
   routeReply,
   routeTap,
+  toEntities,
   formatPairingInstructions,
   formatLegacyInstructions,
 } from '../../src/telegram/index.ts'
 import type { IncomingMessage, OpenQuestions, Owner, Reply } from '../../src/telegram/index.ts'
 import { Pairing } from '../../src/pairing/index.ts'
 import { QUIET_COMMANDS } from '../../src/quiet/index.ts'
+
+const plain = (text: string) => ({ text, spans: [] })
 
 const attempt = (pairing: Pairing) => (senderId: string, text: string) =>
   pairing.attempt(senderId, text)
@@ -63,7 +67,7 @@ test('sendRequest sends plain text with one button per row', async () => {
   const bot = { api: { sendMessage } } as unknown as Bot
   const ref = await createTelegramMessenger(bot, { id: 42 }).sendRequest(
     'id1',
-    'Deploy?',
+    plain('Deploy?'),
     ['Yes', 'No'],
     false,
   )
@@ -84,7 +88,12 @@ const at = new Date(2026, 0, 1, 9, 5)
 test('allowText with buttons appends the tap-or-reply hint', async () => {
   const sendMessage = vi.fn(async () => sentMessage)
   const bot = { api: { sendMessage } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'Branch?', ['main'], true)
+  await createTelegramMessenger(bot, { id: 42 }).sendRequest(
+    'id1',
+    plain('Branch?'),
+    ['main'],
+    true,
+  )
   expect(sendMessage).toHaveBeenCalledWith(
     42,
     'Branch?\n\nTap a button or reply to this message to type an answer.',
@@ -95,7 +104,12 @@ test('allowText with buttons appends the tap-or-reply hint', async () => {
 test('text-only question has the reply hint and no reply_markup', async () => {
   const sendMessage = vi.fn(async () => sentMessage)
   const bot = { api: { sendMessage } } as unknown as Bot
-  const ref = await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'Branch?', [], true)
+  const ref = await createTelegramMessenger(bot, { id: 42 }).sendRequest(
+    'id1',
+    plain('Branch?'),
+    [],
+    true,
+  )
   expect(ref).toEqual({ chatId: 42, messageId: 5, hasButtons: false })
   expect(sendMessage).toHaveBeenCalledWith(
     42,
@@ -110,9 +124,9 @@ test('send tracks the question and finalize forgets it', async () => {
     api: { sendMessage: vi.fn(async () => sentMessage), editMessageText: vi.fn(async () => true) },
   } as unknown as Bot
   const messenger = createTelegramMessenger(bot, { id: 42 }, openQuestions)
-  const ref = await messenger.sendRequest('id1', 'Branch?', [], true)
+  const ref = await messenger.sendRequest('id1', plain('Branch?'), [], true)
   expect([...openQuestions]).toEqual([['42:5', { id: 'id1', allowText: true }]])
-  await messenger.finalize(ref, 'done', { kind: 'replied', answer: 'x' })
+  await messenger.finalize(ref, plain('done'), { kind: 'replied', answer: 'x' })
   expect(openQuestions.size).toBe(0)
 })
 
@@ -127,9 +141,9 @@ test('a failed final edit still forgets the question', async () => {
     },
   } as unknown as Bot
   const messenger = createTelegramMessenger(bot, { id: 42 }, openQuestions)
-  const ref = await messenger.sendRequest('id1', 'Branch?', [], true)
+  const ref = await messenger.sendRequest('id1', plain('Branch?'), [], true)
   expect(openQuestions.size).toBe(1)
-  await expect(messenger.finalize(ref, 'done', { kind: 'cancelled' })).rejects.toThrow(
+  await expect(messenger.finalize(ref, plain('done'), { kind: 'cancelled' })).rejects.toThrow(
     'message is not modified',
   )
   expect(openQuestions.size).toBe(0)
@@ -142,7 +156,9 @@ test.each([
 ])('finalize of %o clears the keyboard only if it had one', async (reference, extra) => {
   const editMessageText = vi.fn(async () => true)
   const bot = { api: { editMessageText } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).finalize(reference, 'done', { kind: 'cancelled' })
+  await createTelegramMessenger(bot, { id: 42 }).finalize(reference, plain('done'), {
+    kind: 'cancelled',
+  })
   expect(editMessageText).toHaveBeenCalledWith(42, 5, 'done', extra)
 })
 
@@ -274,7 +290,7 @@ test("dismiss and approval payloads don't overlap", () => {
 test('sendNotification sends text with one Dismiss button', async () => {
   const sendMessage = vi.fn(async () => ({ message_id: 5, chat: { id: 42 } }))
   const bot = { api: { sendMessage } } as unknown as Bot
-  const ref = await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', 'hi', {
+  const ref = await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', plain('hi'), {
     silent: false,
   })
   expect(ref).toEqual({ chatId: 42, messageId: 5 })
@@ -290,7 +306,9 @@ test('sendNotification sets disable_notification when silent', async () => {
     chat: { id: 42 },
   }))
   const bot = { api: { sendMessage } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', 'hi', { silent: true })
+  await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', plain('hi'), {
+    silent: true,
+  })
   expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({ disable_notification: true })
 })
 
@@ -300,7 +318,12 @@ test('sendRequest never sets disable_notification', async () => {
     chat: { id: 42 },
   }))
   const bot = { api: { sendMessage } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'hi', ['Yes', 'No'], false)
+  await createTelegramMessenger(bot, { id: 42 }).sendRequest(
+    'id1',
+    plain('hi'),
+    ['Yes', 'No'],
+    false,
+  )
   expect(Object.hasOwn(sendMessage.mock.calls[0]?.[2] ?? {}, 'disable_notification')).toBe(false)
 })
 
@@ -308,7 +331,9 @@ test('sendNotification throws when unpaired', async () => {
   const sendMessage = vi.fn()
   const bot = { api: { sendMessage } } as unknown as Bot
   await expect(
-    createTelegramMessenger(bot, { id: undefined }).sendNotification('id1', 'hi', { silent: true }),
+    createTelegramMessenger(bot, { id: undefined }).sendNotification('id1', plain('hi'), {
+      silent: true,
+    }),
   ).rejects.toThrow()
   expect(sendMessage).not.toHaveBeenCalled()
 })
@@ -331,10 +356,10 @@ test('messenger sends to the owner id at call time', async () => {
   const bot = { api: { sendMessage } } as unknown as Bot
   const owner: Owner = { id: undefined }
   const m = createTelegramMessenger(bot, owner)
-  await expect(m.sendRequest('id1', 'Q', ['Yes'], false)).rejects.toThrow()
+  await expect(m.sendRequest('id1', plain('Q'), ['Yes'], false)).rejects.toThrow()
   expect(sendMessage).not.toHaveBeenCalled()
   owner.id = 9
-  await m.sendRequest('id1', 'Q', ['Yes'], false)
+  await m.sendRequest('id1', plain('Q'), ['Yes'], false)
   expect(sendMessage).toHaveBeenCalledWith(9, 'Q', expect.anything())
 })
 
@@ -986,4 +1011,228 @@ test('/start CODE still pairs with the command handler registered', async () => 
   expect(calls.map((call) => call.payload)).toMatchObject([
     { text: 'Paired. Approval requests will appear here.' },
   ])
+})
+
+const CODE_4_2 = { kind: 'code', offset: 4, length: 2 } as const
+const RUN_LS = { text: 'Run ls', spans: [CODE_4_2] }
+const REJECTED_ENTITIES = "Bad Request: can't parse entities"
+
+function createRejection(errorCode: number, description: string): GrammyError {
+  return new GrammyError(
+    'Call failed',
+    { ok: false, error_code: errorCode, description },
+    'sendMessage',
+    {},
+  )
+}
+
+function createSendBot(first?: Error, second?: Error) {
+  const results = [first, second]
+  const reply = { message_id: 5, chat: { id: 42 } }
+  const sendMessage = vi.fn(async (_chatId: number, _text: string, _other: object) => {
+    const failure = results.shift()
+    if (failure !== undefined) {
+      throw failure
+    }
+    return reply
+  })
+  const editMessageText = vi.fn(
+    async (_chatId: number, _messageId: number, _text: string, _other: object) => {
+      const failure = results.shift()
+      if (failure !== undefined) {
+        throw failure
+      }
+      return true
+    },
+  )
+  return {
+    bot: { api: { sendMessage, editMessageText } } as unknown as Bot,
+    sendMessage,
+    editMessageText,
+  }
+}
+
+test('toEntities maps each kind', () => {
+  const spans: Span[] = [
+    { kind: 'bold', offset: 0, length: 1 },
+    { kind: 'italic', offset: 2, length: 1 },
+    { kind: 'strikethrough', offset: 4, length: 1 },
+    { kind: 'code', offset: 6, length: 1 },
+    { kind: 'blockquote', offset: 8, length: 1 },
+    { kind: 'pre', offset: 10, length: 1, language: 'diff' },
+    { kind: 'pre', offset: 12, length: 1 },
+  ]
+  expect(toEntities(spans)).toEqual([
+    { type: 'bold', offset: 0, length: 1 },
+    { type: 'italic', offset: 2, length: 1 },
+    { type: 'strikethrough', offset: 4, length: 1 },
+    { type: 'code', offset: 6, length: 1 },
+    { type: 'blockquote', offset: 8, length: 1 },
+    { type: 'pre', offset: 10, length: 1, language: 'diff' },
+    { type: 'pre', offset: 12, length: 1 },
+  ])
+  expect(Object.hasOwn(toEntities(spans)[6] ?? {}, 'language')).toBe(false)
+})
+
+test('toEntities splits styles around code', () => {
+  expect(
+    toEntities([
+      { kind: 'bold', offset: 0, length: 10 },
+      { kind: 'code', offset: 4, length: 2 },
+    ]),
+  ).toEqual([
+    { type: 'bold', offset: 0, length: 4 },
+    { type: 'code', offset: 4, length: 2 },
+    { type: 'bold', offset: 6, length: 4 },
+  ])
+})
+
+test('toEntities drops a blockquote holding code', () => {
+  expect(
+    toEntities([
+      { kind: 'blockquote', offset: 0, length: 6 },
+      { kind: 'code', offset: 4, length: 2 },
+    ]),
+  ).toEqual([{ type: 'code', offset: 4, length: 2 }])
+  const kept: Span[] = [
+    { kind: 'blockquote', offset: 0, length: 6 },
+    { kind: 'bold', offset: 0, length: 3 },
+  ]
+  expect(toEntities(kept)).toEqual([
+    { type: 'blockquote', offset: 0, length: 6 },
+    { type: 'bold', offset: 0, length: 3 },
+  ])
+})
+
+test('plain sends have no entities key', async () => {
+  const { bot, sendMessage, editMessageText } = createSendBot()
+  const messenger = createTelegramMessenger(bot, { id: 42 })
+  await messenger.sendRequest('id1', plain('Q'), ['Yes'], false)
+  await messenger.sendNotification('id1', plain('hi'), { silent: false })
+  await messenger.finalize({ chatId: 42, messageId: 5 }, plain('done'), { kind: 'cancelled' })
+  for (const call of [
+    ...sendMessage.mock.calls.map((c) => c[2]),
+    editMessageText.mock.calls[0]?.[3],
+  ]) {
+    expect(call).not.toHaveProperty('entities')
+  }
+  expect(editMessageText).toHaveBeenCalledWith(42, 5, 'done', {
+    reply_markup: { inline_keyboard: [] },
+  })
+})
+
+test('markdown sends carry entities', async () => {
+  const { bot, sendMessage } = createSendBot()
+  await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', RUN_LS, ['Yes'], false)
+  expect(sendMessage).toHaveBeenCalledWith(42, 'Run ls', {
+    entities: [{ type: 'code', offset: 4, length: 2 }],
+    reply_markup: { inline_keyboard: [[{ text: 'Yes', callback_data: 'id1:0' }]] },
+  })
+  expect(sendMessage.mock.calls[0]?.[2]).not.toHaveProperty('parse_mode')
+})
+
+test('a 400 on a formatted send retries once as plain', async () => {
+  const log = vi.fn()
+  const { bot, sendMessage } = createSendBot(createRejection(400, REJECTED_ENTITIES))
+  const reference = await createTelegramMessenger(bot, { id: 42 }, new Map(), log).sendRequest(
+    'id1',
+    RUN_LS,
+    ['Yes'],
+    false,
+  )
+  expect(reference).toEqual({ chatId: 42, messageId: 5, hasButtons: true })
+  expect(sendMessage).toHaveBeenCalledTimes(2)
+  expect(sendMessage.mock.calls[0]?.[2]).toHaveProperty('entities')
+  expect(sendMessage.mock.calls[1]?.[1]).toBe('Run ls')
+  expect(sendMessage.mock.calls[1]?.[2]).not.toHaveProperty('entities')
+  expect(log).toHaveBeenCalledTimes(1)
+  expect(log).toHaveBeenCalledWith(
+    "telegram rejected formatting, sent as plain text: Bad Request: can't parse entities",
+  )
+})
+
+test('a 400 on a plain send does not retry', async () => {
+  const log = vi.fn()
+  const { bot, sendMessage } = createSendBot(createRejection(400, 'Bad Request: chat not found'))
+  await expect(
+    createTelegramMessenger(bot, { id: 42 }, new Map(), log).sendRequest(
+      'id1',
+      plain('Q'),
+      ['Yes'],
+      false,
+    ),
+  ).rejects.toThrow('chat not found')
+  expect(sendMessage).toHaveBeenCalledTimes(1)
+  expect(log).not.toHaveBeenCalled()
+})
+
+test('a failed retry throws', async () => {
+  const { bot, sendMessage } = createSendBot(
+    createRejection(400, REJECTED_ENTITIES),
+    createRejection(400, 'Bad Request: still bad'),
+  )
+  await expect(
+    createTelegramMessenger(bot, { id: 42 }, new Map(), vi.fn()).sendRequest(
+      'id1',
+      RUN_LS,
+      ['Yes'],
+      false,
+    ),
+  ).rejects.toThrow('still bad')
+  expect(sendMessage).toHaveBeenCalledTimes(2)
+})
+
+test('a non-400 failure on a formatted send does not retry', async () => {
+  const log = vi.fn()
+  const { bot, sendMessage } = createSendBot(createRejection(429, 'Too Many Requests'))
+  await expect(
+    createTelegramMessenger(bot, { id: 42 }, new Map(), log).sendRequest(
+      'id1',
+      RUN_LS,
+      ['Yes'],
+      false,
+    ),
+  ).rejects.toThrow('Too Many Requests')
+  expect(sendMessage).toHaveBeenCalledTimes(1)
+  expect(log).not.toHaveBeenCalled()
+})
+
+test('finalize carries entities and falls back the same way', async () => {
+  const log = vi.fn()
+  const reference = { chatId: 42, messageId: 5 }
+  const ok = createSendBot()
+  await createTelegramMessenger(ok.bot, { id: 42 }, new Map(), log).finalize(reference, RUN_LS, {
+    kind: 'cancelled',
+  })
+  expect(ok.editMessageText).toHaveBeenCalledWith(42, 5, 'Run ls', {
+    entities: [{ type: 'code', offset: 4, length: 2 }],
+    reply_markup: { inline_keyboard: [] },
+  })
+  const rejected = createSendBot(createRejection(400, REJECTED_ENTITIES))
+  await createTelegramMessenger(rejected.bot, { id: 42 }, new Map(), log).finalize(
+    reference,
+    RUN_LS,
+    {
+      kind: 'cancelled',
+    },
+  )
+  expect(rejected.editMessageText).toHaveBeenCalledTimes(2)
+  expect(rejected.editMessageText.mock.calls[1]?.[3]).toEqual({
+    reply_markup: { inline_keyboard: [] },
+  })
+  expect(log).toHaveBeenCalledTimes(1)
+})
+
+test('notification falls back the same way', async () => {
+  const log = vi.fn()
+  const { bot, sendMessage } = createSendBot(createRejection(400, REJECTED_ENTITIES))
+  await createTelegramMessenger(bot, { id: 42 }, new Map(), log).sendNotification('id1', RUN_LS, {
+    silent: true,
+  })
+  expect(sendMessage).toHaveBeenCalledTimes(2)
+  expect(sendMessage.mock.calls[1]?.[2]).toEqual({
+    disable_notification: true,
+    reply_markup: { inline_keyboard: [[{ text: 'Dismiss', callback_data: 'dismiss/id1' }]] },
+  })
+  expect(log).toHaveBeenCalledTimes(1)
 })

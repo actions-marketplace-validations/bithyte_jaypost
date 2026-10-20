@@ -53,7 +53,7 @@ export class NotificationService {
     const quietEnd = this.#quiet?.quietUntil()
     let reference
     try {
-      reference = await this.#notifier.sendNotification(id, request.text, {
+      reference = await this.#notifier.sendNotification(id, request.message, {
         silent: quietEnd !== undefined,
       })
     } catch (cause) {

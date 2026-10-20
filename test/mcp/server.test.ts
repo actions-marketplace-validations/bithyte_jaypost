@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import type { FormattedText } from '../../src/format/index.ts'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
@@ -29,32 +30,36 @@ const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
 
 class RecordingMessenger implements Messenger {
   sent: { id: string; text: string; options: readonly string[]; allowText: boolean }[] = []
+  messages: FormattedText[] = []
   finalized: { text: string; settlement: MessageEnding }[] = []
 
   async sendRequest(
     id: string,
-    text: string,
+    message: FormattedText,
     options: readonly string[],
     allowText: boolean,
   ): Promise<MessageReference> {
-    this.sent.push({ id, text, options, allowText })
+    this.sent.push({ id, text: message.text, options, allowText })
+    this.messages.push(message)
     return REFERENCE
   }
 
   async finalize(
     _reference: MessageReference,
-    text: string,
+    message: FormattedText,
     settlement: MessageEnding,
   ): Promise<void> {
-    this.finalized.push({ text, settlement })
+    this.finalized.push({ text: message.text, settlement })
   }
 }
 
 class RecordingNotifier implements Notifier {
   sent: string[] = []
+  messages: FormattedText[] = []
 
-  sendNotification = async (_id: string, text: string): Promise<MessageReference> => {
-    this.sent.push(text)
+  sendNotification = async (_id: string, message: FormattedText): Promise<MessageReference> => {
+    this.sent.push(message.text)
+    this.messages.push(message)
     return REFERENCE
   }
 }
@@ -400,6 +405,59 @@ test('an unusable token fails only the call that hit it', async () => {
   expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual({
     content: [{ type: 'text', text: 'sent' }],
   })
+})
+
+const CODE_SPAN = { kind: 'code', offset: 11, length: 2 } as const
+
+test('tool list shows format', async () => {
+  const { port } = await startApi()
+  const client = await connect(port)
+  const { tools } = await client.listTools()
+  for (const tool of tools.filter((tool) => tool.name !== 'wait_for_answer')) {
+    expect(tool.inputSchema.properties?.format).toMatchObject({ enum: ['plain', 'markdown'] })
+    expect(tool.inputSchema.required).not.toContain('format')
+  }
+})
+
+test('ask_for_permission forwards format', async () => {
+  const { port, service, messenger } = await startApi()
+  const client = await connect(port)
+  const pending = client.callTool({
+    name: 'ask_for_permission',
+    arguments: { ...ASK, text: 'Run `ls` now?', format: 'markdown' },
+  })
+  await waitFor(() => messenger.sent.length === 1)
+  expect(messenger.messages[0]).toEqual({ text: '[api]\n\nRun ls now?', spans: [CODE_SPAN] })
+  service.tap(messenger.sent[0]?.id ?? '', 0)
+  await pending
+})
+
+test('ask format is omitted when not set', async () => {
+  const { port, service, messenger } = await startApi()
+  const client = await connect(port)
+  const pending = client.callTool({
+    name: 'ask_for_permission',
+    arguments: { ...ASK, text: 'Run `ls` now?' },
+  })
+  await waitFor(() => messenger.sent.length === 1)
+  expect(messenger.messages[0]).toEqual({ text: '[api]\n\nRun `ls` now?', spans: [] })
+  service.tap(messenger.sent[0]?.id ?? '', 0)
+  await pending
+})
+
+test('notify_user forwards format, and omits it when not set', async () => {
+  const { port, notifier } = await startApi()
+  const client = await connect(port)
+  const text = 'Run `ls` now?'
+  await client.callTool({
+    name: 'notify_user',
+    arguments: { project_name: 'api', text, format: 'markdown' },
+  })
+  await client.callTool({ name: 'notify_user', arguments: { project_name: 'api', text } })
+  expect(notifier.messages).toEqual([
+    { text: '[api]\n\nRun ls now?', spans: [CODE_SPAN] },
+    { text: '[api]\n\nRun `ls` now?', spans: [] },
+  ])
 })
 
 test('ask with allow_text and no options is answered by a typed reply', async () => {

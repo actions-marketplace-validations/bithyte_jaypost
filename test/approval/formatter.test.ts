@@ -1,4 +1,5 @@
 import { expect, test } from 'vite-plus/test'
+import { toFormattedText } from '../../src/format/index.ts'
 import {
   formatFinalText,
   formatHistoryReply,
@@ -21,9 +22,20 @@ test('cancelled', () =>
 test('rejected', () =>
   expect(formatResultLine({ kind: 'rejected', answer: 'No' }, at)).toBe('⛔ Rejected, No, 09:05'))
 test('formatFinalText appends line', () =>
-  expect(formatFinalText('Deploy?', { kind: 'answered', answer: 'Yes' }, at)).toBe(
-    'Deploy?\n\n✅ Yes, 09:05',
-  ))
+  expect(
+    formatFinalText({ text: 'Deploy?', spans: [] }, { kind: 'answered', answer: 'Yes' }, at),
+  ).toEqual({ text: 'Deploy?\n\n✅ Yes, 09:05', spans: [] }))
+test('final text keeps spans and appends a plain result line', () =>
+  expect(
+    formatFinalText(
+      { text: 'Run ls', spans: [{ kind: 'code', offset: 4, length: 2 }] },
+      { kind: 'answered', answer: 'Approve' },
+      new Date(2026, 0, 1, 9, 5),
+    ),
+  ).toEqual({
+    text: 'Run ls\n\n✅ Approve, 09:05',
+    spans: [{ kind: 'code', offset: 4, length: 2 }],
+  }))
 test('expired', () =>
   expect(formatResultLine({ kind: 'expired' }, at)).toBe('⌛ Expired (service restarted), 09:05'))
 
@@ -36,7 +48,14 @@ const pendingOf = (
   timeoutOption = options.at(-1) ?? 'main',
 ) => ({
   id: text,
-  request: { text, question: text, allowText, options, timeoutOption, timeoutSeconds },
+  request: {
+    message: { text, spans: [] },
+    question: text,
+    allowText,
+    options,
+    timeoutOption,
+    timeoutSeconds,
+  },
   openedAt: OPENED_AT,
 })
 const after = (ms: number) => new Date(OPENED_AT.getTime() + ms)
@@ -174,6 +193,15 @@ test('length cap leaves a reply that fits untouched', () => {
   expect(formatPendingReply(pending, OPENED_AT, full.length - 1)).toMatch(/…and 1 more$/)
 })
 
+test('summaries show the rendered text', () => {
+  const message = toFormattedText(`${'😀'.repeat(50)} \`x\``, 'markdown')
+  const summary = { ...pendingOf('x'), request: { ...pendingOf('x').request, message } }
+  const first = formatPendingReply([summary], OPENED_AT, 3900).split('\n')[2] ?? ''
+  expect(first).not.toContain('`')
+  expect(first.endsWith('…')).toBe(true)
+  expect(first.isWellFormed()).toBe(true)
+})
+
 test('replied', () =>
   expect(formatResultLine({ kind: 'replied', answer: 'feature/x' }, at)).toBe(
     '💬 feature/x, 09:05',
@@ -188,7 +216,11 @@ test('replied answer of 180 is kept, 181 is cut to 180 with an ellipsis', () => 
 })
 test('final text with a long typed answer fits telegram', () =>
   expect(
-    formatFinalText('q'.repeat(3900), { kind: 'replied', answer: 'a'.repeat(5000) }, at).length,
+    formatFinalText(
+      { text: 'q'.repeat(3900), spans: [] },
+      { kind: 'replied', answer: 'a'.repeat(5000) },
+      at,
+    ).text.length,
   ).toBeLessThanOrEqual(4096))
 test('pending options part for buttons, buttons and text, and text only', () => {
   const lineOf = (options: string[], allowText: boolean) =>
