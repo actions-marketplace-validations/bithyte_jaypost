@@ -10,6 +10,7 @@ export { writeAll } from './stdout.ts'
 export { runStatus } from './status.ts'
 export { runTest } from './test.ts'
 export { runUninstall } from './uninstall.ts'
+export { runFinishUpdate, runUpdate } from './update.ts'
 export type {
   InitArgs,
   InitDeps,
@@ -25,6 +26,7 @@ export type {
   StatusDeps,
   StatusFetch,
   UninstallDeps,
+  UpdateDeps,
   WaitForPairing,
   WaitOptions,
   WaitResult,

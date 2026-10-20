@@ -39,8 +39,7 @@ test('quadlet publishes on localhost and quotes the env file path', () => {
 })
 test('systemd unit quotes paths with spaces and percent', () => {
   const u = formatSystemdUnit({
-    node: '/opt/node 24/bin/node',
-    cli: '/x/cli.js',
+    exec: ['/opt/node 24/bin/node', '/x/cli.js'],
     config: '/h/50%/c.json',
   })
   expect(u).toContain('ExecStart="/opt/node 24/bin/node" "/x/cli.js" start')
@@ -48,9 +47,16 @@ test('systemd unit quotes paths with spaces and percent', () => {
   expect(u).not.toContain('WorkingDirectory')
 })
 test('systemd unit escapes $ in ExecStart only', () => {
-  const u = formatSystemdUnit({ node: '/n$x/node', cli: '/c$y/cli.js', config: '/h/$z/c.json' })
+  const u = formatSystemdUnit({
+    exec: ['/n$x/node', '/c$y/cli.js'],
+    config: '/h/$z/c.json',
+  })
   expect(u).toContain('ExecStart="/n$$x/node" "/c$$y/cli.js" start')
   expect(u).toContain('Environment="TELEGRAM_ASK_CONFIG=/h/$z/c.json"')
+})
+test('systemd unit with a single exec word runs it directly', () => {
+  const u = formatSystemdUnit({ exec: ['/h/.local/bin/telegram-ask'], config: '/h/c.json' })
+  expect(u).toContain('ExecStart="/h/.local/bin/telegram-ask" start\n')
 })
 test('quoteSystemdValue escapes backslash and quote', () =>
   expect(quoteSystemdValue('a\\b"c%')).toBe('"a\\\\b\\"c%%"'))

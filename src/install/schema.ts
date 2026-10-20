@@ -8,6 +8,8 @@ export const installRecordSchema = z.object({
   /** Absent in installs from 0.1.x, which are Telegram. */
   provider: z.string().optional(),
   cliPath: z.string().optional(),
+  /** Which CLI the systemd service runs; absent means `npm`. */
+  cliKind: z.enum(['npm', 'binary']).optional(),
   /** Absolute config.json path the systemd unit was installed with. */
   configFile: z.string().optional(),
 })

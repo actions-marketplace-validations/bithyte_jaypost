@@ -118,3 +118,80 @@ jobs:
       - uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
+
+  # Binaries are built per OS so darwin ones can be code-signed (tsdown can't sign on Linux)
+  binaries:
+    needs: publish
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: darwin
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+
+      - run: npm ci
+
+      # setup-node's Node 26 is first on PATH, so plain npm run works (no vp env exec needed)
+      - run: npm run build:exe
+        env:
+          EXE_PLATFORMS: ${{ matrix.platform }}
+
+      - name: Sign and compress
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir release
+          for binary in dist-exe/cli-"$PLATFORM"-*; do
+            name="telegram-ask-${binary#dist-exe/cli-}"
+            cp "$binary" "release/$name"
+            if [ "$PLATFORM" = darwin ]; then
+              codesign --sign - --force "release/$name"
+            fi
+            gzip -9 "release/$name"
+          done
+          ls -l release
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: binaries-${{ matrix.platform }}
+          path: release/*.gz
+          if-no-files-found: error
+
+  # One SHA256SUMS over every binary, then upload to the release
+  release-assets:
+    needs: binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: binaries-*
+          path: release
+          merge-multiple: true
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          cd release
+          sha256sum telegram-ask-*.gz > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "v$version" telegram-ask-*.gz SHA256SUMS --clobber

@@ -11,7 +11,7 @@ export {
   findLeftoverSecrets,
 } from './registry.ts'
 export { readInstall, removeInstall, resolveRecordProvider, writeInstall } from './state.ts'
-export { createSystemdTarget, findUnitConfigFile } from './systemd.ts'
+export { createSystemdTarget, findUnitConfigFile, findUnitExecWords } from './systemd.ts'
 export {
   formatComposeYaml,
   formatDockerfile,

@@ -115,10 +115,12 @@ WantedBy=default.target
 `
 }
 
-/** User unit that runs `node cli start` with TELEGRAM_ASK_CONFIG pinned to `config`. */
+/**
+ * User unit that runs the `exec` words (`[node, cli]` or `[binary]`) plus `start`, with
+ * TELEGRAM_ASK_CONFIG pinned to `config`.
+ */
 export function formatSystemdUnit(options: {
-  readonly node: string
-  readonly cli: string
+  readonly exec: readonly string[]
   readonly config: string
 }): string {
   return `[Unit]
@@ -128,7 +130,7 @@ Wants=network-online.target
 
 [Service]
 Environment=${quoteSystemdValue(`TELEGRAM_ASK_CONFIG=${options.config}`)}
-ExecStart=${quoteExecWord(options.node)} ${quoteExecWord(options.cli)} start
+ExecStart=${options.exec.map(quoteExecWord).join(' ')} start
 Restart=on-failure
 RestartSec=5
 

@@ -1,16 +1,29 @@
-import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  copyFileSync,
+  lstatSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { delimiter, dirname, join, resolve, sep } from 'node:path'
 import { readAuditFiles, removeAuditFiles, resolveAuditPath } from '../audit/index.ts'
 import { readConfigFile, updateConfigFile } from '../config/index.ts'
 import { collectSettings, DEFAULT_PROVIDER, findProvider } from '../provider/index.ts'
 import type { Provider } from '../provider/index.ts'
 import { resolveStatePath } from '../state/index.ts'
-import { ensureLinger } from '../system/index.ts'
+import { ensureLinger, isMissingFileError } from '../system/index.ts'
 import {
   CONFIG_ENV_PREFIX,
   ENVIRONMENT_LINE_PATTERN,
   ESCAPED_CHAR_PATTERN,
+  EXEC_START_LINE_PATTERN,
+  EXECUTABLE_MODE,
   PACKAGE_NAME,
+  PATH_HINT,
   SERVICE_NAME,
 } from './constants.ts'
 import { requireRecordOwner } from './state.ts'
@@ -27,6 +40,38 @@ import type {
 
 function isUnder(file: string, root: string): boolean {
   return root !== '' && file.startsWith(root.endsWith(sep) ? root : root + sep)
+}
+
+/** Copies `source` over `destination` via a temp file and rename, so a running copy is never half-written. */
+function copyExecutable(source: string, destination: string): void {
+  mkdirSync(dirname(destination), { recursive: true })
+  const temp = `${destination}.${process.pid}.tmp`
+  try {
+    copyFileSync(source, temp)
+    // chmod after copying: the umask can strip bits at creation.
+    chmodSync(temp, EXECUTABLE_MODE)
+    renameSync(temp, destination)
+  } catch (error) {
+    rmSync(temp, { force: true })
+    throw error
+  }
+}
+
+/** What sits at `path` without following links; `missing` when nothing does. */
+function inspectEntry(path: string): 'missing' | 'symlink' | 'file' | 'other' {
+  let stats
+  try {
+    stats = lstatSync(path)
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return 'missing'
+    }
+    throw error
+  }
+  if (stats.isSymbolicLink()) {
+    return 'symlink'
+  }
+  return stats.isFile() ? 'file' : 'other'
 }
 
 function isWritable(directory: string): boolean {
@@ -59,6 +104,64 @@ export function findUnitConfigFile(unit: string): string | undefined {
     if (value.startsWith(CONFIG_ENV_PREFIX) && value.length > CONFIG_ENV_PREFIX.length) {
       return resolve(value.slice(CONFIG_ENV_PREFIX.length))
     }
+  }
+  return undefined
+}
+
+/** Splits a unit command line into words, honoring double quotes and backslash escapes. */
+function splitCommandLine(line: string): string[] {
+  const words: string[] = []
+  let word = ''
+  let hasWord = false
+  let isQuoted = false
+  let isEscaped = false
+  for (const char of line) {
+    if (isEscaped) {
+      word += char
+      isEscaped = false
+      continue
+    }
+    if (char === '\\') {
+      isEscaped = true
+      hasWord = true
+      continue
+    }
+    if (char === '"') {
+      isQuoted = !isQuoted
+      hasWord = true
+      continue
+    }
+    if (!isQuoted && /\s/.test(char)) {
+      if (hasWord) {
+        words.push(word)
+      }
+      word = ''
+      hasWord = false
+      continue
+    }
+    word += char
+    hasWord = true
+  }
+  if (hasWord) {
+    words.push(word)
+  }
+  return words
+}
+
+/**
+ * The unquoted words of a unit's `ExecStart=` line minus the trailing `start`: the node path and
+ * CLI script, or the binary path. Undefined without an `ExecStart=` line.
+ */
+export function findUnitExecWords(unit: string): readonly string[] | undefined {
+  for (const line of unit.split('\n')) {
+    const rawValue = EXEC_START_LINE_PATTERN.exec(line)?.[1]
+    if (rawValue === undefined) {
+      continue
+    }
+    const words = splitCommandLine(rawValue).map((word) =>
+      word.replaceAll('$$', '$').replaceAll('%%', '%'),
+    )
+    return words.at(-1) === 'start' ? words.slice(0, -1) : words
   }
   return undefined
 }
@@ -96,7 +199,8 @@ function formatOtherProviderKeys(
 }
 
 /**
- * systemd user service target running the npm-installed CLI; keeps its settings in the config file.
+ * systemd user service target running the npm-installed CLI, or a copy of the standalone binary in
+ * ~/.local/bin; keeps its settings in the config file.
  */
 export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target {
   const { exec, paths, env, user, providers } = deps
@@ -106,15 +210,15 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
   const configFile = resolveDefaultConfigFile(paths, env)
   const resolveConfigFile = (record: InstallRecord) => record.configFile ?? configFile
   const fallbackRoot = join(paths.userNpmPrefix, 'lib', 'node_modules')
-  async function resolveCli(options: InstallOptions): Promise<string> {
+  async function resolveCli(selfPath: string, options: InstallOptions): Promise<string> {
     const root = (await exec('npm', ['root', '-g'])).stdout.trim()
-    if (isUnder(cli.selfPath, root)) {
-      options.print(`Using the installed CLI at ${cli.selfPath}`)
-      return cli.selfPath
+    if (isUnder(selfPath, root)) {
+      options.print(`Using the installed CLI at ${selfPath}`)
+      return selfPath
     }
-    if (isUnder(cli.selfPath, fallbackRoot)) {
-      options.print(`Using the installed CLI at ${cli.selfPath}`)
-      return cli.selfPath
+    if (isUnder(selfPath, fallbackRoot)) {
+      options.print(`Using the installed CLI at ${selfPath}`)
+      return selfPath
     }
     const packageSpec = options.tarball ?? `${PACKAGE_NAME}@${options.version}`
     const prefix = (await exec('npm', ['prefix', '-g'])).stdout.trim()
@@ -138,16 +242,46 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
     }
     return join(installRoot, PACKAGE_NAME, 'dist', 'cli.js')
   }
-  return {
+  /** Installs or locates the CLI; `words` is what the unit execs before `start`. */
+  async function resolveExec(
+    options: InstallOptions,
+  ): Promise<{ readonly cliPath: string; readonly words: readonly string[] }> {
+    if (cli.kind === 'npm') {
+      // A leftover binary copy would shadow npm's launcher on PATH; a symlink there is npm's own.
+      if (inspectEntry(paths.binaryCopy) === 'file') {
+        options.print(`Removing the old standalone binary at ${paths.binaryCopy}`)
+        rmSync(paths.binaryCopy, { force: true })
+      }
+      const cliPath = await resolveCli(cli.selfPath, options)
+      return { cliPath, words: [cli.nodePath, cliPath] }
+    }
+    if (resolve(cli.binaryPath) !== resolve(paths.binaryCopy)) {
+      options.print(`Copying ${cli.binaryPath} to ${paths.binaryCopy}`)
+      copyExecutable(cli.binaryPath, paths.binaryCopy)
+    }
+    return { cliPath: paths.binaryCopy, words: [paths.binaryCopy] }
+  }
+  function isOnPath(directory: string): boolean {
+    return (env.PATH ?? '')
+      .split(delimiter)
+      .some((entry) => entry !== '' && resolve(entry) === resolve(directory))
+  }
+  const target: Target = {
     name: 'systemd',
     async available() {
+      if (cli.kind === 'binary' && inspectEntry(paths.binaryCopy) === 'symlink') {
+        return {
+          ok: false,
+          reason: `~/.local/bin/${PACKAGE_NAME} is a symlink (npm's launcher?); run "npm rm -g ${PACKAGE_NAME}" first`,
+        }
+      }
       const result = await systemctl('show-environment')
       return result.code === 0
         ? { ok: true }
         : { ok: false, reason: 'systemd user session not available' }
     },
     async install(options): Promise<InstallRecord> {
-      const cliPath = await resolveCli(options)
+      const command = await resolveExec(options)
       // Only touch the owner when we have one; clearOwner is the explicit way to drop it.
       updateConfigFile(configFile, {
         ...formatOtherProviderKeys(providers, options.provider),
@@ -159,7 +293,7 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       mkdirSync(dirname(paths.systemdUnit), { recursive: true })
       writeFileSync(
         paths.systemdUnit,
-        formatSystemdUnit({ node: cli.nodePath, cli: cliPath, config: configFile }),
+        formatSystemdUnit({ exec: command.words, config: configFile }),
       )
       for (const args of [['daemon-reload'], ['enable', '--now', SERVICE_NAME]]) {
         const result = await systemctl(...args)
@@ -168,14 +302,24 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
         }
       }
       await ensureLinger(exec, user, options.print)
+      if (cli.kind === 'binary' && !isOnPath(dirname(paths.binaryCopy))) {
+        options.print(PATH_HINT)
+      }
       return {
         target: 'systemd',
         provider: options.provider.name,
         port: options.port,
         version: options.version,
-        cliPath,
+        cliPath: command.cliPath,
+        cliKind: cli.kind,
         configFile,
       }
+    },
+    async upgrade(options): Promise<InstallRecord> {
+      const record = await target.install(options)
+      // `enable --now` leaves an already running unit on the old command.
+      await target.restart(record)
+      return record
     },
     async readSecrets(record): Promise<Secrets> {
       return readConfigSecrets(resolveConfigFile(record), providers)
@@ -188,6 +332,12 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
         rmSync(resolveConfigFile(record), { force: true })
         rmSync(resolveStatePath(resolveConfigFile(record)), { force: true })
         removeAuditFiles(resolveAuditPath(resolveConfigFile(record)))
+        if (record.cliKind === 'binary') {
+          if (record.cliPath !== undefined) {
+            rmSync(record.cliPath, { force: true })
+          }
+          return
+        }
         const prefix =
           record.cliPath !== undefined && isUnder(record.cliPath, fallbackRoot)
             ? `--prefix ${paths.userNpmPrefix} `
@@ -218,4 +368,5 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       return `journalctl --user -u ${SERVICE_NAME} -f`
     },
   }
+  return target
 }

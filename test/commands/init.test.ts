@@ -72,6 +72,7 @@ function fake(name: TargetName, ok = true, secrets: Secrets = NO_SECRETS): Mutab
       order.push(`install:${name}`)
       return { target: name, port: o.port, version: o.version }
     }),
+    upgrade: vi.fn(),
     readSecrets: vi.fn(async () => secrets),
     remove: vi.fn(async () => {
       order.push('remove')

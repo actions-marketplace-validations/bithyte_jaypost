@@ -27,7 +27,7 @@ export function createQuadletTarget(deps: TargetDeps): Target {
   const { exec, paths, user, providers } = deps
   const envPath = join(paths.quadletDirectory, '.env')
   const systemctl = (...args: string[]) => exec('systemctl', ['--user', ...args])
-  return {
+  const target: Target = {
     name: 'quadlet',
     async available() {
       let output: string
@@ -104,6 +104,29 @@ export function createQuadletTarget(deps: TargetDeps): Target {
         port: options.port,
         version: options.version,
       }
+    },
+    async upgrade(options, previous): Promise<InstallRecord> {
+      // install builds before it touches the unit, so a failed build leaves the old one running.
+      const record = await target.install(options)
+      // `systemctl start` does nothing when the unit is already running.
+      await target.restart(record)
+      const oldTag = formatImageTag(previous.version)
+      if (oldTag === formatImageTag(options.version)) {
+        return record
+      }
+      let failure: string | undefined
+      try {
+        const result = await exec('podman', ['rmi', oldTag])
+        if (result.code !== 0 && !NOT_FOUND_PATTERN.test(result.stderr)) {
+          failure = result.stderr.trim() || `exit ${result.code}`
+        }
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error)
+      }
+      if (failure !== undefined) {
+        options.print(`Couldn't remove the old image ${oldTag}: ${failure}`)
+      }
+      return record
     },
     async readSecrets(record): Promise<Secrets> {
       return readContainerSecrets(envPath, providers, () =>
@@ -209,4 +232,5 @@ export function createQuadletTarget(deps: TargetDeps): Target {
       return `journalctl --user -u ${SERVICE_NAME} -f`
     },
   }
+  return target
 }

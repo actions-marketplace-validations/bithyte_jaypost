@@ -3,12 +3,14 @@ import { Argument, Command, CommanderError, InvalidArgumentError, Option } from 
 import { realpathSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import { resolve } from 'node:path'
+import { isSea } from 'node:sea'
 import { fileURLToPath } from 'node:url'
 import { parseSince } from './audit/index.ts'
 import { resolveClientToken, resolveTokenFile } from './auth/index.ts'
 import {
   createClackPrompts,
   defaultFetchStatus,
+  runFinishUpdate,
   runAudit,
   runInit,
   runLog,
@@ -19,6 +21,7 @@ import {
   runStatus,
   runTest,
   runUninstall,
+  runUpdate,
   waitForPairing,
   writeAll,
 } from './commands/index.ts'
@@ -31,10 +34,11 @@ import { readHookInput, runHook } from './hook/index.ts'
 import type { HookDeps } from './hook/index.ts'
 import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
 import { resolveMcpPort, runMcp } from './mcp/index.ts'
-import type { InstallPaths, Target, TargetName } from './install/index.ts'
+import type { CliLocation, InstallPaths, Target, TargetName } from './install/index.ts'
 import { DEFAULT_PROVIDER, PROVIDERS, requireProvider } from './provider/index.ts'
 import { formatOpenApiYaml } from './server/index.ts'
 import { isPortFree, realExec } from './system/index.ts'
+import { NPM_LATEST_URL, RELEASES_API_URL } from './update/index.ts'
 
 const PORT_PATTERN = /^\d+$/
 
@@ -155,10 +159,16 @@ function runOpenApiCommand(file: string | undefined, flagPort: number | undefine
   return 0
 }
 
+/** This machine's IANA zone, or undefined when Intl can't tell. */
+function findTimeZone(): string | undefined {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  return timeZone && timeZone !== 'Etc/Unknown' ? timeZone : undefined
+}
+
 function runInitCommand(args: InitArgs): Promise<number> {
   const paths = resolveInstallPaths()
   const targets = createRealTargets(paths)
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const timeZone = findTimeZone()
   return runWithSignals((controller) =>
     runInit(args, {
       targets,
@@ -170,7 +180,7 @@ function runInitCommand(args: InitArgs): Promise<number> {
       print: (text) => console.log(text),
       signal: controller.signal,
       version: VERSION,
-      ...(timeZone && timeZone !== 'Etc/Unknown' ? { timeZone } : {}),
+      ...(timeZone === undefined ? {} : { timeZone }),
     }),
   )
 }
@@ -184,11 +194,20 @@ function createRealTargets(paths: InstallPaths): Readonly<Record<TargetName, Tar
       user: os.userInfo().username,
       providers: PROVIDERS,
     },
-    {
-      selfPath: realpathSync(fileURLToPath(import.meta.url)),
-      nodePath: process.execPath,
-    },
+    resolveCliLocation(),
   )
+}
+
+/** The standalone binary itself when running as one, else this npm CLI script and its node. */
+function resolveCliLocation(): CliLocation {
+  if (isSea()) {
+    return { kind: 'binary', binaryPath: process.execPath }
+  }
+  return {
+    kind: 'npm',
+    selfPath: realpathSync(fileURLToPath(import.meta.url)),
+    nodePath: process.execPath,
+  }
 }
 
 async function runWithSignals(
@@ -265,6 +284,30 @@ function runUninstallCommand(): Promise<number> {
       signal: controller.signal,
     }),
   )
+}
+
+function runUpdateCommand(isFinish: boolean): Promise<number> {
+  const paths = resolveInstallPaths()
+  const targets = createRealTargets(paths)
+  const timeZone = findTimeZone()
+  return runWithSignals((controller) => {
+    const deps = {
+      targets,
+      paths,
+      providers: PROVIDERS,
+      exec: realExec,
+      cli: resolveCliLocation(),
+      version: VERSION,
+      platform: process.platform,
+      arch: process.arch,
+      releasesUrl: RELEASES_API_URL,
+      npmLatestUrl: NPM_LATEST_URL,
+      print: (text: string) => console.log(text),
+      signal: controller.signal,
+      ...(timeZone === undefined ? {} : { timeZone }),
+    }
+    return isFinish ? runFinishUpdate(deps) : runUpdate(deps)
+  })
 }
 
 /** Takes argv without node and script path; returns the exit code (2 for usage errors). */
@@ -361,6 +404,14 @@ export async function main(argv: readonly string[]): Promise<number> {
     .description('remove the service')
     .action(async () => {
       code = await runUninstallCommand()
+    })
+  program
+    .command('update')
+    .description('update the service or this CLI to the latest release')
+    // Run by the new CLI after `update` fetched it, to rewrite the install's files.
+    .addOption(new Option('--finish').hideHelp())
+    .action(async (options: { readonly finish?: boolean }) => {
+      code = await runUpdateCommand(options.finish === true)
     })
   program
     .command('mcp')

@@ -22,6 +22,8 @@ export type InstallPaths = {
   readonly quadletUnit: string
   /** Fallback npm prefix for installing the CLI when the global one isn't writable. */
   readonly userNpmPrefix: string
+  /** Where a systemd install copies the standalone binary; always ~/.local/bin, never XDG. */
+  readonly binaryCopy: string
 }
 
 /** Provider name and its settings found in an existing install; absent settings weren't found. */
@@ -57,6 +59,12 @@ export type Target = {
   readonly available: () => Promise<Availability>
   /** Writes files, builds if needed, starts. */
   readonly install: (options: InstallOptions) => Promise<InstallRecord>
+  /**
+   * Rewrites the files from the current templates at `options.version`, switches the running
+   * service over and returns the new record. Never calls `remove`; a failed build throws and
+   * leaves the old service running.
+   */
+  readonly upgrade: (options: InstallOptions, previous: InstallRecord) => Promise<InstallRecord>
   readonly readSecrets: (record: InstallRecord) => Promise<Secrets>
   /** Stop and delete files; purge also deletes credential and owner storage. */
   readonly remove: (record: InstallRecord, purge: boolean) => Promise<void>
@@ -78,11 +86,13 @@ export type TargetDeps = {
   readonly providers: readonly Provider[]
 }
 
-/** Paths of the running CLI script and the node binary, for the systemd unit to exec. */
-export type CliLocation = {
-  readonly selfPath: string
-  readonly nodePath: string
-}
+/**
+ * What the systemd unit execs: the running npm CLI script with its node binary, or the running
+ * standalone binary.
+ */
+export type CliLocation =
+  | { readonly kind: 'npm'; readonly selfPath: string; readonly nodePath: string }
+  | { readonly kind: 'binary'; readonly binaryPath: string }
 
 /** A target name with its availability. */
 export type DetectedTarget = { readonly name: TargetName } & Availability

@@ -69,3 +69,20 @@ test('old install.json without provider resolves to telegram', () => {
   expect(record).toBeDefined()
   expect(resolveRecordProvider(record!)).toBe('telegram')
 })
+
+test('cliKind roundtrips and is optional', () => {
+  const file = join(dir, 'install.json')
+  const rec = {
+    target: 'systemd',
+    port: 1,
+    version: 'v',
+    cliPath: '/h/.local/bin/telegram-ask',
+    cliKind: 'binary',
+  } as const
+  writeInstall(file, rec)
+  expect(readInstall(file)).toEqual(rec)
+  writeFileSync(file, JSON.stringify({ target: 'systemd', port: 1, version: 'v' }))
+  expect(readInstall(file)).toEqual({ target: 'systemd', port: 1, version: 'v' })
+  writeFileSync(file, JSON.stringify({ target: 'systemd', port: 1, version: 'v', cliKind: 'x' }))
+  expect(readInstall(file)).toBeUndefined()
+})

@@ -24,7 +24,12 @@ export function createComposeTarget(deps: TargetDeps): Target {
   const envPath = join(paths.composeDirectory, '.env')
   const compose = (args: readonly string[], options?: { readonly inherit?: boolean }) =>
     exec('docker', ['compose', '-f', file, ...args], options)
-  return {
+  /** The bot service's image ID, or empty when there's none or compose can't tell. */
+  async function readImageId(): Promise<string> {
+    const result = await tryExec(exec, 'docker', ['compose', '-f', file, 'images', '-q', 'bot'])
+    return result === undefined || result.code !== 0 ? '' : result.stdout.trim()
+  }
+  const target: Target = {
     name: 'compose',
     async available() {
       const version = await tryExec(exec, 'docker', ['compose', 'version'])
@@ -78,6 +83,20 @@ export function createComposeTarget(deps: TargetDeps): Target {
         port: options.port,
         version: options.version,
       }
+    },
+    async upgrade(options): Promise<InstallRecord> {
+      const oldImageId = await readImageId()
+      // `up -d --build` recreates the container when the image changed.
+      const record = await target.install(options)
+      if (oldImageId === '' || oldImageId === (await readImageId())) {
+        return record
+      }
+      const result = await tryExec(exec, 'docker', ['image', 'rm', oldImageId])
+      if (result === undefined || result.code !== 0) {
+        const reason = result?.stderr.trim() || (result ? `exit ${result.code}` : 'docker failed')
+        options.print(`Couldn't remove the old image ${oldImageId}: ${reason}`)
+      }
+      return record
     },
     async readSecrets(): Promise<Secrets> {
       return readContainerSecrets(envPath, providers, () =>
@@ -138,4 +157,5 @@ export function createComposeTarget(deps: TargetDeps): Target {
       return `docker compose -f ${file} logs -f`
     },
   }
+  return target
 }

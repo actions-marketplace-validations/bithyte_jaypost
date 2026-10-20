@@ -12,11 +12,15 @@ let tmp: string
 let calls: [string, readonly string[]][]
 let fail: (cmd: string, args: readonly string[]) => boolean
 let ownerOut: string
+let imageIds: string[]
 
 const fakeExec: Exec = async (cmd, args) => {
   calls.push([cmd, args])
   if (fail(cmd, args)) {
     return { code: 1, stdout: '', stderr: 'x' }
+  }
+  if (args.includes('images')) {
+    return { code: 0, stdout: `${imageIds.shift() ?? ''}\n`, stderr: '' }
   }
   if (args.includes('audit')) {
     return { code: 0, stdout: 'LINES', stderr: '' }
@@ -54,6 +58,7 @@ beforeEach(() => {
   calls = []
   fail = () => false
   ownerOut = ''
+  imageIds = []
 })
 
 test('unavailable when compose v2 is missing', async () => {
@@ -305,4 +310,57 @@ test('install writes the api token into .env and keeps it out of the Dockerfile'
   const directory = paths.composeDirectory
   expect(readFileSync(join(directory, '.env'), 'utf8')).toContain(`TELEGRAM_ASK_TOKEN=${TOKEN}\n`)
   expect(readFileSync(join(directory, 'Dockerfile'), 'utf8')).not.toContain(TOKEN)
+})
+
+test('upgrade removes the previous image', async () => {
+  const { t, paths } = make()
+  const previous = await t.install(base)
+  imageIds = ['old123', 'new456']
+  calls = []
+  const record = await t.upgrade({ ...base, version: '0.2.0' }, previous)
+  expect(record).toEqual({ target: 'compose', provider: 'telegram', port: 8787, version: '0.2.0' })
+  const file = join(paths.composeDirectory, 'compose.yaml')
+  expect(calls).toEqual([
+    ['docker', ['compose', '-f', file, 'images', '-q', 'bot']],
+    ['docker', ['compose', '-f', file, 'up', '-d', '--build']],
+    ['docker', ['compose', '-f', file, 'images', '-q', 'bot']],
+    ['docker', ['image', 'rm', 'old123']],
+  ])
+})
+
+test('upgrade keeps the image when it did not change', async () => {
+  const { t } = make()
+  const previous = await t.install(base)
+  imageIds = ['same1', 'same1']
+  calls = []
+  await t.upgrade(base, previous)
+  expect(calls.some(([, a]) => a[0] === 'image')).toBe(false)
+})
+
+test('upgrade without an old image removes nothing', async () => {
+  const { t } = make()
+  imageIds = ['', 'new456']
+  calls = []
+  await t.upgrade(base, rec)
+  expect(calls.some(([, a]) => a[0] === 'image')).toBe(false)
+})
+
+test('upgrade prints a failed image rm instead of throwing', async () => {
+  const { t } = make()
+  const previous = await t.install(base)
+  imageIds = ['old123', 'new456']
+  fail = (_c, a) => a[0] === 'image'
+  const printed: string[] = []
+  await t.upgrade({ ...base, print: (text) => printed.push(text) }, previous)
+  expect(printed).toContain("Couldn't remove the old image old123: x")
+})
+
+test('upgrade throws when the build fails and removes nothing', async () => {
+  const { t } = make()
+  const previous = await t.install(base)
+  imageIds = ['old123', 'new456']
+  fail = (_c, a) => a.includes('up')
+  calls = []
+  await expect(t.upgrade(base, previous)).rejects.toThrow(/docker compose up/)
+  expect(calls.some(([, a]) => a[0] === 'image')).toBe(false)
 })

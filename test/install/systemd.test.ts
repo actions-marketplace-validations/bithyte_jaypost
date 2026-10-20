@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
@@ -7,6 +17,8 @@ import {
   resolveInstallPaths,
   createSystemdTarget,
   findUnitConfigFile,
+  findUnitExecWords,
+  formatSystemdUnit,
 } from '../../src/install/index.ts'
 import type { Exec } from '../../src/system/index.ts'
 import { NO_AUTH } from '../../src/auth/index.ts'
@@ -47,9 +59,29 @@ function make(env: NodeJS.ProcessEnv = {}, selfPath = '/src/dist/cli.js') {
       user: 'me',
       providers: [telegramProvider, createFakeProvider()],
     },
-    { selfPath, nodePath: '/usr/bin/node' },
+    { kind: 'npm', selfPath, nodePath: '/usr/bin/node' },
   )
   return { t, paths }
+}
+
+function makeBinary(env: NodeJS.ProcessEnv = {}, binaryPath = join(tmp, 'dl', 'telegram-ask')) {
+  if (!existsSync(binaryPath)) {
+    mkdirSync(dirname(binaryPath), { recursive: true })
+    writeFileSync(binaryPath, 'binary v2')
+  }
+  const e = { HOME: tmp, PATH: '/usr/bin', ...env }
+  const paths = resolveInstallPaths(e)
+  const t = createSystemdTarget(
+    {
+      exec: fakeExec,
+      paths,
+      env: e,
+      user: 'me',
+      providers: [telegramProvider, createFakeProvider()],
+    },
+    { kind: 'binary', binaryPath },
+  )
+  return { t, paths, binaryPath }
 }
 
 const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
@@ -330,4 +362,180 @@ test('install writes apiToken, and a later install without a token deletes it', 
   expect(readConfigFile(paths.configFile).apiToken).toBe(TOKEN)
   await t.install({ ...base, auth: NO_AUTH })
   expect('apiToken' in readConfigFile(paths.configFile)).toBe(false)
+})
+
+test('binary install copies itself to ~/.local/bin and runs it directly', async () => {
+  const { t, paths, binaryPath } = makeBinary()
+  const binDirectory = join(tmp, '.local', 'bin')
+  expect(existsSync(binDirectory)).toBe(false)
+  expect(paths.binaryCopy).toBe(join(tmp, '.local', 'bin', 'telegram-ask'))
+  const rec = await t.install(base)
+  expect(statSync(paths.binaryCopy).mode & 0o777).toBe(0o755)
+  expect(readFileSync(paths.binaryCopy, 'utf8')).toBe(readFileSync(binaryPath, 'utf8'))
+  const unit = readFileSync(paths.systemdUnit, 'utf8')
+  expect(unit).toContain(`ExecStart="${paths.binaryCopy}" start`)
+  expect(unit).not.toContain('node')
+  expect(calls.some(([c]) => c === 'npm')).toBe(false)
+  expect(calls).toContainEqual(['systemctl', ['--user', 'enable', '--now', 'telegram-ask']])
+  expect(rec).toMatchObject({ target: 'systemd', cliKind: 'binary', cliPath: paths.binaryCopy })
+  expect(readdirSync(binDirectory)).toEqual(['telegram-ask'])
+})
+
+test('binary install over an existing copy replaces it with a new inode', async () => {
+  const { t, paths } = makeBinary()
+  mkdirSync(dirname(paths.binaryCopy), { recursive: true })
+  writeFileSync(paths.binaryCopy, 'binary v1')
+  const before = statSync(paths.binaryCopy).ino
+  await t.install(base)
+  expect(statSync(paths.binaryCopy).ino).not.toBe(before)
+  expect(readFileSync(paths.binaryCopy, 'utf8')).toBe('binary v2')
+  expect(readdirSync(dirname(paths.binaryCopy))).toEqual(['telegram-ask'])
+})
+
+test('binary install from the copy itself skips the copy', async () => {
+  const copy = join(tmp, '.local', 'bin', 'telegram-ask')
+  mkdirSync(dirname(copy), { recursive: true })
+  writeFileSync(copy, 'binary v1')
+  const before = statSync(copy).ino
+  const { t, paths } = makeBinary({}, copy)
+  expect(paths.binaryCopy).toBe(copy)
+  const rec = await t.install(base)
+  expect(statSync(copy).ino).toBe(before)
+  expect(readFileSync(copy, 'utf8')).toBe('binary v1')
+  expect(rec).toMatchObject({ cliKind: 'binary', cliPath: copy })
+})
+
+test('binary unit stays quoted with spaces and $ in HOME', async () => {
+  const home = join(tmp, 'my $home')
+  const { t, paths } = makeBinary({ HOME: home })
+  await t.install(base)
+  const unit = readFileSync(paths.systemdUnit, 'utf8')
+  const quoted = join(tmp, 'my $$home', '.local', 'bin', 'telegram-ask')
+  expect(unit).toContain(`ExecStart="${quoted}" start`)
+  expect(readFileSync(join(home, '.local', 'bin', 'telegram-ask'), 'utf8')).toBe('binary v2')
+})
+
+test("binary install prints a PATH hint when ~/.local/bin isn't on PATH", async () => {
+  const hint = "~/.local/bin isn't on your PATH; add it to run telegram-ask from anywhere."
+  const printed: string[] = []
+  const { t } = makeBinary({ PATH: '/usr/bin:/bin' })
+  await t.install({ ...base, print: (text) => printed.push(text) })
+  expect(printed).toContain(hint)
+  const onPath: string[] = []
+  const { t: t2 } = makeBinary({ PATH: `/usr/bin:${join(tmp, '.local', 'bin')}` })
+  await t2.install({ ...base, print: (text) => onPath.push(text) })
+  expect(onPath).not.toContain(hint)
+})
+
+test('npm install records cliKind npm', async () => {
+  const { t } = make()
+  const rec = await t.install(base)
+  expect(rec).toMatchObject({ target: 'systemd', cliKind: 'npm' })
+})
+
+function plantCopy(paths: { readonly binaryCopy: string }, kind: 'file' | 'symlink'): void {
+  mkdirSync(dirname(paths.binaryCopy), { recursive: true })
+  if (kind === 'file') {
+    writeFileSync(paths.binaryCopy, 'binary v1')
+    return
+  }
+  symlinkSync('../lib/node_modules/telegram-ask/dist/cli.js', paths.binaryCopy)
+}
+
+test('purge removes the binary copy', async () => {
+  const { t, paths } = makeBinary()
+  const rec = await t.install(base)
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  await t.remove(rec, true)
+  expect(existsSync(paths.binaryCopy)).toBe(false)
+  expect(log).not.toHaveBeenCalled()
+  log.mockRestore()
+})
+
+test('remove without purge keeps the binary copy', async () => {
+  const { t, paths } = makeBinary()
+  const rec = await t.install(base)
+  await t.remove(rec, false)
+  expect(existsSync(paths.binaryCopy)).toBe(true)
+})
+
+test('binary target is unavailable when ~/.local/bin/telegram-ask is a symlink', async () => {
+  const { t, paths } = makeBinary()
+  plantCopy(paths, 'symlink')
+  expect(await t.available()).toEqual({
+    ok: false,
+    reason:
+      '~/.local/bin/telegram-ask is a symlink (npm\'s launcher?); run "npm rm -g telegram-ask" first',
+  })
+})
+
+test('npm install deletes a leftover binary copy before npm i -g', async () => {
+  const { paths } = make()
+  plantCopy(paths, 'file')
+  let existedAtNpmInstall: boolean | undefined
+  const exec: Exec = async (cmd, args) => {
+    if (cmd === 'npm' && args[0] === 'i') {
+      existedAtNpmInstall = existsSync(paths.binaryCopy)
+    }
+    return fakeExec(cmd, args)
+  }
+  const target = createSystemdTarget(
+    {
+      exec,
+      paths,
+      env: { HOME: tmp },
+      user: 'me',
+      providers: [telegramProvider, createFakeProvider()],
+    },
+    { kind: 'npm', selfPath: '/src/dist/cli.js', nodePath: '/usr/bin/node' },
+  )
+  await target.install(base)
+  expect(existedAtNpmInstall).toBe(false)
+  expect(existsSync(paths.binaryCopy)).toBe(false)
+})
+
+test('npm install leaves a symlink at ~/.local/bin/telegram-ask alone', async () => {
+  const { t, paths } = make()
+  plantCopy(paths, 'symlink')
+  await t.install(base)
+  expect(lstatSync(paths.binaryCopy).isSymbolicLink()).toBe(true)
+})
+
+test('upgrade rewrites the unit and restarts', async () => {
+  const { t, paths } = make()
+  const previous = await t.install(base)
+  calls = []
+  const record = await t.upgrade({ ...base, version: '0.2.0' }, previous)
+  expect(record).toMatchObject({ target: 'systemd', version: '0.2.0', cliKind: 'npm' })
+  expect(readFileSync(paths.systemdUnit, 'utf8')).toContain('ExecStart="/usr/bin/node"')
+  const ctl = calls.filter(([c]) => c === 'systemctl').map(([, a]) => a.slice(1).join(' '))
+  expect(ctl).toEqual(['daemon-reload', 'enable --now telegram-ask', 'restart telegram-ask'])
+})
+
+test('upgrade throws when the restart fails', async () => {
+  const { t } = make()
+  const previous = await t.install(base)
+  failRestart = true
+  await expect(t.upgrade(base, previous)).rejects.toThrow('systemctl restart failed (exit 1)')
+})
+
+test('findUnitExecWords returns the ExecStart words without start', () => {
+  expect(findUnitExecWords('[Service]\nExecStart="/usr/bin/node" "/x/cli.js" start\n')).toEqual([
+    '/usr/bin/node',
+    '/x/cli.js',
+  ])
+  expect(findUnitExecWords('ExecStart="/h/.local/bin/telegram-ask" start\n')).toEqual([
+    '/h/.local/bin/telegram-ask',
+  ])
+  expect(findUnitExecWords('ExecStart=/usr/bin/node /x/cli.js start\n')).toEqual([
+    '/usr/bin/node',
+    '/x/cli.js',
+  ])
+  expect(findUnitExecWords('[Unit]\nDescription=x\n')).toBeUndefined()
+})
+
+test('findUnitExecWords undoes the quoting formatSystemdUnit applies', () => {
+  const words = ['/a b/$HOME/50%/"q"\\x', '/c.js']
+  const unit = formatSystemdUnit({ exec: words, config: '/c.json' })
+  expect(findUnitExecWords(unit)).toEqual(words)
 })

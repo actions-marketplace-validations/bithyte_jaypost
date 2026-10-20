@@ -24,5 +24,6 @@ export function resolveInstallPaths(env: NodeJS.ProcessEnv = process.env): Insta
     systemdUnit: join(xdgConfigHome, 'systemd', 'user', 'telegram-ask.service'),
     quadletUnit: join(xdgConfigHome, 'containers', 'systemd', 'telegram-ask.container'),
     userNpmPrefix: join(xdgDataHome, 'telegram-ask', 'npm'),
+    binaryCopy: join(home, '.local', 'bin', 'telegram-ask'),
   }
 }

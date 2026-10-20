@@ -32,6 +32,7 @@ function fake(name: TargetName, running = true): Mutable<Target> {
     name,
     available: vi.fn(),
     install: vi.fn(),
+    upgrade: vi.fn(),
     readSecrets: vi.fn(),
     remove: vi.fn(async () => {
       order.push('remove')

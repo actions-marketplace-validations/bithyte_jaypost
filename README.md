@@ -383,7 +383,17 @@ Create a bot with @BotFather first and have the token ready. `init`:
 
 If it finds an existing install it offers to replace it, reusing the saved bot token and owner (no re-pairing). If there's no install but a bot token was kept by `uninstall`, it reuses that (and the owner) too. If `init` fails partway, run it again; the old install record and saved bot token are kept until the new install succeeds.
 
-Node 24+ is needed for `npx` and the systemd target; the container targets bring their own Node.
+Node 24+ is needed for `npx` and the systemd target unless you use the standalone binary; the container targets bring their own Node.
+
+### Standalone binary
+
+Each GitHub Release has a single-file binary for Linux and macOS, so you can skip Node:
+
+```
+curl -L https://github.com/cozminu/telegram-ask/releases/latest/download/telegram-ask-linux-x64.gz | gunzip > telegram-ask && chmod +x telegram-ask && ./telegram-ask init systemd
+```
+
+`init` copies the binary to `~/.local/bin/telegram-ask` and runs the service from there. The macOS binaries exist too, but there's no macOS service target yet. `SHA256SUMS` on the release lists the checksums.
 
 The API token file `~/.config/telegram-ask/token` is written for every target; the service's own copy goes in the target's `.env` or in `config.json` as listed below. All targets keep their files under `~/.config/telegram-ask/` (or `$XDG_CONFIG_HOME/telegram-ask/`). `install.json` there records which target is installed, its port and version. It's what `status`, `reset-owner` and `uninstall` read.
 
@@ -425,6 +435,8 @@ No container. `init` installs the package globally with npm (`npm i -g`), or int
 - `~/.config/systemd/user/telegram-ask.service` with absolute paths to `node`, the CLI and the config file (`TELEGRAM_ASK_CONFIG` is always set in the unit, and `install.json` records the same path)
 
 Logs: `journalctl --user -u telegram-ask -f`. Linger is handled as for Quadlet.
+
+With the [standalone binary](#standalone-binary) there's no npm package; the unit runs `~/.local/bin/telegram-ask start`, and `uninstall` with a purge deletes that copy.
 
 ### Config
 
@@ -523,6 +535,7 @@ telegram-ask log [--since WHEN] [--project NAME] [-n N | --limit N] [--json]
 telegram-ask test
 telegram-ask reset-owner
 telegram-ask uninstall
+telegram-ask update
 telegram-ask start
 telegram-ask mcp [--port N]
 telegram-ask hook [--port N] [--project NAME] [--timeout S]
@@ -537,6 +550,7 @@ telegram-ask send notify TEXT [--project NAME] [--format plain|markdown] [--port
 - `test`: sends "This is a test" with Approve/Decline buttons (Decline on timeout) and prints the response.
 - `reset-owner`: clears the paired owner. See [Pairing](#pairing).
 - `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token, paired owner and question log. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. For systemd, `state.json` and the question log stay. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files (for systemd that includes `state.json` and `audit.jsonl`). For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
+- `update`: moves the install to the latest version, then hands off to the new CLI to finish. A binary install swaps its copy of the binary for the latest release; an npm install runs `npm i -g`; Quadlet and Compose installs rebuild the image and restart the service.
 - `start`: runs the service in the foreground. The installed services use this.
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
 - `hook`: a Claude Code hook that sends permission prompts to Telegram. See [Claude Code hook](#claude-code-hook).
@@ -568,3 +582,5 @@ The [question log](#question-log) keeps question text and answers on disk (mode 
 When a change matters to users, run `npm run changeset` on its branch, pick patch, minor or major, write a line or two for the changelog, and commit the generated `.changeset/*.md` file with the change. Internal changes (refactors, tests, docs) don't need one.
 
 After a PR with a changeset is merged into `main`, the `publish` workflow opens or updates a `chore: release` PR that bumps the version, writes `CHANGELOG.md` and regenerates `docs/openapi.yaml`. Merging that PR is the release: the workflow runs the checks and tests, publishes to npm, pushes the `vX.Y.Z` tag and creates the GitHub Release. Nothing needs to be run locally.
+
+The same workflow builds the standalone binaries: Linux on Ubuntu, macOS on a macOS runner (ad-hoc codesigned). One last job gzips them and attaches the four `.gz` files and a `SHA256SUMS` to the GitHub Release.

@@ -317,3 +317,65 @@ test('install writes the api token into .env and keeps it out of the Dockerfile'
   expect(readFileSync(join(directory, '.env'), 'utf8')).toContain(`TELEGRAM_ASK_TOKEN=${TOKEN}\n`)
   expect(readFileSync(join(directory, 'Dockerfile'), 'utf8')).not.toContain(TOKEN)
 })
+
+test('upgrade builds the new tag, restarts, then removes the old image', async () => {
+  const { t, paths } = make()
+  const previous = await t.install({ ...base, version: '0.4.0' })
+  calls = []
+  const record = await t.upgrade({ ...base, version: '0.5.0' }, previous)
+  expect(record).toEqual({ target: 'quadlet', provider: 'telegram', port: 8787, version: '0.5.0' })
+  expect(calls.filter(([c]) => c !== 'loginctl')).toEqual([
+    ['podman', ['build', '-t', 'localhost/telegram-ask:0.5.0', paths.quadletDirectory]],
+    ['systemctl', ['--user', 'daemon-reload']],
+    ['systemctl', ['--user', 'start', 'telegram-ask']],
+    ['systemctl', ['--user', 'restart', 'telegram-ask']],
+    ['podman', ['rmi', 'localhost/telegram-ask:0.4.0']],
+  ])
+  expect(readFileSync(paths.quadletUnit, 'utf8')).toContain('Image=localhost/telegram-ask:0.5.0')
+})
+
+test('upgrade leaves the old unit when the build fails', async () => {
+  const { t, paths } = make()
+  const previous = await t.install({ ...base, version: '0.4.0' })
+  const unit = readFileSync(paths.quadletUnit, 'utf8')
+  failBuild = true
+  calls = []
+  await expect(t.upgrade({ ...base, version: '0.5.0' }, previous)).rejects.toThrow(/podman build/)
+  expect(readFileSync(paths.quadletUnit, 'utf8')).toBe(unit)
+  expect(calls.some(([c, a]) => c === 'podman' && a[0] === 'rmi')).toBe(false)
+  expect(calls.some(([c]) => c === 'systemctl')).toBe(false)
+})
+
+test('upgrade to the same version keeps the image', async () => {
+  const { t } = make()
+  const previous = await t.install(base)
+  calls = []
+  await t.upgrade(base, previous)
+  expect(calls.some(([c, a]) => c === 'podman' && a[0] === 'rmi')).toBe(false)
+})
+
+test('upgrade prints a failed rmi instead of throwing', async () => {
+  const { t } = make()
+  const previous = await t.install({ ...base, version: '0.4.0' })
+  failArgs = (a) => (a[0] === 'rmi' ? 'image in use' : undefined)
+  const printed: string[] = []
+  const record = await t.upgrade(
+    { ...base, version: '0.5.0', print: (text) => printed.push(text) },
+    previous,
+  )
+  expect(record.version).toBe('0.5.0')
+  expect(printed).toContain(
+    "Couldn't remove the old image localhost/telegram-ask:0.4.0: image in use",
+  )
+})
+
+test('upgrade throws when the restart fails', async () => {
+  const { t } = make()
+  const previous = await t.install({ ...base, version: '0.4.0' })
+  failCtl = (a) => a.includes('restart')
+  calls = []
+  await expect(t.upgrade({ ...base, version: '0.5.0' }, previous)).rejects.toThrow(
+    'systemctl restart failed (exit 1)',
+  )
+  expect(calls.some(([c, a]) => c === 'podman' && a[0] === 'rmi')).toBe(false)
+})

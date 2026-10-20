@@ -22,9 +22,16 @@ export const NOT_FOUND_PATTERN = /no such|not found|does not exist/i
 export const PODMAN_VERSION_PATTERN = /(\d+)\.(\d+)(?:\.(\d+))?/
 /** Matches an `Environment=` line in a unit file. */
 export const ENVIRONMENT_LINE_PATTERN = /^\s*Environment=(.*)$/
+/** Matches an `ExecStart=` line in a unit file. */
+export const EXEC_START_LINE_PATTERN = /^\s*ExecStart=(.*)$/
 /** Matches a backslash escape inside a quoted unit value. */
 export const ESCAPED_CHAR_PATTERN = /\\(.)/g
 /** Variable the unit sets to pin the config file path. */
 export const CONFIG_ENV_PREFIX = 'TELEGRAM_ASK_CONFIG='
 /** Owner read/write only, for files that hold credentials. */
 export const SECRET_FILE_MODE = 0o600
+/** Mode for the binary copy systemd runs. */
+export const EXECUTABLE_MODE = 0o755
+/** Printed when a binary install's ~/.local/bin isn't on PATH. */
+export const PATH_HINT =
+  "~/.local/bin isn't on your PATH; add it to run telegram-ask from anywhere."

@@ -1,8 +1,9 @@
 import type { ClientToken } from '../auth/index.ts'
 import type { MessageFormat } from '../format/index.ts'
-import type { InstallPaths, Target, TargetName } from '../install/index.ts'
+import type { CliLocation, InstallPaths, Target, TargetName } from '../install/index.ts'
 import type { Provider } from '../provider/index.ts'
 import type { StatusInfo } from '../server/index.ts'
+import type { Exec } from '../system/index.ts'
 
 /** One entry in a select prompt; a `disabled` reason shows it as unavailable. */
 export type SelectOption<T extends string> = {
@@ -136,6 +137,30 @@ export type UninstallDeps = {
   readonly confirm: Prompts['confirm']
   readonly print: (text: string) => void
   readonly signal?: AbortSignal
+}
+
+/** Everything `runUpdate` and `runFinishUpdate` touch outside themselves, injected for tests. */
+export type UpdateDeps = {
+  readonly targets: Readonly<Record<TargetName, Target>>
+  readonly paths: InstallPaths
+  readonly providers: readonly Provider[]
+  readonly exec: Exec
+  /** The CLI running `update`; it updates itself for container installs or no install. */
+  readonly cli: CliLocation
+  /** This CLI's version; the finish step installs it. */
+  readonly version: string
+  /** Node's `process.platform`, for picking the release asset. */
+  readonly platform: string
+  /** Node's `process.arch`, for picking the release asset. */
+  readonly arch: string
+  readonly releasesUrl: string
+  readonly npmLatestUrl: string
+  readonly print: (text: string) => void
+  readonly signal?: AbortSignal
+  /** Defaults to process.env; used to find the systemd config file. */
+  readonly env?: NodeJS.ProcessEnv
+  /** IANA zone passed to container installs as `TZ`; omitted when unknown. */
+  readonly timeZone?: string
 }
 
 /** `send request` input; `timeout` in seconds, capped to 86400 (24 h) by the service. */
