@@ -1,5 +1,24 @@
 # telegram-ask
 
+## 0.5.0
+
+### Minor Changes
+
+- 1d6bb67: Attachments: `attachment` on `/request`, `/request/async` and `/notify` (and on `ask_for_permission`, `ask_for_permission_in_background` and `notify_user`, `--attach` on `send`, `attachment` on `Client`) sends one file to Telegram as a document right above the message. Needs a service at least this new; clients say so if it isn't.
+- 931109b: The service keeps a log of every question and how it ended in `audit.jsonl` next to its config, and `telegram-ask log` prints it (`--since 12h`, `--project`, `-n`, `--json`). Installs from earlier versions need `telegram-ask init` to start logging.
+- 86cba2e: Free-text replies: `allowText` on `/request` (and `allow_text` on `ask_for_permission`, `allowText` on `Client`, `--allow-text` on `send request`) lets you answer by replying to the question with text.
+- cdf62c0: New `launchd` install target for macOS: `init` installs a per-user LaunchAgent, from the standalone binary or npm, and it's the default there.
+- a2bf062: Questions can now wait up to 24 h (`timeout` max 86400, default still 300). Behavior change: a `timeout` above 300, say 900, used to be clamped to 300 and now waits the full time. The Claude Code hook `timeout` setting must be at least `--timeout` + 60.
+
+  New endpoints for callers that can't hold a connection open: `POST /request/async` returns `202` once the message is sent, `GET /request/{id}` reads the state (with `?wait=` to long-poll), and `DELETE /request/{id}` cancels. A restart drops background questions; the next start expires their messages.
+
+  The MCP server has two new tools: `ask_for_permission_in_background` asks and returns a `request_id` at once, and `wait_for_answer` collects the answer (waiting until it settles by default, or `wait_seconds` at most). Closing the agent session cancels the background questions it hasn't seen answered.
+
+- b90e85e: Message formatting. `format: "markdown"` on `/request`, `/notify`, both MCP tools, the Node `Client` and `send --format` renders code spans and fenced blocks, bold, italic, strikethrough, headings and quotes, so a command or diff shows up in monospace. Plain text stays the default and nothing changes for callers who don't send `format`. Unrecognized markup stays as typed, and if Telegram rejects the formatting the message is sent as plain text.
+- 835a958: Quiet hours and mute. `/quiet 23:00-08:00` and `/mute 2h` (with `/unmute`) make notifications arrive silently; approvals still ping. A notification sent while quiet is deleted 8 hours after the quiet period ends. `init` now sets `TZ` for container installs so the window uses your local time. Existing container installs stay on UTC until `init` is re-run. When quiet runs past 47h, the notification isn't auto-deleted.
+- aa66ab1: `send request` takes `-d, --default <label>` in place of `--timeout-option`, and adds it as the last button unless an `-o` already names it, so `-o Approve -d Decline` is enough. Breaking: scripts using `--timeout-option` need to switch to `-d`.
+- c6f7450: Standalone binaries for Linux and macOS on each GitHub Release; `init` can install the binary as a systemd service without Node. New `update` command for binary, npm, Quadlet and Compose installs.
+
 ## 0.4.0
 
 ### Minor Changes
