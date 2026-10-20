@@ -30,6 +30,8 @@ export const CANCELLED_STATE = { kind: 'cancelled' } as const satisfies RequestS
 export const HISTORY_LIMIT = 20
 /** Longest request summary in a command reply, in UTF-16 code units. */
 export const SUMMARY_MAX_LENGTH = 80
+/** Longest typed answer in a result line, in UTF-16 code units; keeps the final text under 4096. */
+export const MAX_REPLY_ANSWER_LENGTH = 180
 /** How many history entries `/history` shows without an argument. */
 export const DEFAULT_HISTORY_COUNT = 10
 /** The commands the owner can send, in menu order. */

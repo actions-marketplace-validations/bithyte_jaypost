@@ -39,11 +39,11 @@ flowchart LR
     script["Script / n8n"] -- "HTTP<br>POST /request, /notify" --> svc["telegram-ask service<br>127.0.0.1:8787"]
     svc -- "message with buttons" --> tg["Telegram"]
     tg --> you(["You, on your phone"])
-    you -- "tap a button" --> tg
+    you -- "tap a button or reply" --> tg
     tg -- answer --> svc
 ```
 
-A small service runs in the background on localhost. Callers POST a question with button options; the bot sends it to you and the HTTP request stays open until you tap a button or the timeout fires, then returns your answer. Agents reach the same API through `telegram-ask mcp`, a stdio MCP server. Notifications work the same way but don't wait for an answer.
+A small service runs in the background on localhost. Callers POST a question with button options; the bot sends it to you and the HTTP request stays open until you tap a button or (with `allowText`) reply with text, or the timeout fires, then returns your answer. Agents reach the same API through `telegram-ask mcp`, a stdio MCP server. Notifications work the same way but don't wait for an answer.
 
 It's single owner: one Telegram user, proven by a pairing code. The service can run as a Podman Quadlet, a Docker Compose project or a plain systemd user service.
 
@@ -51,15 +51,16 @@ It's single owner: one Telegram user, proven by a pairing code. The service can 
 
 `telegram-ask mcp [--port N]` is a stdio MCP server with four tools that forward to the [HTTP API](#scripts-and-tools-http-api). `project_name` shows as `[name]` on the first line of the message, so you can tell which agent is asking.
 
-`ask_for_permission` asks a question with buttons and waits for the tap or the timeout:
+`ask_for_permission` asks a question with buttons, a typed reply or both, and waits for the answer or the timeout:
 
-| Param             | Type     | Required | Notes                                                    |
-| ----------------- | -------- | -------- | -------------------------------------------------------- |
-| `project_name`    | string   | yes      | Max 100 chars.                                           |
-| `text`            | string   | yes      | The question.                                            |
-| `options`         | string[] | yes      | Button labels, unique, max 64 chars each.                |
-| `timeout_option`  | string   | yes      | Answer returned on timeout. Must be one of `options`.    |
-| `timeout_seconds` | number   | no       | Default 300, max 86400 (24 h); longer values are capped. |
+| Param             | Type     | Required            | Notes                                                                                         |
+| ----------------- | -------- | ------------------- | --------------------------------------------------------------------------------------------- |
+| `project_name`    | string   | yes                 | Max 100 chars.                                                                                |
+| `text`            | string   | yes                 | The question.                                                                                 |
+| `options`         | string[] | unless `allow_text` | Button labels, unique, max 64 chars each. May be empty with `allow_text`.                     |
+| `allow_text`      | boolean  | no                  | Let the user type an answer by replying. Default false.                                       |
+| `timeout_option`  | string   | yes                 | Answer returned on timeout. One of `options`, or with `allow_text` any answer up to 64 chars. |
+| `timeout_seconds` | number   | no                  | Default 300, max 86400 (24 h); longer values are capped.                                      |
 
 While a question waits, the server sends MCP progress notifications every 60 seconds. Claude Code aborts a silent stdio tool call after 30 minutes (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`); progress keeps it alive when Claude Code sends a progress token. I haven't verified that it does. If it doesn't, raise the per-server `timeout` in `.mcp.json` or use `ask_for_permission_in_background`.
 
@@ -115,7 +116,9 @@ If the token file isn't readable where the MCP server runs (a container, another
     "telegram-ask": {
       "command": "telegram-ask",
       "args": ["mcp"],
-      "env": { "TELEGRAM_ASK_TOKEN": "<contents of ~/.config/telegram-ask/token>" }
+      "env": {
+        "TELEGRAM_ASK_TOKEN": "<contents of ~/.config/telegram-ask/token>"
+      }
     }
   }
 }
@@ -188,7 +191,7 @@ answer=$(telegram-ask send request 'Deploy?' -o Approve -d Decline --timeout 60)
 telegram-ask send notify 'backup finished' --project nas
 ```
 
-`send request` prints the answer on stdout (the `-d` default on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button; `-d` adds the default as the last button unless an `-o` already names it. `send notify` prints nothing and exits 0 once sent. Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
+`send request` prints the answer on stdout (the `-d` default on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button; `-d` adds the default as the last button unless an `-o` already names it. `--allow-text` also lets you answer by replying with text; then `-o` is optional and `-d` can be any short answer, not added as a button. `send notify` prints nothing and exits 0 once sent. Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
 
 ### From Node
 
@@ -218,7 +221,7 @@ curl -s -X POST http://127.0.0.1:8787/request \
   -d '{"text":"Deploy?","options":["Approve","Decline"],"timeoutOption":"Decline","timeout":60}'
 ```
 
-The request stays open until you tap a button or the timeout fires, then returns `200`:
+The request stays open until you tap a button (or reply, see below) or the timeout fires, then returns `200`:
 
 ```json
 { "answer": "Approve", "timedOut": false }
@@ -226,15 +229,29 @@ The request stays open until you tap a button or the timeout fires, then returns
 
 On timeout, `answer` is `timeoutOption` and `timedOut` is `true`. If the owner sends `/cancel`, every open request returns its `timeoutOption` with `timedOut: false`. Many requests can be pending at once.
 
+For a question with no sensible buttons, set `allowText` and leave out `options`; you answer by replying with text:
+
+```
+curl -s -X POST http://127.0.0.1:8787/request \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer $(cat ~/.config/telegram-ask/token)" \
+  -d '{"text":"Which branch?","allowText":true,"timeoutOption":"main","timeout":120}'
+```
+
+Reply to the question's message in Telegram; if it's the only open text question, just typing works. The first answer wins, whether it's a tap or a reply. Non-text replies don't count, and a registered command name (`/pending`, `/cancel`, `/history`) can't be typed as an answer.
+
+`allowText` needs a service at least as new as this release. An older one ignores it: with `options` you get a buttons-only question, without them a 400 `options must be a non-empty array`. Re-run `init` to upgrade.
+
 `POST /request` body:
 
-| Field           | Type     | Required | Notes                                                                                   |
-| --------------- | -------- | -------- | --------------------------------------------------------------------------------------- |
-| `text`          | string   | yes      | Question shown in Telegram. Non-empty, max 3900 chars.                                  |
-| `options`       | string[] | yes      | Button labels. Non-empty, unique, non-empty strings.                                    |
-| `timeoutOption` | string   | yes      | Answer returned on timeout. Must be one of `options`.                                   |
-| `timeout`       | number   | no       | Seconds. Default 300, max 86400 (24 h); longer values are capped. Must be positive.     |
-| `project`       | string   | no       | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900. |
+| Field           | Type     | Required           | Notes                                                                                                                   |
+| --------------- | -------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `text`          | string   | yes                | Question shown in Telegram. Non-empty, max 3900 chars.                                                                  |
+| `allowText`     | boolean  | no                 | Default `false`. When true, a text reply from the owner answers the question.                                           |
+| `options`       | string[] | unless `allowText` | Button labels. Non-empty, unique, non-empty strings. With `allowText`, may be omitted or `[]` for a text-only question. |
+| `timeoutOption` | string   | yes                | Answer returned on timeout. Must be one of `options`; with `allowText`, any non-empty string up to 64 chars.            |
+| `timeout`       | number   | no                 | Seconds. Default 300, max 86400 (24 h); longer values are capped. Must be positive.                                     |
+| `project`       | string   | no                 | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900.                                 |
 
 The cap used to be 300, so a `timeout: 900` was clamped to 300 before and now waits the full 900 s.
 
@@ -392,7 +409,7 @@ It asks first, clears the owner, restarts the service and waits for a new pairin
 
 Send these to the bot in your private chat:
 
-- `/pending` lists the open requests, with the time left and the answer each gets on timeout.
+- `/pending` lists the open requests, with the time left and the answer each gets on timeout. A text question shows `or a typed reply` after its buttons, or `Typed reply` alone if it has none.
 - `/cancel` rejects every open request with its `timeoutOption`.
 - `/history [N]` shows the last N answers, newest first (default 10, max 20).
 - `/mute [duration]`, `/unmute` and `/quiet` control [quiet hours](#quiet-hours).
@@ -471,7 +488,7 @@ telegram-ask start
 telegram-ask mcp [--port N]
 telegram-ask hook [--port N] [--project NAME] [--timeout S]
 telegram-ask openapi [FILE] [--port N]
-telegram-ask send request TEXT -o OPTION... -d DEFAULT [--timeout S] [--project NAME] [--json] [--port N]
+telegram-ask send request TEXT [-o OPTION...] [--allow-text] -d DEFAULT [--timeout S] [--project NAME] [--json] [--port N]
 telegram-ask send notify TEXT [--project NAME] [--port N]
 ```
 

@@ -24,12 +24,13 @@ test('request bodies come from the parser schemas', () => {
     port: 8787,
     maxTextLength: 3900,
   }).components.schemas
-  expect(ApprovalRequest.required).toEqual(['text', 'options', 'timeoutOption'])
+  expect(ApprovalRequest.required).toEqual(['text', 'timeoutOption'])
+  expect(ApprovalRequest.properties?.allowText).toMatchObject({ type: 'boolean' })
   expect(ApprovalRequest.properties?.options).toMatchObject({
     type: 'array',
-    minItems: 1,
     items: { type: 'string', minLength: 1, maxLength: 64 },
   })
+  expect(ApprovalRequest.properties?.options).not.toHaveProperty('minItems')
   expect(ApprovalRequest.properties?.timeout).toMatchObject({ exclusiveMinimum: 0 })
   expect(ApprovalRequest.properties?.project).toMatchObject({ maxLength: 100 })
   expect(NotifyRequest.required).toEqual(['text'])

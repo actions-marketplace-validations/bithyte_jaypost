@@ -25,6 +25,30 @@ export type PairingMessage = {
  */
 export type Tap = (id: string, optionIndex: number) => 'accepted' | 'expired'
 
+/**
+ * Settles request `id` with typed text; 'expired' when it is unknown or already settled.
+ */
+export type Reply = (id: string, text: string) => 'accepted' | 'expired'
+
+/** What `routeReply` decided; only 'accepted' settled a request. */
+export type ReplyRoute =
+  | 'ignored'
+  | 'accepted'
+  | 'expired'
+  | 'buttonsOnly'
+  | 'notOpen'
+  | 'ambiguous'
+  | 'notText'
+
+/** The parts of a Telegram message that routing needs; the reply-to is in the same chat. */
+export type IncomingMessage = {
+  readonly fromId: number | undefined
+  readonly chatType: string
+  readonly chatId: number
+  readonly text: string | undefined
+  readonly replyTo: { readonly messageId: number; readonly fromId: number | undefined } | undefined
+}
+
 /** Clears the expiry of notification `id`; false when it is unknown or already expired. */
 export type Dismiss = (id: string) => boolean
 
@@ -32,4 +56,15 @@ export type Dismiss = (id: string) => boolean
 export type TelegramMessageReference = {
   readonly chatId: number
   readonly messageId: number
+  /** Absent in references saved before text replies (and on notifications); absent means true. */
+  readonly hasButtons?: boolean
 }
+
+/** A request awaiting an answer, keyed by `formatMessageKey` in `OpenQuestions`. */
+export type OpenQuestion = {
+  readonly id: string
+  readonly allowText: boolean
+}
+
+/** Open questions by `formatMessageKey`: set after send, deleted in `finalize`. */
+export type OpenQuestions = Map<string, OpenQuestion>

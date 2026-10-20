@@ -1,5 +1,5 @@
-import { SUMMARY_MAX_LENGTH } from './constants.ts'
-import type { HistoryEntry, MessageEnding, PendingSummary } from './types.ts'
+import { MAX_REPLY_ANSWER_LENGTH, SUMMARY_MAX_LENGTH } from './constants.ts'
+import type { ApprovalRequest, HistoryEntry, MessageEnding, PendingSummary } from './types.ts'
 
 function formatTime(at: Date): string {
   const hours = String(at.getHours()).padStart(2, '0')
@@ -20,6 +20,8 @@ export function formatResultLine(ending: MessageEnding, at: Date): string {
       return `⏱ Timed out, ${ending.answer}, ${time}`
     case 'rejected':
       return `⛔ Rejected, ${ending.answer}, ${time}`
+    case 'replied':
+      return `💬 ${truncate(ending.answer, MAX_REPLY_ANSWER_LENGTH)}, ${time}`
     case 'cancelled':
       return `🚫 Cancelled, ${time}`
     case 'expired':
@@ -43,14 +45,22 @@ export function formatProjectText(project: string, text: string): string {
 const HIGH_SURROGATE_START = 0xd800
 const HIGH_SURROGATE_END = 0xdbff
 
-function truncate(text: string): string {
-  if (text.length <= SUMMARY_MAX_LENGTH) {
+function truncate(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
     return text
   }
-  const lastKept = text.charCodeAt(SUMMARY_MAX_LENGTH - 2)
+  const lastKept = text.charCodeAt(maxLength - 2)
   const isSplittingPair = lastKept >= HIGH_SURROGATE_START && lastKept <= HIGH_SURROGATE_END
-  const keep = isSplittingPair ? SUMMARY_MAX_LENGTH - 2 : SUMMARY_MAX_LENGTH - 1
+  const keep = isSplittingPair ? maxLength - 2 : maxLength - 1
   return `${text.slice(0, keep)}…`
+}
+
+function formatOptionsPart(request: ApprovalRequest): string {
+  if (request.options.length === 0) {
+    return 'Typed reply'
+  }
+  const buttons = truncate(request.options.join(', '), SUMMARY_MAX_LENGTH)
+  return request.allowText ? `${buttons}, or a typed reply` : buttons
 }
 
 function formatTimeLeft(summary: PendingSummary, now: Date): string {
@@ -90,7 +100,7 @@ function capReply(header: string, entries: readonly string[], maxTextLength: num
 
 /** One line of a request's text: whitespace collapsed, cut to 80 characters with an ellipsis. */
 export function formatSummary(text: string): string {
-  return truncate(text.replace(/\s+/g, ' ').trim())
+  return truncate(text.replace(/\s+/g, ' ').trim(), SUMMARY_MAX_LENGTH)
 }
 
 /**
@@ -106,7 +116,7 @@ export function formatPendingReply(
     return 'Nothing pending.'
   }
   const entries = pending.map((summary) => {
-    const options = truncate(summary.request.options.join(', '))
+    const options = formatOptionsPart(summary.request)
     const timeLeft = formatTimeLeft(summary, now)
     return `${formatSummary(summary.request.text)}\n${options}. ${timeLeft} left, then ${summary.request.timeoutOption}`
   })

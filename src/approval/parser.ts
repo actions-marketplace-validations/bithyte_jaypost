@@ -65,6 +65,7 @@ export function createApprovalRequestSchema(maxTextLength: number) {
       {
         text: createTextSchema(),
         project: createProjectSchema(),
+        allowText: z.boolean({ error: 'allowText must be a boolean' }).optional(),
         options: z
           .array(
             z
@@ -75,18 +76,32 @@ export function createApprovalRequestSchema(maxTextLength: number) {
               error: OPTIONS_ERROR,
             },
           )
-          .min(1, OPTIONS_ERROR)
-          .refine((options) => new Set(options).size === options.length, 'options must be unique'),
+          .refine((options) => new Set(options).size === options.length, 'options must be unique')
+          .optional(),
         timeoutOption: z.string({ error: 'timeoutOption must be a string' }),
         timeout: z.number({ error: TIMEOUT_ERROR }).positive(TIMEOUT_ERROR).optional(),
       },
       { error: 'body must be a JSON object' },
     )
-    .refine(
-      (body) => body.options.includes(body.timeoutOption),
-      'timeoutOption must be one of options',
-    )
-    .transform(({ text, project, options, timeoutOption, timeout }, context) => {
+    .superRefine((body, context) => {
+      if (body.allowText !== true) {
+        if (body.options === undefined || body.options.length === 0) {
+          context.addIssue({ code: 'custom', message: OPTIONS_ERROR })
+          return
+        }
+        if (!body.options.includes(body.timeoutOption)) {
+          context.addIssue({ code: 'custom', message: 'timeoutOption must be one of options' })
+        }
+        return
+      }
+      if (body.timeoutOption.length < 1 || body.timeoutOption.length > MAX_OPTION_LENGTH) {
+        context.addIssue({
+          code: 'custom',
+          message: `timeoutOption must be a non-empty string of at most ${MAX_OPTION_LENGTH} characters`,
+        })
+      }
+    })
+    .transform(({ text, project, allowText, options, timeoutOption, timeout }, context) => {
       const checked = checkProjectText(text, project, maxTextLength)
       if (!checked.ok) {
         context.addIssue({ code: 'custom', message: checked.error })
@@ -96,7 +111,8 @@ export function createApprovalRequestSchema(maxTextLength: number) {
         text: checked.text,
         question: text,
         ...(project === undefined ? {} : { project }),
-        options,
+        allowText: allowText ?? false,
+        options: options ?? [],
         timeoutOption,
         timeoutSeconds: Math.min(timeout ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS),
       }
@@ -113,7 +129,20 @@ export function parseApprovalRequest(body: unknown, maxTextLength: number): Pars
   if (result.success) {
     return { ok: true, value: result.data }
   }
-  return { ok: false, error: result.error.issues[0]?.message ?? 'invalid request' }
+  const issue = result.error.issues[0]
+  // zod can't pick a field's type-error message from a sibling field
+  if (
+    issue?.code === 'invalid_type' &&
+    issue.path.length === 1 &&
+    issue.path[0] === 'options' &&
+    typeof body === 'object' &&
+    body !== null &&
+    'allowText' in body &&
+    body.allowText === true
+  ) {
+    return { ok: false, error: 'options must be an array' }
+  }
+  return { ok: false, error: issue?.message ?? 'invalid request' }
 }
 
 /**

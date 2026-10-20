@@ -140,7 +140,10 @@ export type UninstallDeps = {
 /** `send request` input; `timeout` in seconds, capped to 86400 (24 h) by the service. */
 export type SendRequestArgs = {
   readonly text: string
-  readonly options: readonly string[]
+  /** Button labels; required unless `allowText`. */
+  readonly options?: readonly string[]
+  /** Let the owner answer with a text reply. */
+  readonly allowText?: boolean
   readonly timeoutOption: string
   readonly timeout?: number
   readonly project?: string

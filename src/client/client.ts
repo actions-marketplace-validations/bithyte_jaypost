@@ -33,9 +33,9 @@ export class Client {
   }
 
   /**
-   * Resolves once the user taps a button or the timeout fires (then with `timeoutOption`). Throws
-   * `TelegramAskError` on failure (including an unusable token lookup), or the signal's reason if
-   * aborted.
+   * Resolves once the user taps a button or replies with text (`allowText`), or the timeout fires
+   * (then with `timeoutOption`). Throws `TelegramAskError` on failure (including an unusable token
+   * lookup), or the signal's reason if aborted.
    */
   async request(request: AskRequest): Promise<Answer> {
     const project = request.project ?? this.#project
@@ -45,7 +45,8 @@ export class Client {
       this.#port,
       {
         text: request.text,
-        options: request.options,
+        ...(request.options === undefined ? {} : { options: request.options }),
+        ...(request.allowText === undefined ? {} : { allowText: request.allowText }),
         timeoutOption: request.timeoutOption,
         ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
         ...(project === undefined ? {} : { project }),

@@ -19,7 +19,8 @@ export type McpServerOptions = {
 export type AskArguments = {
   readonly project_name: string
   readonly text: string
-  readonly options: readonly string[]
+  readonly options?: readonly string[] | undefined
+  readonly allow_text?: boolean | undefined
   readonly timeout_option: string
   readonly timeout_seconds?: number | undefined
 }

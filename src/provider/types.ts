@@ -42,6 +42,10 @@ export type ProviderSetup = {
 
 export type RuntimeHandlers = {
   readonly answer: (id: string, optionIndex: number) => 'accepted' | 'expired'
+  /**
+   * A typed answer for request `id`; 'expired' when it is unknown, settled, or doesn't allow text.
+   */
+  readonly reply: (id: string, text: string) => 'accepted' | 'expired'
   readonly dismiss: (id: string) => boolean
   /** Present only while pairing. */
   readonly pair?: (senderId: string, text: string) => PairResult
@@ -60,6 +64,7 @@ export type ProviderRuntime = {
     id: string,
     text: string,
     options: readonly string[],
+    allowText: boolean,
   ) => Promise<MessageReference>
   /** Request ended; called once per ended request, `expired` included. Absent means skipped. */
   readonly finalize?: (

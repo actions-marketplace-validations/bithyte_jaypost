@@ -6,7 +6,7 @@ const base = { text: 'This is a test', options: ['Approve', 'Decline'], timeoutO
 test('valid, default timeout', () =>
   expect(parseApprovalRequest(base, 3900)).toEqual({
     ok: true,
-    value: { ...base, question: base.text, timeoutSeconds: 300 },
+    value: { ...base, question: base.text, allowText: false, timeoutSeconds: 300 },
   }))
 test('custom timeout', () =>
   expect(parseApprovalRequest({ ...base, timeout: 30 }, 3900)).toMatchObject({
@@ -78,6 +78,7 @@ test('request with a project keeps project and bare question, combined text for 
       text: '[api]\n\nDeploy?',
       question: 'Deploy?',
       project: 'api',
+      allowText: false,
       timeoutSeconds: 300,
     },
   })
@@ -97,6 +98,7 @@ test('project goes on its own first line, trimmed', () =>
       text: '[api]\n\nThis is a test',
       question: base.text,
       project: 'api',
+      allowText: false,
       timeoutSeconds: 300,
     },
   }))
@@ -121,6 +123,56 @@ test('project length limit', () => {
   })
 })
 
+const text = { text: 'Which branch?', allowText: true, timeoutOption: 'main' }
+const errorOf = (body: unknown) => {
+  const r = parseApprovalRequest(body, 3900)
+  return r.ok ? undefined : r.error
+}
+
+test('allowText without options is a text-only question', () =>
+  expect(parseApprovalRequest(text, 3900)).toEqual({
+    ok: true,
+    value: { ...text, question: text.text, options: [], timeoutSeconds: 300 },
+  }))
+test('allowText with empty options', () =>
+  expect(parseApprovalRequest({ ...text, options: [] }, 3900)).toMatchObject({
+    ok: true,
+    value: { options: [] },
+  }))
+test('allowText with options, timeoutOption not among them', () =>
+  expect(parseApprovalRequest({ ...text, options: ['develop'] }, 3900)).toMatchObject({
+    ok: true,
+    value: { options: ['develop'], timeoutOption: 'main', allowText: true },
+  }))
+test.each([undefined, false])('allowText %s without options keeps the old error', (allowText) =>
+  expect(errorOf({ ...text, allowText, options: undefined })).toBe(
+    'options must be a non-empty array',
+  ),
+)
+test('allowText false with empty options keeps the old error', () =>
+  expect(errorOf({ ...base, allowText: false, options: [] })).toBe(
+    'options must be a non-empty array',
+  ))
+test.each(['yes', 1, null])('allowText %s rejected', (allowText) =>
+  expect(errorOf({ ...base, allowText })).toBe('allowText must be a boolean'),
+)
+test('allowText with non-array options', () =>
+  expect(errorOf({ ...text, options: 'main' })).toBe('options must be an array'))
+test('allowText keeps the option element and uniqueness rules', () => {
+  expect(errorOf({ ...text, options: ['a', ''] })).toBe(
+    'options must contain only non-empty strings of at most 64 characters',
+  )
+  expect(errorOf({ ...text, options: ['a', 'a'] })).toBe('options must be unique')
+})
+test.each(['', 'x'.repeat(65)])('allowText with bad timeoutOption %#', (timeoutOption) =>
+  expect(errorOf({ ...text, timeoutOption })).toBe(
+    'timeoutOption must be a non-empty string of at most 64 characters',
+  ),
+)
+test('64-char timeoutOption accepted with allowText', () =>
+  expect(parseApprovalRequest({ ...text, timeoutOption: 'x'.repeat(64) }, 3900).ok).toBe(true))
+test('without allowText timeoutOption must still be one of options', () =>
+  expect(errorOf({ ...base, timeoutOption: 'Maybe' })).toBe('timeoutOption must be one of options'))
 test.each([
   [undefined, 0],
   ['0', 0],

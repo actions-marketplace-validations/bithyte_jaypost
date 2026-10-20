@@ -10,10 +10,11 @@ import {
   formatPairingInstructions,
   registerCommandHandler,
   registerPairingHandler,
+  registerReplyHandler,
   registerTapHandler,
   setCommandMenu,
 } from './adapter.ts'
-import type { Owner } from './types.ts'
+import type { OpenQuestions, Owner } from './types.ts'
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -30,7 +31,8 @@ export function createTelegramRuntime(
 ): ProviderRuntime {
   const bot = createBot(String(settings.botToken))
   const owner: Owner = { id: typeof settings.ownerId === 'number' ? settings.ownerId : undefined }
-  const messenger = createTelegramMessenger(bot, owner)
+  const openQuestions: OpenQuestions = new Map()
+  const messenger = createTelegramMessenger(bot, owner, openQuestions)
   let stopped = false
   return {
     async checkCredentials(): Promise<CredentialCheck> {
@@ -58,6 +60,7 @@ export function createTelegramRuntime(
       })
       registerTapHandler(bot, owner, handlers.answer, handlers.dismiss, log)
       registerCommandHandler(bot, owner, handlers.commands, handlers.command)
+      registerReplyHandler(bot, owner, openQuestions, handlers.reply, log)
       if (handlers.pair !== undefined) {
         registerPairingHandler(bot, handlers.pair, (id) => {
           owner.id = id

@@ -91,6 +91,18 @@ function collect(value: string, previous: readonly string[] | undefined): readon
   return [...(previous ?? []), value]
 }
 
+/** The `-o` labels, plus `-d` as the last button unless one names it or text replies are allowed. */
+function toButtons(
+  options: readonly string[],
+  defaultAnswer: string,
+  allowText: boolean | undefined,
+): readonly string[] {
+  if (allowText === true || options.includes(defaultAnswer)) {
+    return options
+  }
+  return [...options, defaultAnswer]
+}
+
 function createSendDeps(flagPort: number | undefined, signal: AbortSignal): SendDeps {
   return {
     port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
@@ -170,7 +182,10 @@ function createRealTargets(paths: InstallPaths): Readonly<Record<TargetName, Tar
       user: os.userInfo().username,
       providers: PROVIDERS,
     },
-    { selfPath: realpathSync(fileURLToPath(import.meta.url)), nodePath: process.execPath },
+    {
+      selfPath: realpathSync(fileURLToPath(import.meta.url)),
+      nodePath: process.execPath,
+    },
   )
 }
 
@@ -368,14 +383,19 @@ export async function main(argv: readonly string[]): Promise<number> {
   const send = program
     .command('send')
     .description('ask a question or send a notification from a script')
-  send
+  const request = send
     .command('request')
-    .description('ask a question with buttons and print the tapped answer')
+    .description('ask a question and print the answer')
     .argument('<text>', 'question to show')
-    .requiredOption('-o, --option <label>', 'button label, repeat for each button', collect)
+    .option(
+      '-o, --option <label>',
+      'button label, repeat for each button; required unless --allow-text',
+      collect,
+    )
+    .option('--allow-text', 'let the owner answer by replying with text')
     .requiredOption(
       '-d, --default <label>',
-      'answer printed on timeout; added as the last button unless an -o already names it',
+      'answer printed on timeout; added as the last button unless an -o already names it or --allow-text is set',
     )
     .option(
       '--timeout <seconds>',
@@ -389,7 +409,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       async (
         text: string,
         options: {
-          readonly option: readonly string[]
+          readonly option?: readonly string[]
+          readonly allowText?: boolean
           readonly default: string
           readonly timeout?: number
           readonly project?: string
@@ -397,13 +418,19 @@ export async function main(argv: readonly string[]): Promise<number> {
           readonly port?: number
         },
       ) => {
+        if (options.option === undefined && options.allowText !== true) {
+          request.error("error: option '-o, --option <label>' or '--allow-text' is required", {
+            exitCode: 2,
+          })
+        }
         code = await runWithSignals((controller) =>
           runSendRequest(
             {
               text,
-              options: options.option.includes(options.default)
-                ? options.option
-                : [...options.option, options.default],
+              ...(options.option === undefined
+                ? {}
+                : { options: toButtons(options.option, options.default, options.allowText) }),
+              ...(options.allowText === undefined ? {} : { allowText: options.allowText }),
               timeoutOption: options.default,
               ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
               ...(options.project === undefined ? {} : { project: options.project }),
@@ -424,7 +451,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       async (text: string, options: { readonly project?: string; readonly port?: number }) => {
         code = await runWithSignals((controller) =>
           runSendNotify(
-            { text, ...(options.project === undefined ? {} : { project: options.project }) },
+            {
+              text,
+              ...(options.project === undefined ? {} : { project: options.project }),
+            },
             createSendDeps(options.port, controller.signal),
           ),
         )
@@ -473,7 +503,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       code = runAudit(args)
     })
   try {
-    await program.parseAsync(argv.length === 0 ? ['--help'] : argv, { from: 'user' })
+    await program.parseAsync(argv.length === 0 ? ['--help'] : argv, {
+      from: 'user',
+    })
   } catch (error) {
     if (!(error instanceof CommanderError)) {
       throw error

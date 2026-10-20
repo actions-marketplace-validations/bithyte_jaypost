@@ -14,13 +14,16 @@ export type ClientOptions = {
 }
 
 /**
- * A question with buttons; `timeout` in seconds, default 300, max 86400 (24 h); longer values are
+ * A question answered by buttons and/or a typed reply; `timeout` in seconds, default 300, max 86400 (24 h); longer values are
  * capped.
  */
 export type AskRequest = {
   readonly text: string
-  readonly options: readonly string[]
-  /** Answer returned on timeout; one of `options`. */
+  /** Button labels; required unless `allowText`. */
+  readonly options?: readonly string[]
+  /** Let the owner answer with a text reply. */
+  readonly allowText?: boolean
+  /** Answer returned on timeout; one of `options`, or with `allowText` any short answer. */
   readonly timeoutOption: string
   readonly timeout?: number
   readonly project?: string
@@ -28,7 +31,7 @@ export type AskRequest = {
   readonly signal?: AbortSignal
 }
 
-/** The tapped option, or `timeoutOption` with `timedOut` set. */
+/** The tapped option or typed reply, or `timeoutOption` with `timedOut` set. */
 export type Answer = { readonly answer: string; readonly timedOut: boolean }
 
 /** A message that doesn't need an answer. */
@@ -62,7 +65,8 @@ export type ApiOptions = {
 /** The body of a /request call. */
 export type AskBody = {
   readonly text: string
-  readonly options: readonly string[]
+  readonly options?: readonly string[]
+  readonly allowText?: boolean
   readonly timeoutOption: string
   readonly timeout?: number
   readonly project?: string

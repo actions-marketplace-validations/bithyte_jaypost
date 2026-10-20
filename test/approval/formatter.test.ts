@@ -28,9 +28,15 @@ test('expired', () =>
   expect(formatResultLine({ kind: 'expired' }, at)).toBe('⌛ Expired (service restarted), 09:05'))
 
 const OPENED_AT = new Date(2026, 9, 18, 9, 0, 0)
-const pendingOf = (text: string, timeoutSeconds = 300, options = ['Approve', 'Decline']) => ({
+const pendingOf = (
+  text: string,
+  timeoutSeconds = 300,
+  options = ['Approve', 'Decline'],
+  allowText = false,
+  timeoutOption = options.at(-1) ?? 'main',
+) => ({
   id: text,
-  request: { text, question: text, options, timeoutOption: options.at(-1) ?? '', timeoutSeconds },
+  request: { text, question: text, allowText, options, timeoutOption, timeoutSeconds },
   openedAt: OPENED_AT,
 })
 const after = (ms: number) => new Date(OPENED_AT.getTime() + ms)
@@ -167,3 +173,41 @@ test('length cap leaves a reply that fits untouched', () => {
   expect(formatPendingReply(pending, OPENED_AT, full.length)).toBe(full)
   expect(formatPendingReply(pending, OPENED_AT, full.length - 1)).toMatch(/…and 1 more$/)
 })
+
+test('replied', () =>
+  expect(formatResultLine({ kind: 'replied', answer: 'feature/x' }, at)).toBe(
+    '💬 feature/x, 09:05',
+  ))
+test('replied answer of 180 is kept, 181 is cut to 180 with an ellipsis', () => {
+  expect(formatResultLine({ kind: 'replied', answer: 'x'.repeat(180) }, at)).toBe(
+    `💬 ${'x'.repeat(180)}, 09:05`,
+  )
+  expect(formatResultLine({ kind: 'replied', answer: 'x'.repeat(181) }, at)).toBe(
+    `💬 ${'x'.repeat(179)}…, 09:05`,
+  )
+})
+test('final text with a long typed answer fits telegram', () =>
+  expect(
+    formatFinalText('q'.repeat(3900), { kind: 'replied', answer: 'a'.repeat(5000) }, at).length,
+  ).toBeLessThanOrEqual(4096))
+test('pending options part for buttons, buttons and text, and text only', () => {
+  const lineOf = (options: string[], allowText: boolean) =>
+    secondLine(formatPendingReply([pendingOf('q', 300, options, allowText)], OPENED_AT, 3900))
+  expect(lineOf(['main', 'develop'], false)).toBe('main, develop. 5 min left, then develop')
+  expect(lineOf(['main', 'develop'], true)).toBe(
+    'main, develop, or a typed reply. 5 min left, then develop',
+  )
+  expect(lineOf([], true)).toBe('Typed reply. 5 min left, then main')
+})
+test('typed reply suffix survives the options cut', () => {
+  const options = Array.from({ length: 20 }, (_, index) => `option-${index}`)
+  const line = secondLine(formatPendingReply([pendingOf('q', 300, options, true)], OPENED_AT, 3900))
+  expect(line).toMatch(/…, or a typed reply\. /)
+})
+test('history shows typed answers with the reply marker', () =>
+  expect(
+    formatHistoryReply(
+      [{ text: 'Which?', settlement: { kind: 'replied', answer: 'x' }, settledAt: at }],
+      3900,
+    ),
+  ).toBe('Last 1\n\nWhich?\n💬 x, 09:05'))

@@ -1,6 +1,9 @@
 import type { RequestRecord } from '../state/index.ts'
 
-/** As produced by `parseApprovalRequest`: timeout is clamped, `timeoutOption` is in `options`. */
+/**
+ * As produced by `parseApprovalRequest`: timeout is clamped; without `allowText`, `timeoutOption`
+ * is in `options`.
+ */
 export type ApprovalRequest = {
   /** The text sent to the chat: the question, with a `[project]` line first when there is a project. */
   readonly text: string
@@ -8,6 +11,7 @@ export type ApprovalRequest = {
   readonly question: string
   /** Trimmed project name; omitted when the caller sent none. */
   readonly project?: string
+  readonly allowText: boolean
   readonly options: readonly string[]
   readonly timeoutOption: string
   readonly timeoutSeconds: number
@@ -25,13 +29,14 @@ export type RequestResult =
   | { readonly kind: 'cancelled' }
 
 /**
- * How a pending request ended; `answer` is the chosen option, or the timeout option for `timedOut`
- * and `rejected`.
+ * How a pending request ended; `answer` is the tapped option, the typed reply, or the timeout option
+ * for `timedOut` and `rejected`.
  */
 export type Settlement =
   | { readonly kind: 'answered'; readonly answer: string }
   | { readonly kind: 'timedOut'; readonly answer: string }
   | { readonly kind: 'rejected'; readonly answer: string }
+  | { readonly kind: 'replied'; readonly answer: string }
   | { readonly kind: 'cancelled' }
 
 /**
@@ -77,6 +82,8 @@ export type Messenger = {
     id: string,
     text: string,
     options: readonly string[],
+    /** The owner may answer with a text reply. */
+    allowText: boolean,
   ) => Promise<MessageReference>
   /** Request ended: show the final text and stop accepting answers. Absent means skipped. */
   readonly finalize?: (

@@ -59,9 +59,23 @@ test('mcp rejects a bad port with 2', async () => {
   expect(await main(['mcp', '--port', 'abc'])).toBe(2)
 })
 
-test('send request requires options and a default, and rejects a bad timeout', async () => {
-  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+test('send request needs -o or --allow-text', async () => {
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   expect(await main(['send', 'request', 'Deploy?', '-d', 'No'])).toBe(2)
+  expect(stderr.mock.calls.map((call) => String(call[0])).join('')).toContain('--allow-text')
+})
+
+test('send request --allow-text without -o reaches the service', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  // An invalid token makes send exit 1 before any network call; a usage error would be 2.
+  vi.stubEnv('TELEGRAM_ASK_TOKEN', 'short-secret')
+  const ask = ['send', 'request', 'Which?', '--allow-text', '-d', 'main']
+  expect(await main([...ask, '--port', '1'])).toBe(1)
+})
+
+test('send request requires a default, and rejects a bad timeout', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   expect(await main(['send', 'request', 'Deploy?', '-o', 'Yes', '-o', 'No'])).toBe(2)
   expect(await main(['send', 'request', 'Deploy?', '-o', 'Yes', '--timeout-option', 'No'])).toBe(2)
   const ask = ['send', 'request', 'Deploy?', '-o', 'Yes', '-d', 'No']
@@ -69,7 +83,7 @@ test('send request requires options and a default, and rejects a bad timeout', a
   expect(await main([...ask, '--timeout', 'soon'])).toBe(2)
 })
 
-test('send request adds the default as the last button unless an option already names it', async () => {
+test('send request adds the default as the last button unless an option names it or --allow-text', async () => {
   const bodies: unknown[] = []
   const server = createServer((request, response) => {
     let body = ''
@@ -87,12 +101,14 @@ test('send request adds the default as the last button unless an option already 
     const ask = ['send', 'request', 'Deploy?', '--port', port]
     expect(await main([...ask, '-o', 'Approve', '-d', 'Decline'])).toBe(0)
     expect(await main([...ask, '-o', 'Decline', '-o', 'Approve', '--default', 'Decline'])).toBe(0)
+    expect(await main([...ask, '-o', 'Approve', '--allow-text', '-d', 'Decline'])).toBe(0)
   } finally {
     server.close()
   }
   expect(bodies).toEqual([
     { text: 'Deploy?', options: ['Approve', 'Decline'], timeoutOption: 'Decline' },
     { text: 'Deploy?', options: ['Decline', 'Approve'], timeoutOption: 'Decline' },
+    { text: 'Deploy?', options: ['Approve'], allowText: true, timeoutOption: 'Decline' },
   ])
 })
 

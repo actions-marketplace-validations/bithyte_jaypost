@@ -1,5 +1,5 @@
-import { GrammyError } from 'grammy'
-import type { Bot } from 'grammy'
+import { Bot, GrammyError } from 'grammy'
+import type { Update, UserFromGetMe } from 'grammy/types'
 import { expect, test, vi } from 'vite-plus/test'
 import { OWNER_COMMANDS } from '../../src/approval/index.ts'
 import { createTelegramRuntime } from '../../src/telegram/index.ts'
@@ -48,6 +48,7 @@ function fakeBot(init: () => Promise<void> = async () => {}) {
 function handlers(fatal = vi.fn()) {
   return {
     answer: () => 'accepted' as const,
+    reply: () => 'accepted' as const,
     dismiss: () => true,
     commands: OWNER_COMMANDS,
     command: () => undefined,
@@ -100,7 +101,7 @@ test('pairingInstructions text is unchanged', async () => {
   expect(runtime.statusFields?.()).toEqual({ bot: 'mybot' })
 })
 
-test('start logs polling and registers taps, then commands, then pairing', () => {
+test('start logs polling and registers taps, then commands, then replies, then pairing', () => {
   const { bot, registrations } = fakeBot()
   const log = vi.fn()
   const runtime = createTelegramRuntime({ botToken: TOKEN }, log, () => bot)
@@ -111,6 +112,7 @@ test('start logs polling and registers taps, then commands, then pairing', () =>
     'command:pending',
     'command:cancel',
     'command:history',
+    'on:message',
     'on:message:text',
   ])
 })
@@ -176,7 +178,7 @@ test('pairing sets the owner so requests go to them', async () => {
   ;(bot as unknown as { api: object }).api = { sendMessage, setMyCommands: vi.fn(async () => true) }
   const runtime = createTelegramRuntime({ botToken: TOKEN }, vi.fn(), () => bot)
   runtime.start({ ...handlers(), pair: () => 'paired' })
-  await expect(runtime.sendRequest('id1', 'Q', ['Yes'])).rejects.toThrow()
+  await expect(runtime.sendRequest('id1', 'Q', ['Yes'], false)).rejects.toThrow()
   const pairingHandler = on.mock.calls.find((call) => call[0] === 'message:text')?.[1] as (
     context: unknown,
   ) => Promise<void>
@@ -186,7 +188,11 @@ test('pairing sets the owner so requests go to them', async () => {
     message: { text: 'K7QM4XPD' },
     reply: vi.fn(async () => {}),
   })
-  expect(await runtime.sendRequest('id1', 'Q', ['Yes'])).toEqual({ chatId: 9, messageId: 5 })
+  expect(await runtime.sendRequest('id1', 'Q', ['Yes'], false)).toEqual({
+    chatId: 9,
+    messageId: 5,
+    hasButtons: true,
+  })
 })
 
 test('setMyCommands uses the owner chat scope when an owner is known', () => {
@@ -240,4 +246,88 @@ test('pairing still replies when setMyCommands rejects or throws', async () => {
   )
   expect(throwing.reply).toHaveBeenCalledWith('Paired. Approval requests will appear here.')
   expect(throwing.log.mock.calls.flat().join('')).not.toContain(TOKEN)
+})
+
+const BOT_INFO = {
+  id: 100,
+  is_bot: true,
+  first_name: 'b',
+  username: 'mybot',
+  can_join_groups: true,
+  can_read_all_group_messages: false,
+  supports_inline_queries: false,
+  can_connect_to_business: false,
+  has_main_web_app: false,
+} as UserFromGetMe
+
+const CHAT = { id: 9, type: 'private', first_name: 'o' } as const
+
+function createDispatchBot(calls: { method: string; payload: unknown }[]): Bot {
+  const bot = new Bot(TOKEN, { botInfo: BOT_INFO })
+  bot.api.config.use(async (_previous, method, payload) => {
+    calls.push({ method, payload })
+    const result = method === 'sendMessage' ? { message_id: 5, date: 0, chat: CHAT } : true
+    return { ok: true, result } as never
+  })
+  bot.start = vi.fn(() => new Promise<void>(() => {}))
+  return bot
+}
+
+function commandUpdate(fromId: number, text: string, extra: object = {}): Update {
+  const length = text.indexOf(' ') === -1 ? text.length : text.indexOf(' ')
+  return {
+    update_id: 1,
+    message: {
+      message_id: 60,
+      date: 0,
+      chat: CHAT,
+      from: { id: fromId, is_bot: false, first_name: 'o' },
+      text,
+      entities: [{ type: 'bot_command', offset: 0, length }],
+      ...extra,
+    },
+  } as Update
+}
+
+test('pairing still works with the reply handler', async () => {
+  const calls: { method: string; payload: unknown }[] = []
+  const bot = createDispatchBot(calls)
+  const runtime = createTelegramRuntime({ botToken: TOKEN }, vi.fn(), () => bot)
+  runtime.start({ ...handlers(), pair: vi.fn(() => 'paired' as const) })
+  await bot.handleUpdate(commandUpdate(9, '/start K7QM4XPD'))
+  const sent = calls.find((call) => call.method === 'sendMessage')
+  expect(sent?.payload).toMatchObject({ text: 'Paired. Approval requests will appear here.' })
+})
+
+test('a stranger start message reaches pair and gets no reply', async () => {
+  const calls: { method: string; payload: unknown }[] = []
+  const bot = createDispatchBot(calls)
+  const pair = vi.fn(() => 'notPairing' as const)
+  const runtime = createTelegramRuntime({ botToken: TOKEN, ownerId: 9 }, vi.fn(), () => bot)
+  runtime.start({ ...handlers(), pair })
+  await bot.handleUpdate(commandUpdate(8, '/start K7QM4XPD'))
+  expect(pair).toHaveBeenCalledWith('8', ' K7QM4XPD')
+  expect(calls.filter((call) => call.method === 'sendMessage')).toEqual([])
+})
+
+test('/pending sent as a reply to an open text question runs the command', async () => {
+  const calls: { method: string; payload: unknown }[] = []
+  const bot = createDispatchBot(calls)
+  const command = vi.fn(() => 'Nothing pending.')
+  const reply = vi.fn(() => 'accepted' as const)
+  const runtime = createTelegramRuntime({ botToken: TOKEN, ownerId: 9 }, vi.fn(), () => bot)
+  runtime.start({ ...handlers(), command, reply })
+  await runtime.sendRequest('q1', 'Which branch?', [], true)
+  await bot.handleUpdate(
+    commandUpdate(9, '/pending', {
+      reply_to_message: {
+        message_id: 5,
+        date: 0,
+        chat: CHAT,
+        from: { id: 100, is_bot: true, first_name: 'b' },
+      },
+    }),
+  )
+  expect(command).toHaveBeenCalledWith('pending', '')
+  expect(reply).not.toHaveBeenCalled()
 })

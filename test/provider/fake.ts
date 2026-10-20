@@ -6,7 +6,7 @@ import type {
 } from '../../src/provider/index.ts'
 
 export type FakeRuntime = ProviderRuntime & {
-  readonly sent: { id: string; text: string; options: readonly string[] }[]
+  readonly sent: { id: string; text: string; options: readonly string[]; allowText: boolean }[]
   handlers: RuntimeHandlers | undefined
 }
 
@@ -47,8 +47,8 @@ export function createFakeProvider(
         sent: [],
         handlers: undefined,
         checkCredentials: async () => ({ ok: true, displayName: 'fake' }),
-        sendRequest: async (id, text, options) => {
-          runtime.sent.push({ id, text, options })
+        sendRequest: async (id, text, options, allowText) => {
+          runtime.sent.push({ id, text, options, allowText })
           counter += 1
           return { n: counter }
         },

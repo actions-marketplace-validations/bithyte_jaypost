@@ -6,6 +6,7 @@ const req = {
   question: 't',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
+  allowText: false,
   timeoutSeconds: 10,
 }
 
@@ -124,4 +125,22 @@ test('answer and cancel after rejectAll return false', () => {
   p.rejectAll()
   expect(p.answer('a', 0)).toBe(false)
   expect(p.cancel('a')).toBe(false)
+})
+
+const textReq = { ...req, options: [], allowText: true, timeoutOption: 'main' }
+
+test('reply settles an allowText request as replied', async () => {
+  const p = new PendingRequests()
+  const s = p.open('a', textReq, OPENED_AT)
+  expect(p.reply('a', 'feature/x')).toBe(true)
+  await expect(s).resolves.toEqual({ kind: 'replied', answer: 'feature/x' })
+  expect(p.size).toBe(0)
+})
+
+test('reply to a buttons-only request or an unknown id is false and leaves it open', () => {
+  const p = new PendingRequests()
+  p.open('a', req, OPENED_AT)
+  expect(p.reply('a', 'x')).toBe(false)
+  expect(p.reply('nope', 'x')).toBe(false)
+  expect(p.size).toBe(1)
 })

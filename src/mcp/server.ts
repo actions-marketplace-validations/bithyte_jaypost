@@ -34,8 +34,10 @@ import { OpenQuestions } from './questions.ts'
 import type { AskArguments, McpServerOptions, PollResult, ServiceAddress } from './types.ts'
 
 const ASK_DESCRIPTION = [
-  'Ask the user a question on their phone and wait for them to tap one of the options.',
-  'Use short button labels. Blocks until the user answers or the timeout passes;',
+  'Ask the user a question on their phone and wait for their answer.',
+  'Use short button labels.',
+  'Set allow_text to also let the user type a free-form answer (for questions like which branch or what name); options can then be empty.',
+  'Blocks until the user answers or the timeout passes;',
   'on timeout it returns timeout_option, so make that the safe choice.',
   `Default wait ${DEFAULT_TIMEOUT_SECONDS} s, max ${MAX_TIMEOUT_SECONDS} s (24 h).`,
 ].join(' ')
@@ -75,11 +77,17 @@ const askInputSchema = {
   text: textSchema,
   options: z
     .array(z.string().min(1).max(MAX_OPTION_LENGTH))
-    .min(1)
-    .describe('Button labels, unique'),
+    .optional()
+    .describe('Button labels, unique. May be omitted or empty with allow_text'),
+  allow_text: z
+    .boolean()
+    .optional()
+    .describe('Let the user type an answer by replying. Default false'),
   timeout_option: z
     .string()
-    .describe('Option returned if the user does not answer in time; one of options'),
+    .describe(
+      'Answer returned if the user does not answer in time; one of options, or with allow_text any short answer (max 64 chars)',
+    ),
   timeout_seconds: z
     .number()
     .positive()
@@ -362,7 +370,8 @@ function toAskBody(args: AskArguments): AskBody {
   return {
     project: args.project_name,
     text: args.text,
-    options: args.options,
+    ...(args.options === undefined ? {} : { options: args.options }),
+    ...(args.allow_text === undefined ? {} : { allowText: args.allow_text }),
     timeoutOption: args.timeout_option,
     ...(args.timeout_seconds === undefined ? {} : { timeout: args.timeout_seconds }),
   }

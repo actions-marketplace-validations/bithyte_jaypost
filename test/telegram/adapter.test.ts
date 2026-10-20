@@ -1,7 +1,7 @@
 import { expect, test, vi } from 'vite-plus/test'
 import { Bot, GrammyError } from 'grammy'
 import type { UserFromGetMe } from 'grammy/types'
-import { OWNER_COMMANDS } from '../../src/approval/index.ts'
+import { ApprovalService, OWNER_COMMANDS } from '../../src/approval/index.ts'
 import {
   formatCallbackData,
   formatDismissData,
@@ -12,12 +12,14 @@ import {
   registerCommandHandler,
   setCommandMenu,
   registerPairingHandler,
+  registerReplyHandler,
   registerTapHandler,
+  routeReply,
   routeTap,
   formatPairingInstructions,
   formatLegacyInstructions,
 } from '../../src/telegram/index.ts'
-import type { Owner } from '../../src/telegram/index.ts'
+import type { IncomingMessage, OpenQuestions, Owner, Reply } from '../../src/telegram/index.ts'
 import { Pairing } from '../../src/pairing/index.ts'
 import { QUIET_COMMANDS } from '../../src/quiet/index.ts'
 
@@ -59,11 +61,13 @@ test.each([undefined, '', 'abc', 'abc:', 'abc:x', ':1', 'abc:1:2', 'abc:-1'])(
 test('sendRequest sends plain text with one button per row', async () => {
   const sendMessage = vi.fn(async () => ({ message_id: 5, chat: { id: 42 } }))
   const bot = { api: { sendMessage } } as unknown as Bot
-  const ref = await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'Deploy?', [
-    'Yes',
-    'No',
-  ])
-  expect(ref).toEqual({ chatId: 42, messageId: 5 })
+  const ref = await createTelegramMessenger(bot, { id: 42 }).sendRequest(
+    'id1',
+    'Deploy?',
+    ['Yes', 'No'],
+    false,
+  )
+  expect(ref).toEqual({ chatId: 42, messageId: 5, hasButtons: true })
   expect(sendMessage).toHaveBeenCalledWith(42, 'Deploy?', {
     reply_markup: {
       inline_keyboard: [
@@ -74,15 +78,87 @@ test('sendRequest sends plain text with one button per row', async () => {
   })
 })
 
-test('finalize edits text and clears keyboard', async () => {
+const sentMessage = { message_id: 5, chat: { id: 42 } }
+const at = new Date(2026, 0, 1, 9, 5)
+
+test('allowText with buttons appends the tap-or-reply hint', async () => {
+  const sendMessage = vi.fn(async () => sentMessage)
+  const bot = { api: { sendMessage } } as unknown as Bot
+  await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'Branch?', ['main'], true)
+  expect(sendMessage).toHaveBeenCalledWith(
+    42,
+    'Branch?\n\nTap a button or reply to this message to type an answer.',
+    { reply_markup: { inline_keyboard: [[{ text: 'main', callback_data: 'id1:0' }]] } },
+  )
+})
+
+test('text-only question has the reply hint and no reply_markup', async () => {
+  const sendMessage = vi.fn(async () => sentMessage)
+  const bot = { api: { sendMessage } } as unknown as Bot
+  const ref = await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'Branch?', [], true)
+  expect(ref).toEqual({ chatId: 42, messageId: 5, hasButtons: false })
+  expect(sendMessage).toHaveBeenCalledWith(
+    42,
+    'Branch?\n\nReply to this message with your answer.',
+    {},
+  )
+})
+
+test('send tracks the question and finalize forgets it', async () => {
+  const openQuestions: OpenQuestions = new Map()
+  const bot = {
+    api: { sendMessage: vi.fn(async () => sentMessage), editMessageText: vi.fn(async () => true) },
+  } as unknown as Bot
+  const messenger = createTelegramMessenger(bot, { id: 42 }, openQuestions)
+  const ref = await messenger.sendRequest('id1', 'Branch?', [], true)
+  expect([...openQuestions]).toEqual([['42:5', { id: 'id1', allowText: true }]])
+  await messenger.finalize(ref, 'done', { kind: 'replied', answer: 'x' })
+  expect(openQuestions.size).toBe(0)
+})
+
+test('a failed final edit still forgets the question', async () => {
+  const openQuestions: OpenQuestions = new Map()
+  const bot = {
+    api: {
+      sendMessage: vi.fn(async () => sentMessage),
+      editMessageText: vi.fn(async () => {
+        throw new Error('message is not modified')
+      }),
+    },
+  } as unknown as Bot
+  const messenger = createTelegramMessenger(bot, { id: 42 }, openQuestions)
+  const ref = await messenger.sendRequest('id1', 'Branch?', [], true)
+  expect(openQuestions.size).toBe(1)
+  await expect(messenger.finalize(ref, 'done', { kind: 'cancelled' })).rejects.toThrow(
+    'message is not modified',
+  )
+  expect(openQuestions.size).toBe(0)
+})
+
+test.each([
+  [{ chatId: 42, messageId: 5, hasButtons: true }, { reply_markup: { inline_keyboard: [] } }],
+  [{ chatId: 42, messageId: 5 }, { reply_markup: { inline_keyboard: [] } }],
+  [{ chatId: 42, messageId: 5, hasButtons: false }, {}],
+])('finalize of %o clears the keyboard only if it had one', async (reference, extra) => {
   const editMessageText = vi.fn(async () => true)
   const bot = { api: { editMessageText } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).finalize({ chatId: 42, messageId: 5 }, 'done', {
-    kind: 'cancelled',
-  })
-  expect(editMessageText).toHaveBeenCalledWith(42, 5, 'done', {
-    reply_markup: { inline_keyboard: [] },
-  })
+  await createTelegramMessenger(bot, { id: 42 }).finalize(reference, 'done', { kind: 'cancelled' })
+  expect(editMessageText).toHaveBeenCalledWith(42, 5, 'done', extra)
+})
+
+test('restart expiry of a saved text-only request sends no reply_markup', async () => {
+  const editMessageText = vi.fn(async () => true)
+  const bot = { api: { editMessageText } } as unknown as Bot
+  const service = new ApprovalService(createTelegramMessenger(bot, { id: 42 }), () => at)
+  await service.expireOrphans([
+    { id: 'old', reference: { chatId: 42, messageId: 5, hasButtons: false }, text: 'Branch?' },
+  ])
+  expect(editMessageText).toHaveBeenCalledWith(
+    42,
+    5,
+    'Branch?\n\n⌛ Expired (service restarted), 09:05',
+    {},
+  )
 })
 
 function fakeBot() {
@@ -224,7 +300,7 @@ test('sendRequest never sets disable_notification', async () => {
     chat: { id: 42 },
   }))
   const bot = { api: { sendMessage } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'hi', ['Yes', 'No'])
+  await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', 'hi', ['Yes', 'No'], false)
   expect(Object.hasOwn(sendMessage.mock.calls[0]?.[2] ?? {}, 'disable_notification')).toBe(false)
 })
 
@@ -255,10 +331,10 @@ test('messenger sends to the owner id at call time', async () => {
   const bot = { api: { sendMessage } } as unknown as Bot
   const owner: Owner = { id: undefined }
   const m = createTelegramMessenger(bot, owner)
-  await expect(m.sendRequest('id1', 'Q', ['Yes'])).rejects.toThrow()
+  await expect(m.sendRequest('id1', 'Q', ['Yes'], false)).rejects.toThrow()
   expect(sendMessage).not.toHaveBeenCalled()
   owner.id = 9
-  await m.sendRequest('id1', 'Q', ['Yes'])
+  await m.sendRequest('id1', 'Q', ['Yes'], false)
   expect(sendMessage).toHaveBeenCalledWith(9, 'Q', expect.anything())
 })
 
@@ -508,6 +584,314 @@ test('setCommandMenu survives a synchronous throw', async () => {
   })
   expect(() => setCommandMenu(createMenuBot(setMyCommands), 9, OWNER_COMMANDS, log)).not.toThrow()
   await vi.waitFor(() => expect(log).toHaveBeenCalledWith('failed to set bot commands'))
+})
+
+const BOT_ID = 100
+const QUESTION = { messageId: 5, fromId: BOT_ID }
+const OTHER_BOT_MESSAGE = { messageId: 7, fromId: BOT_ID }
+const messageOf = (overrides: Partial<IncomingMessage> = {}): IncomingMessage => ({
+  fromId: 9,
+  chatType: 'private',
+  chatId: 9,
+  text: 'feature/x',
+  replyTo: undefined,
+  ...overrides,
+})
+const questionsOf = (...entries: [number, boolean][]) =>
+  new Map(
+    entries.map(([messageId, allowText]) => [`9:${messageId}`, { id: `q${messageId}`, allowText }]),
+  )
+const accepting = () => vi.fn((_id: string, _text: string) => 'accepted' as const)
+const expiring = () => vi.fn((_id: string, _text: string) => 'expired' as const)
+
+test('routeReply ignores a stranger', () => {
+  const reply = accepting()
+  const route = routeReply(messageOf({ fromId: 8 }), 9, BOT_ID, questionsOf([5, true]), reply)
+  expect(route).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores a group chat', () => {
+  const reply = accepting()
+  const route = routeReply(
+    messageOf({ chatType: 'group' }),
+    9,
+    BOT_ID,
+    questionsOf([5, true]),
+    reply,
+  )
+  expect(route).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores a channel post', () => {
+  const reply = accepting()
+  const route = routeReply(
+    messageOf({ fromId: undefined }),
+    9,
+    BOT_ID,
+    questionsOf([5, true]),
+    reply,
+  )
+  expect(route).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores everyone when nobody is paired', () => {
+  const reply = accepting()
+  const route = routeReply(messageOf(), undefined, BOT_ID, questionsOf([5, true]), reply)
+  expect(route).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply settles an open text question with the trimmed reply', () => {
+  const reply = accepting()
+  const message = messageOf({ text: '  feature/x \n', replyTo: QUESTION })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('accepted')
+  expect(reply).toHaveBeenCalledExactlyOnceWith('q5', 'feature/x')
+})
+
+test('routeReply keeps inner newlines', () => {
+  const reply = accepting()
+  const message = messageOf({ text: 'line 1\nline 2', replyTo: QUESTION })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('accepted')
+  expect(reply).toHaveBeenCalledExactlyOnceWith('q5', 'line 1\nline 2')
+})
+
+test('routeReply counts a reply starting with a slash', () => {
+  const reply = accepting()
+  const message = messageOf({ text: '/var/www', replyTo: QUESTION })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('accepted')
+  expect(reply).toHaveBeenCalledExactlyOnceWith('q5', '/var/www')
+})
+
+test('routeReply refuses a reply to a buttons-only question', () => {
+  const reply = accepting()
+  const message = messageOf({ replyTo: QUESTION })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, false]), reply)).toBe('buttonsOnly')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply reports expired when the question is settled but not finalized', () => {
+  const reply = expiring()
+  const message = messageOf({ replyTo: QUESTION })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('expired')
+  expect(reply).toHaveBeenCalledTimes(1)
+})
+
+test('routeReply says not open for a reply to another bot message', () => {
+  const reply = accepting()
+  const message = messageOf({ replyTo: OTHER_BOT_MESSAGE })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('notOpen')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply treats a reply to the owner own message as a non-reply', () => {
+  const reply = accepting()
+  const message = messageOf({ replyTo: { messageId: 7, fromId: 9 } })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('accepted')
+  expect(reply).toHaveBeenCalledExactlyOnceWith('q5', 'feature/x')
+})
+
+test('routeReply settles the one text question among buttons-only ones', () => {
+  const reply = accepting()
+  const questions = questionsOf([5, false], [6, true])
+  expect(routeReply(messageOf(), 9, BOT_ID, questions, reply)).toBe('accepted')
+  expect(reply).toHaveBeenCalledExactlyOnceWith('q6', 'feature/x')
+})
+
+test('routeReply is ambiguous with several text questions', () => {
+  const reply = accepting()
+  const questions = questionsOf([5, true], [6, true])
+  expect(routeReply(messageOf(), 9, BOT_ID, questions, reply)).toBe('ambiguous')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores a non-reply when no text question is open', () => {
+  const reply = accepting()
+  expect(routeReply(messageOf(), 9, BOT_ID, questionsOf([5, false]), reply)).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores a non-reply starting with a slash', () => {
+  const reply = accepting()
+  const message = messageOf({ text: '/start' })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores a non-reply when the only text question is settled', () => {
+  const reply = expiring()
+  expect(routeReply(messageOf(), 9, BOT_ID, questionsOf([5, true]), reply)).toBe('ignored')
+  expect(reply).toHaveBeenCalledTimes(1)
+})
+
+test('routeReply says not text for a non-text reply to an open text question', () => {
+  const reply = accepting()
+  const message = messageOf({ text: undefined, replyTo: QUESTION })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('notText')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores a non-text reply to a buttons-only question', () => {
+  const reply = accepting()
+  const message = messageOf({ text: undefined, replyTo: QUESTION })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, false]), reply)).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores a non-text reply to another bot message', () => {
+  const reply = accepting()
+  const message = messageOf({ text: undefined, replyTo: OTHER_BOT_MESSAGE })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, false]), reply)).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+test('routeReply ignores a non-text non-reply', () => {
+  const reply = accepting()
+  const message = messageOf({ text: undefined })
+  expect(routeReply(message, 9, BOT_ID, questionsOf([5, true]), reply)).toBe('ignored')
+  expect(reply).not.toHaveBeenCalled()
+})
+
+const REPLY_BOT_ID = 100
+
+function setupReplyHandler(
+  options: {
+    text?: string
+    from?: { id: number }
+    replyTo?: { message_id: number; from?: { id: number } }
+    reply?: Reply
+    questions?: OpenQuestions
+    contextReply?: ReturnType<typeof vi.fn>
+  } = {},
+) {
+  let handler: (context: unknown, next: () => Promise<void>) => Promise<void> = async () => {}
+  const on = vi.fn((_filter: string, registered: typeof handler) => {
+    handler = registered
+  })
+  const bot = { on, botInfo: { id: REPLY_BOT_ID } } as unknown as Bot
+  const reply = options.reply ?? vi.fn(() => 'accepted' as const)
+  const log = vi.fn()
+  registerReplyHandler(
+    bot,
+    { id: 42 },
+    options.questions ?? new Map([['42:7', { id: 'q1', allowText: true }]]),
+    reply,
+    log,
+  )
+  const contextReply = options.contextReply ?? vi.fn(async () => {})
+  const next = vi.fn(async () => {})
+  const run = () =>
+    handler(
+      {
+        from: options.from ?? { id: 42 },
+        chat: { id: 42, type: 'private' },
+        message: {
+          message_id: 50,
+          ...(options.text !== undefined && { text: options.text }),
+          ...(options.replyTo !== undefined && { reply_to_message: options.replyTo }),
+        },
+        reply: contextReply,
+      },
+      next,
+    )
+  return { on, reply, log, contextReply, next, run }
+}
+
+test('reply handler registers on message', () => {
+  const { on } = setupReplyHandler()
+  expect(on).toHaveBeenCalledWith('message', expect.any(Function))
+})
+
+test('reply handler settles silently', async () => {
+  const { reply, contextReply, next, run } = setupReplyHandler({
+    text: ' yes ',
+    replyTo: { message_id: 7, from: { id: REPLY_BOT_ID } },
+  })
+  await run()
+  expect(reply).toHaveBeenCalledWith('q1', 'yes')
+  expect(contextReply).not.toHaveBeenCalled()
+  expect(next).not.toHaveBeenCalled()
+})
+
+test.each([
+  [
+    'buttonsOnly',
+    new Map([['42:7', { id: 'q1', allowText: false }]]),
+    { message_id: 7, from: { id: REPLY_BOT_ID } },
+    'hi',
+    'Tap one of the buttons to answer this question.',
+  ],
+  [
+    'notOpen',
+    new Map(),
+    { message_id: 7, from: { id: REPLY_BOT_ID } },
+    'hi',
+    "That message isn't waiting for an answer.",
+  ],
+  [
+    'expired',
+    new Map([['42:7', { id: 'q1', allowText: true }]]),
+    { message_id: 7, from: { id: REPLY_BOT_ID } },
+    'hi',
+    "That message isn't waiting for an answer.",
+  ],
+  [
+    'ambiguous',
+    new Map([
+      ['42:7', { id: 'q1', allowText: true }],
+      ['42:8', { id: 'q2', allowText: true }],
+    ]),
+    undefined,
+    'hi',
+    "Several questions are open; reply to the one you're answering.",
+  ],
+  [
+    'notText',
+    new Map([['42:7', { id: 'q1', allowText: true }]]),
+    { message_id: 7, from: { id: REPLY_BOT_ID } },
+    undefined,
+    'Only text replies count as an answer.',
+  ],
+])(
+  'reply handler answers as a reply to the owner message: %s',
+  async (kind, questions, replyTo, text, copy) => {
+    const { contextReply, next, run } = setupReplyHandler({
+      questions: questions as OpenQuestions,
+      ...(replyTo !== undefined && { replyTo }),
+      ...(text !== undefined && { text }),
+      reply:
+        kind === 'expired' ? vi.fn(() => 'expired' as const) : vi.fn(() => 'accepted' as const),
+    })
+    await run()
+    expect(contextReply).toHaveBeenCalledWith(copy, { reply_parameters: { message_id: 50 } })
+    expect(next).not.toHaveBeenCalled()
+  },
+)
+
+test('reply handler passes ignored messages on', async () => {
+  const stranger = setupReplyHandler({ text: 'hi', from: { id: 7 } })
+  await stranger.run()
+  expect(stranger.next).toHaveBeenCalledTimes(1)
+  expect(stranger.contextReply).not.toHaveBeenCalled()
+  const plain = setupReplyHandler({ text: 'hi', questions: new Map() })
+  await plain.run()
+  expect(plain.next).toHaveBeenCalledTimes(1)
+  expect(plain.contextReply).not.toHaveBeenCalled()
+})
+
+test('a failed bot reply is logged, not thrown', async () => {
+  const { log, run } = setupReplyHandler({
+    text: 'hi',
+    replyTo: { message_id: 7, from: { id: REPLY_BOT_ID } },
+    questions: new Map(),
+    contextReply: vi.fn(async () => {
+      throw new Error('boom')
+    }),
+  })
+  await expect(run()).resolves.toBeUndefined()
+  expect(log).toHaveBeenCalledWith('failed to reply: boom')
 })
 
 const BOT_INFO = {

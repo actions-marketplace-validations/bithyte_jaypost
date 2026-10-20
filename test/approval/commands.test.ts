@@ -9,6 +9,7 @@ const REQUEST: ApprovalRequest = {
   question: 'Deploy?',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
+  allowText: false,
   timeoutSeconds: 300,
 }
 

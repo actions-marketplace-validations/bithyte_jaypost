@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   createApprovalRequestSchema,
   DEFAULT_TIMEOUT_SECONDS,
+  MAX_OPTION_LENGTH,
   MAX_TIMEOUT_SECONDS,
   MAX_WAIT_SECONDS,
 } from '../approval/index.ts'
@@ -19,8 +20,14 @@ const TEXT_DESCRIPTION =
 
 const BODY_DESCRIPTIONS: Readonly<Record<string, JsonSchema>> = {
   project: { description: 'Shown as `[project]` on the first line. Trimmed.' },
-  options: { description: 'Button labels, unique.' },
-  timeoutOption: { description: 'Answer returned on timeout. Must be one of `options`.' },
+  allowText: { description: 'Let the owner answer by replying with text. Default false.' },
+  options: {
+    description:
+      'Button labels, unique. Required and non-empty unless `allowText`; with it, may be omitted or empty for a text-only question.',
+  },
+  timeoutOption: {
+    description: `Answer returned on timeout. Without \`allowText\`, must be one of \`options\`; with it, any non-empty string of at most ${MAX_OPTION_LENGTH} characters.`,
+  },
   timeout: {
     description: `Seconds to wait. Default ${DEFAULT_TIMEOUT_SECONDS}, max ${MAX_TIMEOUT_SECONDS} (24 h); larger values are clamped.`,
   },
@@ -68,9 +75,9 @@ export function createOpenApiDocument(options: OpenApiOptions) {
       '/request': {
         post: {
           operationId: 'request',
-          summary: 'Ask a question with buttons and wait for the answer',
+          summary: 'Ask a question and wait for the answer',
           description:
-            'Stays open until a button is tapped or the timeout fires. Disconnecting cancels the question.',
+            'Stays open until the owner answers (tap, or text reply with `allowText`) or the timeout fires. Disconnecting cancels the question.',
           requestBody: {
             required: true,
             content: {
@@ -79,7 +86,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
           },
           responses: {
             '200': {
-              description: 'The tapped answer, or `timeoutOption` on timeout.',
+              description: 'The tapped or typed answer, or `timeoutOption` on timeout.',
               content: {
                 'application/json': { schema: { $ref: '#/components/schemas/Outcome' } },
               },
@@ -248,7 +255,10 @@ export function createOpenApiDocument(options: OpenApiOptions) {
         Outcome: {
           type: 'object',
           properties: {
-            answer: { type: 'string', description: 'The tapped option, or `timeoutOption`.' },
+            answer: {
+              type: 'string',
+              description: 'The tapped option, the typed reply, or `timeoutOption`.',
+            },
             timedOut: { type: 'boolean' },
           },
           required: ['answer', 'timedOut'],

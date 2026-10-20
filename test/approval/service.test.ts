@@ -17,12 +17,13 @@ const req: ApprovalRequest = {
   question: 'Deploy?',
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
+  allowText: false,
   timeoutSeconds: 30,
 }
 
 class FakeMessenger implements Messenger {
   ref: MessageReference = { chatId: 1, messageId: 2 }
-  sent: { id: string; text: string; options: readonly string[] }[] = []
+  sent: { id: string; text: string; options: readonly string[]; allowText: boolean }[] = []
   finalized: { ref: MessageReference; text: string; settlement: MessageEnding }[] = []
   sendError: Error | undefined
   finalizeError: Error | undefined
@@ -32,11 +33,12 @@ class FakeMessenger implements Messenger {
     id: string,
     text: string,
     options: readonly string[],
+    allowText: boolean,
   ): Promise<MessageReference> {
     if (this.sendError) {
       throw this.sendError
     }
-    this.sent.push({ id, text, options })
+    this.sent.push({ id, text, options, allowText })
     return this.ref
   }
 
@@ -122,7 +124,9 @@ test('tap resolves request and finalizes message', async () => {
   const { m, svc } = setup()
   const r = svc.request(req)
   await flush()
-  expect(m.sent).toEqual([{ id: 'id1', text: 'Deploy?', options: ['Approve', 'Decline'] }])
+  expect(m.sent).toEqual([
+    { id: 'id1', text: 'Deploy?', options: ['Approve', 'Decline'], allowText: false },
+  ])
   expect(svc.tap('id1', 0)).toBe('accepted')
   await expect(r).resolves.toEqual({
     kind: 'completed',
@@ -475,6 +479,70 @@ test('expireOrphans without finalize drops the records', async () => {
   })
   await svc.expireOrphans(ORPHANS)
   expect(store.removed).toEqual(['a', 'b'])
+})
+
+const textReq = {
+  ...req,
+  text: 'Which branch?',
+  options: [],
+  allowText: true,
+  timeoutOption: 'main',
+}
+
+test('sendRequest gets allowText', async () => {
+  const { m, svc } = setup()
+  void svc.request(textReq)
+  await flush()
+  expect(m.sent[0]).toEqual({ id: 'id1', text: 'Which branch?', options: [], allowText: true })
+  const other = setup()
+  void other.svc.request(req)
+  await flush()
+  expect(other.m.sent[0]?.allowText).toBe(false)
+})
+
+test('a typed reply resolves with timedOut false and finalizes with the reply line', async () => {
+  const { m, svc } = setup()
+  const result = svc.request(textReq)
+  await flush()
+  expect(svc.reply('id1', 'feature/x')).toBe('accepted')
+  await expect(result).resolves.toEqual({
+    kind: 'completed',
+    outcome: { answer: 'feature/x', timedOut: false },
+  })
+  expect(m.finalized[0]?.text).toBe('Which branch?\n\n💬 feature/x, 09:05')
+})
+
+test('reply to a buttons-only request is expired and leaves it open', async () => {
+  const { svc } = setup()
+  void svc.request(req)
+  await flush()
+  expect(svc.reply('id1', 'x')).toBe('expired')
+  expect(svc.listPending()).toHaveLength(1)
+  expect(svc.tap('id1', 0)).toBe('accepted')
+})
+
+test('first answer wins between reply, tap, timeout and rejectAll', async () => {
+  const first = setup()
+  void first.svc.request({ ...textReq, options: ['a'] })
+  await flush()
+  expect(first.svc.reply('id1', 'x')).toBe('accepted')
+  expect(first.svc.tap('id1', 0)).toBe('expired')
+  const second = setup()
+  void second.svc.request({ ...textReq, options: ['a'] })
+  await flush()
+  expect(second.svc.tap('id1', 0)).toBe('accepted')
+  expect(second.svc.reply('id1', 'x')).toBe('expired')
+  const third = setup()
+  void third.svc.request(textReq)
+  await flush()
+  await vi.advanceTimersByTimeAsync(30_000)
+  expect(third.svc.reply('id1', 'x')).toBe('expired')
+  const fourth = setup()
+  void fourth.svc.request(textReq)
+  await flush()
+  fourth.svc.rejectAll()
+  expect(fourth.svc.reply('id1', 'x')).toBe('expired')
+  expect(fourth.svc.reply('unknown', 'x')).toBe('expired')
 })
 
 test('audit records asked after the send and settled with the answer', async () => {

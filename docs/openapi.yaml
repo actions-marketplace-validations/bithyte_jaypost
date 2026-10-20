@@ -14,8 +14,8 @@ paths:
   /request:
     post:
       operationId: request
-      summary: Ask a question with buttons and wait for the answer
-      description: Stays open until a button is tapped or the timeout fires. Disconnecting cancels the question.
+      summary: Ask a question and wait for the answer
+      description: Stays open until the owner answers (tap, or text reply with `allowText`) or the timeout fires. Disconnecting cancels the question.
       requestBody:
         required: true
         content:
@@ -24,7 +24,7 @@ paths:
               $ref: "#/components/schemas/ApprovalRequest"
       responses:
         "200":
-          description: The tapped answer, or `timeoutOption` on timeout.
+          description: The tapped or typed answer, or `timeoutOption` on timeout.
           content:
             application/json:
               schema:
@@ -204,31 +204,32 @@ components:
           minLength: 1
           maxLength: 100
           description: Shown as `[project]` on the first line. Trimmed.
+        allowText:
+          type: boolean
+          description: Let the owner answer by replying with text. Default false.
         options:
-          minItems: 1
           type: array
           items:
             type: string
             minLength: 1
             maxLength: 64
-          description: Button labels, unique.
+          description: Button labels, unique. Required and non-empty unless `allowText`; with it, may be omitted or empty for a text-only question.
         timeoutOption:
           type: string
-          description: Answer returned on timeout. Must be one of `options`.
+          description: Answer returned on timeout. Without `allowText`, must be one of `options`; with it, any non-empty string of at most 64 characters.
         timeout:
           type: number
           exclusiveMinimum: 0
           description: Seconds to wait. Default 300, max 86400 (24 h); larger values are clamped.
       required:
         - text
-        - options
         - timeoutOption
     Outcome:
       type: object
       properties:
         answer:
           type: string
-          description: The tapped option, or `timeoutOption`.
+          description: The tapped option, the typed reply, or `timeoutOption`.
         timedOut:
           type: boolean
       required:

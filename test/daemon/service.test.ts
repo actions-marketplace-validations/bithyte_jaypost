@@ -427,6 +427,21 @@ test('the service puts the configured token on the api', async () => {
   ).toBe(200)
 })
 
+test('a text question over http is answered through handlers.reply', async () => {
+  const { url, runtime } = await start(createFakeProvider())
+  const response = post(url, '/request', {
+    text: 'Which branch?',
+    allowText: true,
+    timeoutOption: 'main',
+  })
+  await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
+  const [sent] = runtime.sent
+  expect(sent).toMatchObject({ text: 'Which branch?', options: [], allowText: true })
+  expect(runtime.handlers?.reply(sent?.id ?? '', 'feature/x')).toBe('accepted')
+  expect(await (await response).json()).toEqual({ answer: 'feature/x', timedOut: false })
+  expect(runtime.handlers?.reply(sent?.id ?? '', 'again')).toBe('expired')
+})
+
 test('answered request is written to audit.jsonl next to the config', async () => {
   const configPath = createConfigPath()
   const { url, runtime } = await start(createFakeProvider(), { configPath })

@@ -126,6 +126,7 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   })
   const handlers: RuntimeHandlers = {
     answer: (id, optionIndex) => service.tap(id, optionIndex),
+    reply: (id, text) => service.reply(id, text),
     dismiss: (id) => notifications?.dismiss(id) ?? false,
     commands: [...OWNER_COMMANDS, ...QUIET_COMMANDS],
     command: (name, argument) =>

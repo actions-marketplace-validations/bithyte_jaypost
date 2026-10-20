@@ -118,6 +118,20 @@ test('request prints the tapped answer', async () => {
   expect(errors).toEqual([])
 })
 
+test('request --allow-text prints the typed reply', async () => {
+  const { port, service, messenger } = await startApi()
+  const { deps, out, errors } = createDeps(port)
+  const pending = runSendRequest(
+    { text: 'Which branch?', allowText: true, timeoutOption: 'main' },
+    deps,
+  )
+  await waitFor(() => messenger.sent.length === 1)
+  expect(service.reply(messenger.sent[0]?.id ?? '', 'feature/x')).toBe('accepted')
+  expect(await pending).toBe(0)
+  expect(out).toEqual(['feature/x'])
+  expect(errors).toEqual([])
+})
+
 test('request on timeout prints the timeout option', async () => {
   const { port } = await startApi()
   const { deps, out } = createDeps(port)

@@ -30,9 +30,9 @@ import type {
 export class SendError extends Error {}
 
 /**
- * Sends each request to the owner and waits for a tap, the timeout or an abort. Background
- * questions from `start` stay readable by id until `RESULT_TTL_MS` after they settle. Also keeps
- * the last `HISTORY_LIMIT` settled requests in memory.
+ * Sends each request to the owner and waits for an answer (tap or typed reply), the timeout or an
+ * abort. Background questions from `start` stay readable by id until `RESULT_TTL_MS` after they
+ * settle. Also keeps the last `HISTORY_LIMIT` settled requests in memory.
  */
 export class ApprovalService {
   #messenger: Messenger
@@ -155,6 +155,11 @@ export class ApprovalService {
     return this.#pending.answer(id, optionIndex) ? 'accepted' : 'expired'
   }
 
+  /** Records a typed reply; 'expired' when the request is unknown, settled or buttons-only. */
+  reply(id: string, text: string): 'accepted' | 'expired' {
+    return this.#pending.reply(id, text) ? 'accepted' : 'expired'
+  }
+
   /** Open requests, oldest first. */
   listPending(): readonly PendingSummary[] {
     return this.#pending.list()
@@ -193,7 +198,12 @@ export class ApprovalService {
     const id = this.#newId()
     let reference
     try {
-      reference = await this.#messenger.sendRequest(id, request.text, request.options)
+      reference = await this.#messenger.sendRequest(
+        id,
+        request.text,
+        request.options,
+        request.allowText,
+      )
     } catch (cause) {
       throw new SendError('failed to send approval request', { cause })
     }

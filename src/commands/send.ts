@@ -15,7 +15,8 @@ export async function runSendRequest(args: SendRequestArgs, deps: SendDeps): Pro
     deps.port,
     {
       text: args.text,
-      options: args.options,
+      ...(args.options === undefined ? {} : { options: args.options }),
+      ...(args.allowText === undefined ? {} : { allowText: args.allowText }),
       timeoutOption: args.timeoutOption,
       ...(args.timeout === undefined ? {} : { timeout: args.timeout }),
       ...(args.project === undefined ? {} : { project: args.project }),

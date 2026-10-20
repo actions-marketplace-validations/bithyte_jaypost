@@ -100,6 +100,7 @@ test('200 with outcome', async () => {
     question: 'Deploy?',
     options: ['Approve', 'Decline'],
     timeoutOption: 'Decline',
+    allowText: false,
     timeoutSeconds: 30,
   })
 })

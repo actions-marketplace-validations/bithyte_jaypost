@@ -22,6 +22,7 @@ const REQUEST = {
   text: '[deploy]\n\nForce-push main?',
   question: 'Force-push main?',
   project: 'deploy',
+  allowText: false,
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
   timeoutSeconds: 300,

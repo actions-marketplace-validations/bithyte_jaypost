@@ -28,15 +28,16 @@ const ROOT = new URL('../..', import.meta.url).pathname
 const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
 
 class RecordingMessenger implements Messenger {
-  sent: { id: string; text: string; options: readonly string[] }[] = []
+  sent: { id: string; text: string; options: readonly string[]; allowText: boolean }[] = []
   finalized: { text: string; settlement: MessageEnding }[] = []
 
   async sendRequest(
     id: string,
     text: string,
     options: readonly string[],
+    allowText: boolean,
   ): Promise<MessageReference> {
-    this.sent.push({ id, text, options })
+    this.sent.push({ id, text, options, allowText })
     return REFERENCE
   }
 
@@ -84,6 +85,23 @@ afterEach(async () => {
     }),
   )
 })
+
+async function startRecordingStub() {
+  const bodies: Record<string, unknown>[] = []
+  const stub = createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', () => {
+      bodies.push(JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>)
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ answer: 'main', timedOut: false }))
+    })
+  })
+  stubs.push(stub)
+  await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve))
+  const { port } = stub.address() as AddressInfo
+  return { port, bodies }
+}
 
 async function startApi(
   options: { readonly notifications?: boolean; readonly auth?: ApiAuth } = {},
@@ -177,8 +195,8 @@ test('lists the four tools with their required inputs', async () => {
     tools.map((tool) => [tool.name, tool.inputSchema.required?.toSorted()]),
   )
   expect(requiredByName).toEqual({
-    ask_for_permission: ['options', 'project_name', 'text', 'timeout_option'],
-    ask_for_permission_in_background: ['options', 'project_name', 'text', 'timeout_option'],
+    ask_for_permission: ['project_name', 'text', 'timeout_option'],
+    ask_for_permission_in_background: ['project_name', 'text', 'timeout_option'],
     notify_user: ['project_name', 'text'],
     wait_for_answer: ['request_id'],
   })
@@ -382,6 +400,63 @@ test('an unusable token fails only the call that hit it', async () => {
   expect(await client.callTool({ name: 'notify_user', arguments: NOTE })).toEqual({
     content: [{ type: 'text', text: 'sent' }],
   })
+})
+
+test('ask with allow_text and no options is answered by a typed reply', async () => {
+  const { port, service, messenger } = await startApi()
+  const client = await connect(port)
+  const pending = client.callTool({
+    name: 'ask_for_permission',
+    arguments: {
+      project_name: 'api',
+      text: 'Which branch?',
+      allow_text: true,
+      timeout_option: 'main',
+    },
+  })
+  await waitFor(() => messenger.sent.length === 1)
+  expect(messenger.sent[0]).toMatchObject({ options: [], allowText: true })
+  service.reply(messenger.sent[0]?.id ?? '', 'feature/x')
+  expect(await pending).toEqual({
+    content: [{ type: 'text', text: 'feature/x' }],
+    structuredContent: { answer: 'feature/x', timed_out: false },
+  })
+})
+
+test('allow_text is forwarded only when given', async () => {
+  const { port, bodies } = await startRecordingStub()
+  const client = await connect(port)
+  await client.callTool({ name: 'ask_for_permission', arguments: ASK })
+  await client.callTool({ name: 'ask_for_permission', arguments: { ...ASK, allow_text: false } })
+  await client.callTool({
+    name: 'ask_for_permission',
+    arguments: { ...ASK, options: [], allow_text: true },
+  })
+  expect(Object.hasOwn(bodies[0] ?? {}, 'allowText')).toBe(false)
+  expect(bodies[1]).toMatchObject({ allowText: false })
+  expect(bodies[2]).toMatchObject({ allowText: true, options: [] })
+})
+
+test('empty options without allow_text is the service 400', async () => {
+  const { port } = await startApi()
+  const client = await connect(port)
+  const result = await client.callTool({
+    name: 'ask_for_permission',
+    arguments: { ...ASK, options: [] },
+  })
+  expect(result).toEqual({
+    isError: true,
+    content: [{ type: 'text', text: 'options must be a non-empty array' }],
+  })
+})
+
+test('the ask description mentions typed answers', async () => {
+  const { port } = await startApi()
+  const client = await connect(port)
+  const { tools } = await client.listTools()
+  const description = tools.find((tool) => tool.name === 'ask_for_permission')?.description
+  expect(description).toContain('allow_text')
+  expect(description).toContain('wait for their answer')
 })
 
 test('a long ask sends progress while it waits', async () => {

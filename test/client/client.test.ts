@@ -198,3 +198,10 @@ test('a rejected token surfaces the rejected message', async () => {
     new TelegramAskError(TOKEN_REJECTED_MESSAGE),
   )
 })
+
+test('allowText is sent, and options only when given', async () => {
+  const { port, seen } = await startStub(200, '{"answer":"feature/x","timedOut":false}')
+  const client = new Client({ port })
+  await client.request({ text: 'Which branch?', allowText: true, timeoutOption: 'main' })
+  expect(seen.body).toEqual({ text: 'Which branch?', allowText: true, timeoutOption: 'main' })
+})

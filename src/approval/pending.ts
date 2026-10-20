@@ -2,8 +2,8 @@ import { CANCELLED_SETTLEMENT } from './constants.ts'
 import type { ApprovalRequest, PendingEntry, PendingSummary, Settlement } from './types.ts'
 
 /**
- * Open requests by id, each settling exactly once (answer, timeout, reject or cancel); settling clears its
- * timer.
+ * Open requests by id, each settling exactly once (answer, typed reply, timeout, reject or cancel);
+ * settling clears its timer.
  */
 export class PendingRequests {
   #entries = new Map<string, PendingEntry>()
@@ -37,6 +37,18 @@ export class PendingRequests {
       return false
     }
     return this.#settle(id, { kind: 'answered', answer })
+  }
+
+  /**
+   * Settles with the typed `text`; false when the id is unknown or already settled, or the request
+   * doesn't allow text. The core checks `allowText` itself so a provider bug can't answer a
+   * buttons-only question.
+   */
+  reply(id: string, text: string): boolean {
+    if (!this.#entries.get(id)?.request.allowText) {
+      return false
+    }
+    return this.#settle(id, { kind: 'replied', answer: text })
   }
 
   /** Settles as cancelled; false when the id is unknown or already settled. */
