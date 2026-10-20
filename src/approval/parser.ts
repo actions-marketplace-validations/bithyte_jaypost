@@ -2,14 +2,18 @@ import { z } from 'zod'
 import { DEFAULT_FORMAT, MESSAGE_FORMATS, toFormattedText } from '../format/index.ts'
 import type { FormattedText, MessageFormat } from '../format/index.ts'
 import {
+  ASCII_WHITESPACE_PATTERN,
+  ATTACHMENT_NAME_FORBIDDEN_PATTERN,
+  BASE64_PATTERN,
   DEFAULT_TIMEOUT_SECONDS,
+  MAX_ATTACHMENT_NAME_LENGTH,
   MAX_OPTION_LENGTH,
   MAX_PROJECT_LENGTH,
   MAX_TIMEOUT_SECONDS,
   MAX_WAIT_SECONDS,
 } from './constants.ts'
 import { formatProjectText } from './formatter.ts'
-import type { ParseResult, WaitParseResult } from './types.ts'
+import type { Attachment, ParseResult, WaitParseResult } from './types.ts'
 
 const TEXT_ERROR = 'text must be a non-empty string'
 const OPTIONS_ERROR = 'options must be a non-empty array'
@@ -19,6 +23,10 @@ const FORMAT_ERROR = 'format must be "plain" or "markdown"'
 export const BLANK_FORMATTED_ERROR = 'text must not be blank after formatting'
 const TIMEOUT_ERROR = 'timeout must be a finite positive number'
 const WAIT_ERROR = 'wait must be a non-negative number'
+const ATTACHMENT_ERROR = 'attachment must be an object'
+const ATTACHMENT_NAME_ERROR = 'attachment.name must be a non-empty string'
+const ATTACHMENT_TEXT_ERROR = 'attachment.text must be a string'
+const ATTACHMENT_DATA_ERROR = 'attachment.data must be base64'
 
 /** Non-empty (after trim) text; shared by /request and /notify. Length is checked by `checkProjectText`. */
 export function createTextSchema() {
@@ -69,11 +77,92 @@ export function checkProjectText(
   return { ok: true, message: combined }
 }
 
+/** True for standard base64 with optional padding; a lone leftover character is never valid. */
+function isBase64(value: string): boolean {
+  if (!BASE64_PATTERN.test(value)) {
+    return false
+  }
+  const paddingLength = value.length - value.replace(/=+$/, '').length
+  const bodyLength = value.length - paddingLength
+  if (paddingLength > 0 && (value.length % 4 !== 0 || bodyLength === 0)) {
+    return false
+  }
+  return bodyLength % 4 !== 1
+}
+
+/**
+ * Schema of an `attachment` object: a safe file name plus exactly one of `text` (utf-8) or `data`
+ * (base64, line breaks allowed), decoded to bytes. Messages are part of the API (README error
+ * table).
+ */
+export function createAttachmentSchema(maxAttachmentBytes: number) {
+  return z
+    .object(
+      {
+        name: z
+          .string({ error: ATTACHMENT_NAME_ERROR })
+          .min(1, ATTACHMENT_NAME_ERROR)
+          .max(
+            MAX_ATTACHMENT_NAME_LENGTH,
+            `attachment.name must be at most ${MAX_ATTACHMENT_NAME_LENGTH} characters`,
+          )
+          .refine(
+            (name) => !ATTACHMENT_NAME_FORBIDDEN_PATTERN.test(name),
+            'attachment.name must not contain "/", "\\" or control characters',
+          )
+          .refine(
+            (name) => name === name.trim(),
+            'attachment.name must not start or end with whitespace',
+          )
+          .refine(
+            (name) => name !== '.' && name !== '..',
+            'attachment.name must not be "." or ".."',
+          ),
+        text: z.string({ error: ATTACHMENT_TEXT_ERROR }).optional(),
+        data: z.string({ error: ATTACHMENT_DATA_ERROR }).optional(),
+      },
+      { error: ATTACHMENT_ERROR },
+    )
+    .superRefine((attachment, context) => {
+      if ((attachment.text === undefined) === (attachment.data === undefined)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'attachment must have exactly one of text and data',
+        })
+      }
+    })
+    .transform(({ name, text, data }, context): Attachment => {
+      let content: Uint8Array
+      if (text !== undefined) {
+        content = Buffer.from(text, 'utf8')
+      } else {
+        const clean = (data ?? '').replace(ASCII_WHITESPACE_PATTERN, '')
+        if (!isBase64(clean)) {
+          context.addIssue({ code: 'custom', message: ATTACHMENT_DATA_ERROR })
+          return z.NEVER
+        }
+        content = Buffer.from(clean, 'base64')
+      }
+      if (content.byteLength === 0) {
+        context.addIssue({ code: 'custom', message: 'attachment must not be empty' })
+        return z.NEVER
+      }
+      if (content.byteLength > maxAttachmentBytes) {
+        context.addIssue({
+          code: 'custom',
+          message: `attachment must be at most ${maxAttachmentBytes} bytes`,
+        })
+        return z.NEVER
+      }
+      return { name, content: new Uint8Array(content) }
+    })
+}
+
 /**
  * Schema of a /request body; also the source of the OpenAPI spec. Messages are part of the API
  * (README error table); only the first issue is reported.
  */
-export function createApprovalRequestSchema(maxTextLength: number) {
+export function createApprovalRequestSchema(maxTextLength: number, maxAttachmentBytes: number) {
   return z
     .object(
       {
@@ -95,6 +184,7 @@ export function createApprovalRequestSchema(maxTextLength: number) {
           .optional(),
         timeoutOption: z.string({ error: 'timeoutOption must be a string' }),
         timeout: z.number({ error: TIMEOUT_ERROR }).positive(TIMEOUT_ERROR).optional(),
+        attachment: createAttachmentSchema(maxAttachmentBytes).optional(),
       },
       { error: 'body must be a JSON object' },
     )
@@ -116,27 +206,33 @@ export function createApprovalRequestSchema(maxTextLength: number) {
         })
       }
     })
-    .transform(({ text, project, format, allowText, options, timeoutOption, timeout }, context) => {
-      const message = toFormattedText(text, format ?? DEFAULT_FORMAT)
-      if (message.text.trim() === '') {
-        context.addIssue({ code: 'custom', message: BLANK_FORMATTED_ERROR })
-        return z.NEVER
-      }
-      const checked = checkProjectText(message, project, maxTextLength, format ?? DEFAULT_FORMAT)
-      if (!checked.ok) {
-        context.addIssue({ code: 'custom', message: checked.error })
-        return z.NEVER
-      }
-      return {
-        message: checked.message,
-        question: text,
-        ...(project === undefined ? {} : { project }),
-        allowText: allowText ?? false,
-        options: options ?? [],
-        timeoutOption,
-        timeoutSeconds: Math.min(timeout ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS),
-      }
-    })
+    .transform(
+      (
+        { text, project, format, allowText, options, timeoutOption, timeout, attachment },
+        context,
+      ) => {
+        const message = toFormattedText(text, format ?? DEFAULT_FORMAT)
+        if (message.text.trim() === '') {
+          context.addIssue({ code: 'custom', message: BLANK_FORMATTED_ERROR })
+          return z.NEVER
+        }
+        const checked = checkProjectText(message, project, maxTextLength, format ?? DEFAULT_FORMAT)
+        if (!checked.ok) {
+          context.addIssue({ code: 'custom', message: checked.error })
+          return z.NEVER
+        }
+        return {
+          message: checked.message,
+          question: text,
+          ...(project === undefined ? {} : { project }),
+          allowText: allowText ?? false,
+          options: options ?? [],
+          timeoutOption,
+          timeoutSeconds: Math.min(timeout ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS),
+          attachment,
+        }
+      },
+    )
 }
 
 /**
@@ -144,8 +240,12 @@ export function createApprovalRequestSchema(maxTextLength: number) {
  * `timeout` to `MAX_TIMEOUT_SECONDS`; absent means `DEFAULT_TIMEOUT_SECONDS`. `text` may be up to
  * `maxTextLength`.
  */
-export function parseApprovalRequest(body: unknown, maxTextLength: number): ParseResult {
-  const result = createApprovalRequestSchema(maxTextLength).safeParse(body)
+export function parseApprovalRequest(
+  body: unknown,
+  maxTextLength: number,
+  maxAttachmentBytes: number,
+): ParseResult {
+  const result = createApprovalRequestSchema(maxTextLength, maxAttachmentBytes).safeParse(body)
   if (result.success) {
     return { ok: true, value: result.data }
   }

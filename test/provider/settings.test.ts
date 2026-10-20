@@ -6,7 +6,10 @@ import {
   listSecretValues,
   PROVIDERS,
   requireProvider,
+  resolveMaxAttachmentBytes,
 } from '../../src/provider/index.ts'
+import { MAX_ATTACHMENT_BYTES } from '../../src/approval/index.ts'
+import { createFakeProvider } from './fake.ts'
 
 const telegram = requireProvider(PROVIDERS, 'telegram')
 
@@ -34,4 +37,18 @@ test('listSecretValues returns only secret values', () => {
 test('hasRequiredSecrets needs every required secret', () => {
   expect(hasRequiredSecrets(telegram, { botToken: 't' })).toBe(true)
   expect(hasRequiredSecrets(telegram, { ownerId: 42 })).toBe(false)
+})
+
+test('resolveMaxAttachmentBytes is 0 without the field', () => {
+  expect(resolveMaxAttachmentBytes(createFakeProvider())).toBe(0)
+})
+
+test('resolveMaxAttachmentBytes returns the provider value below the cap', () => {
+  expect(resolveMaxAttachmentBytes(createFakeProvider({ maxAttachmentBytes: 1000 }))).toBe(1000)
+})
+
+test('resolveMaxAttachmentBytes caps a larger provider value', () => {
+  expect(resolveMaxAttachmentBytes(createFakeProvider({ maxAttachmentBytes: 50_000_000 }))).toBe(
+    MAX_ATTACHMENT_BYTES,
+  )
 })

@@ -4,7 +4,12 @@ import { parseApprovalRequest, parseWaitSeconds, SendError } from '../approval/i
 import type { ApprovalRequest, ApprovalService, RequestState } from '../approval/index.ts'
 import { isAuthorized, UNAUTHORIZED_ERROR } from '../auth/index.ts'
 import { parseNotifyRequest } from '../notify/index.ts'
-import { MAX_BODY_BYTES, REQUEST_ID_PATH_PATTERN, UNKNOWN_REQUEST_ERROR } from './constants.ts'
+import {
+  ATTACHMENTS_UNSUPPORTED_ERROR,
+  MAX_BODY_BYTES,
+  REQUEST_ID_PATH_PATTERN,
+  UNKNOWN_REQUEST_ERROR,
+} from './constants.ts'
 import { formatOpenApiYaml } from './openapi.ts'
 import type { ApiServerOptions, StatusInfo } from './types.ts'
 
@@ -20,6 +25,10 @@ function toStateBody(id: string, state: RequestState) {
   }
 }
 
+function hasAttachmentKey(json: unknown): boolean {
+  return typeof json === 'object' && json !== null && Object.hasOwn(json, 'attachment')
+}
+
 /**
  * Builds the HTTP API (POST /request, POST /request/async, GET and DELETE /request/:id,
  * POST /notify, GET /status, GET /openapi.yaml) without listening. Aborting the connection cancels
@@ -33,6 +42,7 @@ export function createApiServer(
   options: ApiServerOptions,
 ): FastifyInstance {
   const { maxTextLength, providerName, notifications, auth } = options
+  const attachmentLimit = options.maxAttachmentBytes ?? 0
   // Pending requests can hang for minutes; close() shouldn't wait for them.
   // A question can hold its response for up to 24 h; these timeouts must never cap it.
   const app = Fastify({
@@ -93,18 +103,25 @@ export function createApiServer(
           },
         }
       : {}
-  app.get('/status', guard, async () => status())
+  app.get('/status', guard, async () => ({ ...status(), maxAttachmentBytes: attachmentLimit }))
   // Containers publish the same port on the host, so the local port is the one clients use.
   app.get('/openapi.yaml', async (request, reply) =>
-    reply
-      .type('application/yaml; charset=utf-8')
-      .send(formatOpenApiYaml({ port: request.socket.localPort ?? 0, maxTextLength })),
+    reply.type('application/yaml; charset=utf-8').send(
+      formatOpenApiYaml({
+        port: request.socket.localPort ?? 0,
+        maxTextLength,
+        maxAttachmentBytes: attachmentLimit,
+      }),
+    ),
   )
-  // Replies 503/400 itself and returns undefined, or returns the validated request.
+  // Replies 503/400/501 itself and returns undefined, or returns the validated request. Drops the
+  // raw body from the Fastify request so a long wait doesn't keep an attachment's bytes alive.
   const readApprovalRequest = (
-    body: string | undefined,
+    request: FastifyRequest<{ Body: string | undefined }>,
     reply: FastifyReply,
   ): ApprovalRequest | undefined => {
+    const body = request.body
+    request.body = undefined
     if (!status().paired) {
       reply.code(503).send({ error: 'not paired' })
       return undefined
@@ -116,7 +133,11 @@ export function createApiServer(
       reply.code(400).send({ error: 'body must be valid JSON' })
       return undefined
     }
-    const parsed = parseApprovalRequest(json, maxTextLength)
+    if (attachmentLimit === 0 && hasAttachmentKey(json)) {
+      reply.code(501).send({ error: ATTACHMENTS_UNSUPPORTED_ERROR })
+      return undefined
+    }
+    const parsed = parseApprovalRequest(json, maxTextLength, attachmentLimit)
     if (!parsed.ok) {
       reply.code(400).send({ error: parsed.error })
       return undefined
@@ -124,7 +145,7 @@ export function createApiServer(
     return parsed.value
   }
   app.post<{ Body: string | undefined }>('/request', guard, async (request, reply) => {
-    const approval = readApprovalRequest(request.body, reply)
+    let approval = readApprovalRequest(request, reply)
     if (approval === undefined) {
       return reply
     }
@@ -138,7 +159,10 @@ export function createApiServer(
     if (reply.raw.destroyed) {
       controller.abort()
     }
-    const result = await service.request(approval, controller.signal)
+    const pending = service.request(approval, controller.signal)
+    // V8 keeps locals alive across await; drop the only handle on the attachment bytes first.
+    approval = undefined
+    const result = await pending
     if (result.kind === 'cancelled') {
       // Normally because the client is gone, so this write is a no-op.
       return reply.code(500).send({ error: 'request was cancelled' })
@@ -146,7 +170,7 @@ export function createApiServer(
     return result.outcome
   })
   app.post<{ Body: string | undefined }>('/request/async', guard, async (request, reply) => {
-    const approval = readApprovalRequest(request.body, reply)
+    const approval = readApprovalRequest(request, reply)
     if (approval === undefined) {
       return reply
     }
@@ -202,13 +226,18 @@ export function createApiServer(
     if (!status().paired) {
       return reply.code(503).send({ error: 'not paired' })
     }
+    const body = request.body
+    request.body = undefined
     let json: unknown
     try {
-      json = JSON.parse(request.body ?? '')
+      json = JSON.parse(body ?? '')
     } catch {
       return reply.code(400).send({ error: 'body must be valid JSON' })
     }
-    const parsed = parseNotifyRequest(json, maxTextLength)
+    if (attachmentLimit === 0 && hasAttachmentKey(json)) {
+      return reply.code(501).send({ error: ATTACHMENTS_UNSUPPORTED_ERROR })
+    }
+    const parsed = parseNotifyRequest(json, maxTextLength, attachmentLimit)
     if (!parsed.ok) {
       return reply.code(400).send({ error: parsed.error })
     }

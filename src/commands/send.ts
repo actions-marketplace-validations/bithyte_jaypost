@@ -1,5 +1,6 @@
 import type { ClientToken } from '../auth/index.ts'
-import { FETCH_GRACE_MS, postApi, requestApi } from '../client/index.ts'
+import { postApi, prepareAttachment, requestApi, toSendTimeoutMs } from '../client/index.ts'
+import type { AttachmentBody, AttachmentSource } from '../client/index.ts'
 import type { SendDeps, SendNotifyArgs, SendRequestArgs } from './types.ts'
 
 /**
@@ -9,6 +10,10 @@ import type { SendDeps, SendNotifyArgs, SendRequestArgs } from './types.ts'
 export async function runSendRequest(args: SendRequestArgs, deps: SendDeps): Promise<number> {
   if (deps.token.kind === 'unusable') {
     deps.printError(`telegram-ask: ${deps.token.message}`)
+    return 1
+  }
+  const attachment = await prepare(args.attachment, deps)
+  if (attachment.kind === 'failed') {
     return 1
   }
   const result = await requestApi(
@@ -21,6 +26,7 @@ export async function runSendRequest(args: SendRequestArgs, deps: SendDeps): Pro
       ...(args.timeout === undefined ? {} : { timeout: args.timeout }),
       ...(args.project === undefined ? {} : { project: args.project }),
       ...(args.format === undefined ? {} : { format: args.format }),
+      ...attachment.body,
     },
     { signal: deps.signal, ...toTokenOption(deps.token) },
   )
@@ -39,6 +45,10 @@ export async function runSendNotify(args: SendNotifyArgs, deps: SendDeps): Promi
     deps.printError(`telegram-ask: ${deps.token.message}`)
     return 1
   }
+  const attachment = await prepare(args.attachment, deps)
+  if (attachment.kind === 'failed') {
+    return 1
+  }
   const result = await postApi(
     deps.port,
     '/notify',
@@ -46,14 +56,38 @@ export async function runSendNotify(args: SendNotifyArgs, deps: SendDeps): Promi
       text: args.text,
       ...(args.project === undefined ? {} : { project: args.project }),
       ...(args.format === undefined ? {} : { format: args.format }),
+      ...attachment.body,
     },
-    { signal: deps.signal, timeoutMs: FETCH_GRACE_MS, ...toTokenOption(deps.token) },
+    {
+      signal: deps.signal,
+      timeoutMs: toSendTimeoutMs(args.attachment !== undefined),
+      ...toTokenOption(deps.token),
+    },
   )
   if (result.kind === 'failed') {
     deps.printError(`telegram-ask: ${result.message}`)
     return 1
   }
   return 0
+}
+
+type Prepared =
+  | { readonly kind: 'ready'; readonly body: { readonly attachment?: AttachmentBody } }
+  | { readonly kind: 'failed' }
+
+async function prepare(source: AttachmentSource | undefined, deps: SendDeps): Promise<Prepared> {
+  if (source === undefined) {
+    return { kind: 'ready', body: {} }
+  }
+  const result = await prepareAttachment(deps.port, source, {
+    signal: deps.signal,
+    ...toTokenOption(deps.token),
+  })
+  if (result.kind === 'failed') {
+    deps.printError(`telegram-ask: ${result.message}`)
+    return { kind: 'failed' }
+  }
+  return { kind: 'ready', body: { attachment: result.attachment } }
 }
 
 function toTokenOption(token: ClientToken): { readonly token?: string } {

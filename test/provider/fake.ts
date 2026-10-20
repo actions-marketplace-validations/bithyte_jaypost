@@ -1,3 +1,4 @@
+import type { Attachment } from '../../src/approval/index.ts'
 import type { FormattedText } from '../../src/format/index.ts'
 import type {
   Provider,
@@ -12,6 +13,7 @@ export type FakeRuntime = ProviderRuntime & {
     message: FormattedText
     options: readonly string[]
     allowText: boolean
+    attachment: Attachment | undefined
   }[]
   handlers: RuntimeHandlers | undefined
 }
@@ -53,8 +55,8 @@ export function createFakeProvider(
         sent: [],
         handlers: undefined,
         checkCredentials: async () => ({ ok: true, displayName: 'fake' }),
-        sendRequest: async (id, message, options, allowText) => {
-          runtime.sent.push({ id, message, options, allowText })
+        sendRequest: async (id, message, options, allowText, attachment) => {
+          runtime.sent.push({ id, message, options, allowText, attachment })
           counter += 1
           return { n: counter }
         },

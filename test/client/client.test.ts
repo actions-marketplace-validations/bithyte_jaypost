@@ -1,12 +1,16 @@
 import { createServer } from 'node:http'
 import type { RequestListener, Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
 import { writeTokenFile } from '../../src/auth/index.ts'
-import { TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
+import { createApiServer } from '../../src/server/index.ts'
+import type { ApprovalRequest, RequestResult } from '../../src/approval/index.ts'
+import type { NotifyRequest } from '../../src/notify/index.ts'
+import { NO_AUTH } from '../../src/auth/index.ts'
+import { ATTACHMENT_TOO_OLD_MESSAGE, TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
 import { Client, TelegramAskError } from '../../src/index.ts'
 
 const TOKEN = 'A'.repeat(43)
@@ -223,6 +227,105 @@ test('format is omitted by default', async () => {
 test('allowText is sent, and options only when given', async () => {
   const { port, seen } = await startStub(200, '{"answer":"feature/x","timedOut":false}')
   const client = new Client({ port })
-  await client.request({ text: 'Which branch?', allowText: true, timeoutOption: 'main' })
-  expect(seen.body).toEqual({ text: 'Which branch?', allowText: true, timeoutOption: 'main' })
+  await client.request({
+    text: 'Which branch?',
+    allowText: true,
+    timeoutOption: 'main',
+  })
+  expect(seen.body).toEqual({
+    text: 'Which branch?',
+    allowText: true,
+    timeoutOption: 'main',
+  })
+})
+
+async function startRealServer(): Promise<{
+  port: number
+  requests: ApprovalRequest[]
+  notifications: NotifyRequest[]
+}> {
+  const requests: ApprovalRequest[] = []
+  const notifications: NotifyRequest[] = []
+  const unexpected = (): never => {
+    throw new Error('unexpected call')
+  }
+  const service = {
+    request: async (request: ApprovalRequest): Promise<RequestResult> => {
+      requests.push(request)
+      return {
+        kind: 'completed',
+        outcome: { answer: 'Approve', timedOut: false },
+      }
+    },
+    start: unexpected,
+    get: unexpected,
+    waitFor: unexpected,
+    cancel: unexpected,
+  }
+  const app = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
+    maxTextLength: 3900,
+    providerName: 'test',
+    auth: NO_AUTH,
+    maxAttachmentBytes: 1000,
+    notifications: {
+      notify: async (notification) => {
+        notifications.push(notification)
+      },
+    },
+  })
+  await app.listen({ port: 0, host: '127.0.0.1' })
+  servers.push(app.server)
+  return {
+    port: (app.server.address() as AddressInfo).port,
+    requests,
+    notifications,
+  }
+}
+
+test('request with a path attachment delivers the file bytes', async () => {
+  const { port, requests } = await startRealServer()
+  const path = join(directory, 'build.log')
+  writeFileSync(path, new Uint8Array([0, 1, 2]))
+  const answer = await new Client({ port }).request({
+    ...ASK,
+    attachment: { path },
+  })
+  expect(answer).toEqual({ answer: 'Approve', timedOut: false })
+  expect(requests[0]?.attachment).toEqual({
+    name: 'build.log',
+    content: new Uint8Array([0, 1, 2]),
+  })
+})
+
+test('notify with a text attachment delivers it', async () => {
+  const { port, notifications } = await startRealServer()
+  await new Client({ port }).notify({
+    text: 'done',
+    attachment: { name: 'a.diff', text: 'x' },
+  })
+  expect(notifications[0]?.attachment).toEqual({
+    name: 'a.diff',
+    content: new Uint8Array([120]),
+  })
+})
+
+test('an attachment against an old service throws the upgrade message', async () => {
+  const server = createServer((_request, response) => {
+    response.end('{"paired":true}')
+  })
+  servers.push(server)
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as AddressInfo).port
+  const attachment = { name: 'a.txt', text: 'x' }
+  await expect(new Client({ port }).request({ ...ASK, attachment })).rejects.toThrow(
+    new TelegramAskError(ATTACHMENT_TOO_OLD_MESSAGE),
+  )
+})
+
+test('a missing attachment file throws TelegramAskError', async () => {
+  const { port } = await startRealServer()
+  const path = join(directory, 'missing.txt')
+  const call = new Client({ port }).notify({ text: 'x', attachment: { path } })
+  await expect(call).rejects.toBeInstanceOf(TelegramAskError)
+  await expect(call).rejects.toThrow(`attachment ${JSON.stringify(path)} not found`)
 })

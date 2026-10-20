@@ -16,6 +16,33 @@ export type ClientOptions = {
 }
 
 /**
+ * One file sent along with a message: read from `path` (named by its basename unless `name` is
+ * set), or given as `text` or `data` under a `name`. At most 10 MiB, and never empty.
+ */
+export type AttachmentInput =
+  | { readonly path: string; readonly name?: string }
+  | { readonly name: string; readonly text: string }
+  | { readonly name: string; readonly data: Uint8Array }
+
+/** An `AttachmentInput`, or a stream (the CLI's stdin) to read to the end. */
+export type AttachmentSource =
+  | AttachmentInput
+  | {
+      readonly stream: AsyncIterable<Uint8Array | string>
+      readonly name: string
+    }
+
+/** The wire shape of an attachment: `data` is base64. */
+export type AttachmentBody =
+  | { readonly name: string; readonly text: string }
+  | { readonly name: string; readonly data: string }
+
+/** Outcome of `prepareAttachment`; `message` is ready to show the caller. */
+export type AttachmentResult =
+  | { readonly kind: 'ok'; readonly attachment: AttachmentBody }
+  | { readonly kind: 'failed'; readonly message: string }
+
+/**
  * A question answered by buttons and/or a typed reply; `timeout` in seconds, default 300, max 86400 (24 h); longer values are
  * capped.
  */
@@ -31,6 +58,8 @@ export type AskRequest = {
   readonly project?: string
   /** Default plain; markdown renders a subset, see the README. */
   readonly format?: MessageFormat
+  /** One file sent with the question. Needs a service that supports attachments. */
+  readonly attachment?: AttachmentInput
   /** Aborting it cancels the question; the Telegram message is edited to a "cancelled" line. */
   readonly signal?: AbortSignal
 }
@@ -44,6 +73,8 @@ export type Notification = {
   readonly project?: string
   /** Default plain; markdown renders a subset, see the README. */
   readonly format?: MessageFormat
+  /** One file sent with the message. Needs a service that supports attachments. */
+  readonly attachment?: AttachmentInput
   readonly signal?: AbortSignal
 }
 
@@ -51,7 +82,7 @@ export type Notification = {
 export type ApiMethod = 'GET' | 'POST' | 'DELETE'
 
 /** Service endpoints the clients call. */
-export type ApiPath = '/request' | '/notify' | '/request/async' | `/request/${string}`
+export type ApiPath = '/request' | '/notify' | '/request/async' | '/status' | `/request/${string}`
 
 /** Outcome of a call to the local service; `message` is ready to show the caller. */
 export type ApiResult =
@@ -77,10 +108,13 @@ export type AskBody = {
   readonly timeout?: number
   readonly project?: string
   readonly format?: MessageFormat
+  readonly attachment?: AttachmentBody
 }
 
 /** `now` returns milliseconds; default `performance.now`. */
-export type AskOptions = Omit<ApiOptions, 'timeoutMs'> & { readonly now?: () => number }
+export type AskOptions = Omit<ApiOptions, 'timeoutMs'> & {
+  readonly now?: () => number
+}
 
 /** Outcome of `requestApi`; `message` is ready to show the caller. */
 export type AskResult =
@@ -89,7 +123,11 @@ export type AskResult =
 
 /** The body of GET /request/<id>. */
 export type StateBody =
-  | { readonly id: string; readonly state: 'pending'; readonly expiresAt: string }
+  | {
+      readonly id: string
+      readonly state: 'pending'
+      readonly expiresAt: string
+    }
   | {
       readonly id: string
       readonly state: 'done'

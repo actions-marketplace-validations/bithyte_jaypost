@@ -13,10 +13,14 @@ export type ApiServerOptions = {
   /** With a token, /request, /notify and /status answer 401 unless it is presented. */
   readonly auth: ApiAuth
   readonly notifications?: Pick<NotificationService, 'notify'>
+  /** Effective attachment size limit; absent or 0 means attachments are unsupported (501). */
+  readonly maxAttachmentBytes?: number
 }
 
 /** What varies between installs in the OpenAPI document. */
 export type OpenApiOptions = {
   readonly port: number
   readonly maxTextLength: number
+  /** Attachment size limit in bytes; 0 means the provider doesn't support attachments. */
+  readonly maxAttachmentBytes: number
 }

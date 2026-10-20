@@ -18,6 +18,20 @@ export const RESULT_TTL_MS = 24 * 60 * 60 * 1000
 export const MAX_OPTION_LENGTH = 64
 /** Longest allowed project name, in characters. */
 export const MAX_PROJECT_LENGTH = 100
+/** Largest attachment accepted by the API, in decoded bytes (10 MiB). */
+export const MAX_ATTACHMENT_BYTES = 10_485_760
+/** Longest allowed attachment file name, in characters. */
+export const MAX_ATTACHMENT_NAME_LENGTH = 255
+/** Characters a file name must not contain: path separators and control characters. */
+// eslint-disable-next-line no-control-regex -- control characters are the point
+export const ATTACHMENT_NAME_FORBIDDEN_PATTERN = /[\u0000-\u001f\u007f/\\]/
+/**
+ * Characters of standard base64 with up to two trailing `=`; flat on purpose, since a grouped
+ * pattern overflows the stack on megabytes of input. Length and padding are checked in the parser.
+ */
+export const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/
+/** Whitespace removed from base64 before validation (line wrapping). */
+export const ASCII_WHITESPACE_PATTERN = /[\t\n\f\r ]+/g
 /** Shared settlement for a request cancelled before an answer. */
 export const CANCELLED_SETTLEMENT = { kind: 'cancelled' } as const satisfies Settlement
 /** Ending for a request message whose service restarted before it was answered. */

@@ -7,6 +7,8 @@ import { isSea } from 'node:sea'
 import { fileURLToPath } from 'node:url'
 import { parseSince } from './audit/index.ts'
 import { resolveClientToken, resolveTokenFile } from './auth/index.ts'
+import { DEFAULT_ATTACHMENT_NAME } from './client/index.ts'
+import type { AttachmentSource } from './client/index.ts'
 import {
   createClackPrompts,
   defaultFetchStatus,
@@ -35,7 +37,13 @@ import type { HookDeps } from './hook/index.ts'
 import { createTargets, resolveInstallPaths, resolveTargetOrder } from './install/index.ts'
 import { resolveMcpPort, runMcp } from './mcp/index.ts'
 import type { CliLocation, InstallPaths, Target, TargetName } from './install/index.ts'
-import { DEFAULT_PROVIDER, PROVIDERS, requireProvider } from './provider/index.ts'
+import {
+  DEFAULT_PROVIDER,
+  PROVIDERS,
+  requireProvider,
+  resolveMaxAttachmentBytes,
+  type Provider,
+} from './provider/index.ts'
 import { formatOpenApiYaml } from './server/index.ts'
 import { isPortFree, realExec } from './system/index.ts'
 import { NPM_LATEST_URL, RELEASES_API_URL } from './update/index.ts'
@@ -109,6 +117,26 @@ function toButtons(
   return [...options, defaultAnswer]
 }
 
+/** The `--attach` source: `-` reads stdin, anything else is a path. */
+function toAttachmentSource(
+  attach: string | undefined,
+  attachName: string | undefined,
+): AttachmentSource | undefined {
+  if (attach === undefined) {
+    return undefined
+  }
+  if (attach === '-') {
+    return {
+      stream: process.stdin,
+      name: attachName ?? DEFAULT_ATTACHMENT_NAME,
+    }
+  }
+  return {
+    path: attach,
+    ...(attachName === undefined ? {} : { name: attachName }),
+  }
+}
+
 function createSendDeps(flagPort: number | undefined, signal: AbortSignal): SendDeps {
   return {
     port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
@@ -131,18 +159,20 @@ function createHookDeps(flagPort: number | undefined, signal: AbortSignal): Hook
   }
 }
 
-function resolveMaxTextLength(): number {
+function resolveOpenApiProvider(): Provider {
   try {
-    return loadConfig().provider.maxTextLength
+    return loadConfig().provider
   } catch {
-    return requireProvider(PROVIDERS, DEFAULT_PROVIDER).maxTextLength
+    return requireProvider(PROVIDERS, DEFAULT_PROVIDER)
   }
 }
 
 function runOpenApiCommand(file: string | undefined, flagPort: number | undefined): number {
+  const provider = resolveOpenApiProvider()
   const yaml = formatOpenApiYaml({
     port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
-    maxTextLength: resolveMaxTextLength(),
+    maxTextLength: provider.maxTextLength,
+    maxAttachmentBytes: resolveMaxAttachmentBytes(provider),
   })
   if (file === undefined) {
     process.stdout.write(yaml)
@@ -465,6 +495,11 @@ export async function main(argv: readonly string[]): Promise<number> {
       ),
     )
     .option('--json', 'print {"answer":...,"timedOut":...} instead of the answer')
+    .option('--attach <file>', 'attach a file; "-" reads stdin')
+    .option(
+      '--attach-name <name>',
+      'file name shown in Telegram (default: the file\'s basename, "attachment.txt" for stdin)',
+    )
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
     .action(
       async (
@@ -477,9 +512,17 @@ export async function main(argv: readonly string[]): Promise<number> {
           readonly project?: string
           readonly format?: MessageFormat
           readonly json?: boolean
+          readonly attach?: string
+          readonly attachName?: string
           readonly port?: number
         },
       ) => {
+        if (options.attachName !== undefined && options.attach === undefined) {
+          request.error("error: option '--attach-name <name>' needs '--attach <file>'", {
+            exitCode: 2,
+          })
+        }
+        const attachment = toAttachmentSource(options.attach, options.attachName)
         if (options.option === undefined && options.allowText !== true) {
           request.error("error: option '-o, --option <label>' or '--allow-text' is required", {
             exitCode: 2,
@@ -498,13 +541,14 @@ export async function main(argv: readonly string[]): Promise<number> {
               ...(options.project === undefined ? {} : { project: options.project }),
               ...(options.format === undefined ? {} : { format: options.format }),
               ...(options.json === undefined ? {} : { json: options.json }),
+              ...(attachment === undefined ? {} : { attachment }),
             },
             createSendDeps(options.port, controller.signal),
           ),
         )
       },
     )
-  send
+  const notify = send
     .command('notify')
     .description("send a message that doesn't need an answer")
     .argument('<text>', 'message to show')
@@ -514,6 +558,11 @@ export async function main(argv: readonly string[]): Promise<number> {
         MESSAGE_FORMATS,
       ),
     )
+    .option('--attach <file>', 'attach a file; "-" reads stdin')
+    .option(
+      '--attach-name <name>',
+      'file name shown in Telegram (default: the file\'s basename, "attachment.txt" for stdin)',
+    )
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
     .action(
       async (
@@ -521,15 +570,24 @@ export async function main(argv: readonly string[]): Promise<number> {
         options: {
           readonly project?: string
           readonly format?: MessageFormat
+          readonly attach?: string
+          readonly attachName?: string
           readonly port?: number
         },
       ) => {
+        if (options.attachName !== undefined && options.attach === undefined) {
+          notify.error("error: option '--attach-name <name>' needs '--attach <file>'", {
+            exitCode: 2,
+          })
+        }
+        const attachment = toAttachmentSource(options.attach, options.attachName)
         code = await runWithSignals((controller) =>
           runSendNotify(
             {
               text,
               ...(options.project === undefined ? {} : { project: options.project }),
               ...(options.format === undefined ? {} : { format: options.format }),
+              ...(attachment === undefined ? {} : { attachment }),
             },
             createSendDeps(options.port, controller.signal),
           ),

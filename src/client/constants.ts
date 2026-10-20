@@ -23,3 +23,12 @@ export const TIMEOUT_TOO_OLD_MESSAGE =
 /** Shown when the service has no /request/async. */
 export const BACKGROUND_TOO_OLD_MESSAGE =
   'telegram-ask service is too old for background questions (run telegram-ask init to upgrade)'
+/** Extra time a call with an attachment gets, for the upload and the service's send. */
+export const ATTACHMENT_GRACE_MS = 120_000
+/** Name for an attachment with no name of its own, such as text piped to the CLI. */
+export const DEFAULT_ATTACHMENT_NAME = 'attachment.txt'
+/** Shown when the service's /status doesn't report an attachment limit. */
+export const ATTACHMENT_TOO_OLD_MESSAGE =
+  'telegram-ask service is too old for attachments (run telegram-ask init to upgrade)'
+/** Shown when the provider can't send attachments. */
+export const ATTACHMENT_NOT_SUPPORTED_MESSAGE = 'attachments not supported by this provider'

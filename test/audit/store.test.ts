@@ -26,6 +26,7 @@ const REQUEST = {
   options: ['Approve', 'Decline'],
   timeoutOption: 'Decline',
   timeoutSeconds: 300,
+  attachment: undefined,
 }
 
 let directory: string

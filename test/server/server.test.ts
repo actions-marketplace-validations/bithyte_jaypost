@@ -5,9 +5,10 @@ import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { parse } from 'yaml'
 import { NO_AUTH } from '../../src/auth/index.ts'
 import type { ApiAuth } from '../../src/auth/index.ts'
-import { ApprovalService, SendError } from '../../src/approval/index.ts'
+import { ApprovalService, MAX_ATTACHMENT_BYTES, SendError } from '../../src/approval/index.ts'
 import type { MessageEnding, MessageReference, Messenger } from '../../src/approval/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
+import { MAX_BODY_BYTES } from '../../src/server/constants.ts'
 import type { StatusInfo } from '../../src/server/index.ts'
 import type { ApprovalRequest, RequestResult } from '../../src/approval/index.ts'
 import type { NotifyRequest } from '../../src/notify/index.ts'
@@ -48,18 +49,22 @@ async function start(
   status: () => StatusInfo = () => ({ paired: true, bot: 'b' }),
   notify?: NotifyFn,
   auth: ApiAuth = NO_AUTH,
+  maxAttachmentBytes: number = MAX_ATTACHMENT_BYTES,
 ): Promise<string> {
   const stub = createStub(vi.fn(request))
   server = createApiServer(stub, status, {
     maxTextLength: 3900,
     providerName: 'test',
     auth,
+    maxAttachmentBytes,
     ...(notify === undefined ? {} : { notifications: { notify } }),
   })
   await server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = server.server.address() as AddressInfo
   return `http://127.0.0.1:${port}`
 }
+
+const BIG = Buffer.alloc(100_000, 7).toString('base64')
 
 const post = (url: string, body: string) =>
   fetch(`${url}/request`, { method: 'POST', body, headers: { 'content-type': 'application/json' } })
@@ -103,6 +108,7 @@ test('200 with outcome', async () => {
     timeoutOption: 'Decline',
     allowText: false,
     timeoutSeconds: 30,
+    attachment: undefined,
   })
 })
 
@@ -128,10 +134,10 @@ test('400 on JSON null, array, and validation failure, error message present', a
   expect(request).not.toHaveBeenCalled()
 })
 
-test('413 on 70 KB body', async () => {
+test('413 on a body one byte over MAX_BODY_BYTES', async () => {
   const request = vi.fn<RequestFn>()
   const url = await start(request)
-  const res = await post(url, JSON.stringify({ ...valid, text: 'x'.repeat(70 * 1024) }))
+  const res = await post(url, 'x'.repeat(MAX_BODY_BYTES + 1))
   expect(res.status).toBe(413)
   expect(res.headers.get('content-type')).toContain('application/json')
   expect(typeof ((await res.json()) as { error: unknown }).error).toBe('string')
@@ -141,8 +147,8 @@ test('413 on 70 KB body', async () => {
 test('size limit counts bytes, not characters', async () => {
   const request = vi.fn<RequestFn>()
   const url = await start(request)
-  // 40000 chars, 80000 bytes
-  const res = await post(url, JSON.stringify({ ...valid, text: 'é'.repeat(40000) }))
+  // half the limit in characters, just over the limit in bytes
+  const res = await post(url, 'é'.repeat(MAX_BODY_BYTES / 2 + 1))
   expect(res.status).toBe(413)
   expect(request).not.toHaveBeenCalled()
 })
@@ -289,13 +295,22 @@ test('GET /status reports pairing', async () => {
   )
   const res = await fetch(`${url}/status`)
   expect(res.status).toBe(200)
-  expect(await res.json()).toEqual({ paired: false, code: 'K7QM-4XPD', bot: 'b' })
+  expect(await res.json()).toEqual({
+    paired: false,
+    code: 'K7QM-4XPD',
+    bot: 'b',
+    maxAttachmentBytes: MAX_ATTACHMENT_BYTES,
+  })
 })
 
 test('GET /status when paired', async () => {
   const url = await start(async () => ({ kind: 'cancelled' }))
   const res = await fetch(`${url}/status`)
-  expect(await res.json()).toEqual({ paired: true, bot: 'b' })
+  expect(await res.json()).toEqual({
+    paired: true,
+    bot: 'b',
+    maxAttachmentBytes: MAX_ATTACHMENT_BYTES,
+  })
 })
 
 test('POST /request is 503 while unpaired, service not called', async () => {
@@ -364,10 +379,10 @@ test('POST /notify 502 on SendError', async () => {
   expect(res.status).toBe(502)
 })
 
-test('POST /notify 413 on 70 KB body', async () => {
+test('POST /notify 413 on a body one byte over MAX_BODY_BYTES', async () => {
   const notify = vi.fn<NotifyFn>()
   const url = await start(vi.fn<RequestFn>(), undefined, notify)
-  const res = await postNotify(url, JSON.stringify({ text: 'x'.repeat(70 * 1024) }))
+  const res = await postNotify(url, 'x'.repeat(MAX_BODY_BYTES + 1))
   expect(res.status).toBe(413)
   expect(notify).not.toHaveBeenCalled()
 })
@@ -447,7 +462,11 @@ test('the right token behaves as today', async () => {
   }
   const status = await call(url, 'GET', '/status', { authorization: `Bearer ${TOKEN}` })
   expect(status.status).toBe(200)
-  expect(await status.json()).toEqual({ paired: true, bot: 'b' })
+  expect(await status.json()).toEqual({
+    paired: true,
+    bot: 'b',
+    maxAttachmentBytes: MAX_ATTACHMENT_BYTES,
+  })
 })
 
 test('openapi.yaml, 404 and 405 stay open with a token', async () => {
@@ -549,7 +568,11 @@ class RecordingMessenger implements Messenger {
 }
 
 async function startReal(
-  options: { readonly status?: () => StatusInfo; readonly auth?: ApiAuth } = {},
+  options: {
+    readonly status?: () => StatusInfo
+    readonly auth?: ApiAuth
+    readonly maxAttachmentBytes?: number
+  } = {},
 ) {
   const messenger = new RecordingMessenger()
   const service = new ApprovalService(messenger)
@@ -557,6 +580,7 @@ async function startReal(
     maxTextLength: 3900,
     providerName: 'test',
     auth: options.auth ?? NO_AUTH,
+    maxAttachmentBytes: options.maxAttachmentBytes ?? MAX_ATTACHMENT_BYTES,
   })
   await server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = server.server.address() as AddressInfo
@@ -684,9 +708,7 @@ test('async create validates like /request', async () => {
   const { url, messenger } = await startReal()
   expect((await postAsync(url, '{nope')).status).toBe(400)
   expect((await postAsync(url, JSON.stringify({ text: 'x' }))).status).toBe(400)
-  expect(
-    (await postAsync(url, JSON.stringify({ ...valid, text: 'x'.repeat(70_000) }))).status,
-  ).toBe(413)
+  expect((await postAsync(url, 'x'.repeat(MAX_BODY_BYTES + 1))).status).toBe(413)
   expect(messenger.sent).toEqual([])
   await server?.close()
   server = undefined
@@ -746,4 +768,110 @@ test('the new routes need the token', async () => {
   expect(rejected.map((res) => res.status)).toEqual([401, 401, 401])
   expect(messenger.sent).toHaveLength(1)
   expect((await call(url, 'GET', `/request/${id}`, headers)).status).toBe(200)
+})
+
+const ATTACHMENT = { name: 'a.bin', data: BIG }
+
+test('a body over 64 KiB with an attachment is accepted', async () => {
+  const request = vi.fn<RequestFn>(async () => ({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  }))
+  const url = await start(request)
+  const res = await post(url, JSON.stringify({ ...valid, attachment: ATTACHMENT }))
+  expect(res.status).toBe(200)
+  expect(request.mock.calls[0]?.[0].attachment?.content.byteLength).toBe(100_000)
+})
+
+test('501 without attachment support only when the body has attachment', async () => {
+  const request = vi.fn<RequestFn>(async () => ({
+    kind: 'completed',
+    outcome: { answer: 'Approve', timedOut: false },
+  }))
+  const url = await start(request, undefined, undefined, NO_AUTH, 0)
+  const res = await post(url, JSON.stringify({ ...valid, attachment: null }))
+  expect(res.status).toBe(501)
+  expect(await res.json()).toEqual({ error: 'attachments not supported' })
+  expect(request).not.toHaveBeenCalled()
+  expect((await post(url, JSON.stringify(valid))).status).toBe(200)
+})
+
+test('/request check order: 503, bad json, 501, validation', async () => {
+  const request = vi.fn<RequestFn>()
+  let url = await start(request, unpaired)
+  expect((await post(url, JSON.stringify({ attachment: ATTACHMENT }))).status).toBe(503)
+  await server?.close()
+  url = await start(request, undefined, undefined, NO_AUTH, 0)
+  const bad = await post(url, '{nope')
+  expect(bad.status).toBe(400)
+  expect(await bad.json()).toEqual({ error: 'body must be valid JSON' })
+  expect((await post(url, JSON.stringify({ text: 1, attachment: 5 }))).status).toBe(501)
+  expect(request).not.toHaveBeenCalled()
+})
+
+test('/notify check order: 501 notifications, 503, bad json, 501 attachments, validation', async () => {
+  const notify = vi.fn<NotifyFn>()
+  const body = JSON.stringify({ text: 1, attachment: 5 })
+  let url = await start(vi.fn<RequestFn>(), unpaired)
+  expect((await postNotify(url, body)).status).toBe(501)
+  await server?.close()
+  url = await start(vi.fn<RequestFn>(), unpaired, notify)
+  expect((await postNotify(url, body)).status).toBe(503)
+  await server?.close()
+  url = await start(vi.fn<RequestFn>(), undefined, notify, NO_AUTH, 0)
+  expect((await postNotify(url, '{nope')).status).toBe(400)
+  const res = await postNotify(url, body)
+  expect(res.status).toBe(501)
+  expect(await res.json()).toEqual({ error: 'attachments not supported' })
+  expect(notify).not.toHaveBeenCalled()
+})
+
+test('/notify takes an attachment', async () => {
+  const notify = vi.fn<NotifyFn>()
+  const url = await start(vi.fn<RequestFn>(), undefined, notify)
+  const res = await postNotify(url, JSON.stringify({ text: 'hi', attachment: ATTACHMENT }))
+  expect(res.status).toBe(200)
+  expect(notify.mock.calls[0]?.[0].attachment?.content.byteLength).toBe(100_000)
+})
+
+test('/request/async takes an attachment', async () => {
+  const { url, messenger } = await startReal()
+  const res = await postAsync(url, JSON.stringify({ ...valid, attachment: ATTACHMENT }))
+  expect(res.status).toBe(202)
+  expect(messenger.sent).toHaveLength(1)
+  await server?.close()
+  server = undefined
+  const unsupported = await startReal({ maxAttachmentBytes: 0 })
+  const refused = await postAsync(
+    unsupported.url,
+    JSON.stringify({ ...valid, attachment: ATTACHMENT }),
+  )
+  expect(refused.status).toBe(501)
+  expect(await refused.json()).toEqual({ error: 'attachments not supported' })
+  expect(unsupported.messenger.sent).toEqual([])
+})
+
+test('an attachment over the limit is a 400 with the limit', async () => {
+  const url = await start(vi.fn<RequestFn>(), undefined, undefined, NO_AUTH, 10)
+  const res = await post(
+    url,
+    JSON.stringify({
+      ...valid,
+      attachment: { name: 'a.bin', data: Buffer.alloc(11).toString('base64') },
+    }),
+  )
+  expect(res.status).toBe(400)
+  expect(await res.json()).toEqual({ error: 'attachment must be at most 10 bytes' })
+})
+
+test('GET /status reports maxAttachmentBytes, 0 without support', async () => {
+  let url = await start(vi.fn<RequestFn>(), undefined, undefined, NO_AUTH, 1234)
+  expect(await (await fetch(`${url}/status`)).json()).toEqual({
+    paired: true,
+    bot: 'b',
+    maxAttachmentBytes: 1234,
+  })
+  await server?.close()
+  url = await start(vi.fn<RequestFn>(), undefined, undefined, NO_AUTH, 0)
+  expect(await (await fetch(`${url}/status`)).json()).toMatchObject({ maxAttachmentBytes: 0 })
 })

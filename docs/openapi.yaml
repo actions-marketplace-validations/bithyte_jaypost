@@ -41,6 +41,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "501":
+          $ref: "#/components/responses/NotSupported"
         "502":
           $ref: "#/components/responses/SendFailed"
         "503":
@@ -74,6 +76,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+        "501":
+          $ref: "#/components/responses/NotSupported"
         "502":
           $ref: "#/components/responses/SendFailed"
         "503":
@@ -155,6 +159,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+        "501":
+          $ref: "#/components/responses/NotSupported"
         "502":
           $ref: "#/components/responses/SendFailed"
         "503":
@@ -226,9 +232,28 @@ components:
           type: number
           exclusiveMinimum: 0
           description: Seconds to wait. Default 300, max 86400 (24 h); larger values are clamped.
+        attachment:
+          $ref: "#/components/schemas/Attachment"
       required:
         - text
         - timeoutOption
+    Attachment:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: File name shown in Telegram. Its extension decides how Telegram opens it. Not trimmed; no `/`, `\` or control characters, not `.` or `..`.
+        text:
+          type: string
+          description: File contents as UTF-8 text. Exactly one of `text` and `data`.
+        data:
+          type: string
+          description: File contents as base64 (standard alphabet, padding optional, line breaks allowed). Exactly one of `text` and `data`.
+      required:
+        - name
+      description: An optional file sent to the chat as a document with the message. Exactly one of `text` (UTF-8) or `data` (standard base64, line breaks allowed). Decoded size 1 to 10485760 bytes. Send big files as data; heavy JSON escaping in text can push the body over the size limit.
     Outcome:
       type: object
       properties:
@@ -301,6 +326,8 @@ components:
             - plain
             - markdown
           description: "`plain` (default) or `markdown`, a small subset: code spans and fenced blocks, bold, italic, strikethrough, headings and quotes. Anything else stays as typed. See Formatting in the README."
+        attachment:
+          $ref: "#/components/schemas/Attachment"
       required:
         - text
     Status:
@@ -316,6 +343,8 @@ components:
               type: string
             bot:
               type: string
+            maxAttachmentBytes:
+              type: number
           required:
             - paired
           additionalProperties: {}
@@ -334,6 +363,8 @@ components:
               type: string
             bot:
               type: string
+            maxAttachmentBytes:
+              type: number
           required:
             - paired
             - code
@@ -373,7 +404,13 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     PayloadTooLarge:
-      description: Body over 65536 bytes.
+      description: Body over 14680064 bytes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotSupported:
+      description: Notifications or attachments are not supported by this provider.
       content:
         application/json:
           schema:

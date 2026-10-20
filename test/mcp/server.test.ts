@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import type { FormattedText } from '../../src/format/index.ts'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -15,13 +15,22 @@ import {
 } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, expect, test } from 'vite-plus/test'
-import { ApprovalService } from '../../src/approval/index.ts'
-import type { MessageEnding, MessageReference, Messenger } from '../../src/approval/index.ts'
+import { ApprovalService, MAX_ATTACHMENT_BYTES } from '../../src/approval/index.ts'
+import type {
+  Attachment,
+  MessageEnding,
+  MessageReference,
+  Messenger,
+} from '../../src/approval/index.ts'
 import { NotificationService } from '../../src/notify/index.ts'
 import type { Notifier } from '../../src/notify/index.ts'
 import { NO_AUTH, writeTokenFile } from '../../src/auth/index.ts'
 import type { ApiAuth } from '../../src/auth/index.ts'
-import { BACKGROUND_TOO_OLD_MESSAGE, TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
+import {
+  ATTACHMENT_TOO_OLD_MESSAGE,
+  BACKGROUND_TOO_OLD_MESSAGE,
+  TOKEN_REJECTED_MESSAGE,
+} from '../../src/client/index.ts'
 import { createApiServer } from '../../src/server/index.ts'
 import { createMcpServer, OpenQuestions } from '../../src/mcp/index.ts'
 
@@ -31,6 +40,7 @@ const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
 class RecordingMessenger implements Messenger {
   sent: { id: string; text: string; options: readonly string[]; allowText: boolean }[] = []
   messages: FormattedText[] = []
+  attachments: (Attachment | undefined)[] = []
   finalized: { text: string; settlement: MessageEnding }[] = []
 
   async sendRequest(
@@ -38,8 +48,10 @@ class RecordingMessenger implements Messenger {
     message: FormattedText,
     options: readonly string[],
     allowText: boolean,
+    attachment?: Attachment,
   ): Promise<MessageReference> {
     this.sent.push({ id, text: message.text, options, allowText })
+    this.attachments.push(attachment)
     this.messages.push(message)
     return REFERENCE
   }
@@ -56,9 +68,16 @@ class RecordingMessenger implements Messenger {
 class RecordingNotifier implements Notifier {
   sent: string[] = []
   messages: FormattedText[] = []
+  attachments: (Attachment | undefined)[] = []
 
-  sendNotification = async (_id: string, message: FormattedText): Promise<MessageReference> => {
+  sendNotification = async (
+    _id: string,
+    message: FormattedText,
+    _options: unknown,
+    attachment?: Attachment,
+  ): Promise<MessageReference> => {
     this.sent.push(message.text)
+    this.attachments.push(attachment)
     this.messages.push(message)
     return REFERENCE
   }
@@ -109,13 +128,18 @@ async function startRecordingStub() {
 }
 
 async function startApi(
-  options: { readonly notifications?: boolean; readonly auth?: ApiAuth } = {},
+  options: {
+    readonly notifications?: boolean
+    readonly auth?: ApiAuth
+    readonly maxAttachmentBytes?: number
+  } = {},
 ) {
   const messenger = new RecordingMessenger()
   const notifier = new RecordingNotifier()
   const service = new ApprovalService(messenger)
   const server = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
     maxTextLength: 3900,
+    maxAttachmentBytes: options.maxAttachmentBytes ?? MAX_ATTACHMENT_BYTES,
     providerName: 'test',
     auth: options.auth ?? NO_AUTH,
     ...(options.notifications === false
@@ -211,6 +235,107 @@ test('lists the four tools with their required inputs', async () => {
     'notify_user',
     'wait_for_answer',
   ])
+})
+
+function writeAttachmentFile(name: string, content: string): string {
+  const path = join(directory, name)
+  writeFileSync(path, content)
+  return path
+}
+
+test('a path attachment reaches the service as the file bytes', async () => {
+  const { port, service, messenger } = await startApi()
+  const client = await connect(port)
+  const path = writeAttachmentFile('report.diff', 'diff body')
+  const pending = client.callTool({
+    name: 'ask_for_permission',
+    arguments: { ...ASK, attachment: { path } },
+  })
+  await waitFor(() => messenger.sent.length === 1)
+  const [attachment] = messenger.attachments
+  expect(attachment?.name).toBe('report.diff')
+  expect(Buffer.from(attachment?.content ?? []).toString()).toBe('diff body')
+  service.tap(messenger.sent[0]?.id ?? '', 0)
+  expect((await pending).isError).toBeUndefined()
+})
+
+test('a text attachment defaults to attachment.txt', async () => {
+  const { port, notifier } = await startApi()
+  const client = await connect(port)
+  const result = await client.callTool({
+    name: 'notify_user',
+    arguments: { ...NOTE, attachment: { text: 'log' } },
+  })
+  expect(result).toEqual({ content: [{ type: 'text', text: 'sent' }] })
+  const [attachment] = notifier.attachments
+  expect(attachment?.name).toBe('attachment.txt')
+  expect(Buffer.from(attachment?.content ?? []).toString()).toBe('log')
+})
+
+test('a text attachment keeps its own name', async () => {
+  const { port, notifier } = await startApi()
+  const client = await connect(port)
+  await client.callTool({
+    name: 'notify_user',
+    arguments: { ...NOTE, attachment: { text: 'log', name: 'build.log' } },
+  })
+  expect(notifier.attachments[0]?.name).toBe('build.log')
+})
+
+test('the background ask takes an attachment', async () => {
+  const { port, messenger } = await startApi()
+  const client = await connect(port)
+  const path = writeAttachmentFile('notes.md', '# notes')
+  await askInBackground(client, { attachment: { path, name: 'renamed.md' } })
+  expect(messenger.attachments[0]?.name).toBe('renamed.md')
+  expect(Buffer.from(messenger.attachments[0]?.content ?? []).toString()).toBe('# notes')
+})
+
+test('both or neither of path and text are refused', async () => {
+  const { port, messenger } = await startApi()
+  const client = await connect(port)
+  const file = writeAttachmentFile('a.txt', 'x')
+  for (const attachment of [{ path: file, text: 'x' }, { name: 'a.txt' }]) {
+    const refused = await client
+      .callTool({ name: 'ask_for_permission', arguments: { ...ASK, attachment } })
+      .then(
+        (result) => result.isError === true,
+        () => true,
+      )
+    expect(refused).toBe(true)
+  }
+  expect(messenger.sent).toEqual([])
+})
+
+test('a missing file is a tool error with the reason', async () => {
+  const { port, notifier } = await startApi()
+  const client = await connect(port)
+  const path = join(directory, 'missing.txt')
+  const result = await client.callTool({
+    name: 'notify_user',
+    arguments: { ...NOTE, attachment: { path } },
+  })
+  expect(result).toEqual({
+    isError: true,
+    content: [{ type: 'text', text: `attachment ${JSON.stringify(path)} not found` }],
+  })
+  expect(notifier.sent).toEqual([])
+})
+
+test('an old service is a tool error with the upgrade message', async () => {
+  const port = await startStub((_request, response) => {
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ paired: true, bot: 'b' }))
+  })
+  const client = await connect(port)
+  const result = await client.callTool({
+    name: 'notify_user',
+    arguments: { ...NOTE, attachment: { text: 'log' } },
+  })
+  expect(result).toEqual({
+    isError: true,
+    content: [{ type: 'text', text: ATTACHMENT_TOO_OLD_MESSAGE }],
+  })
 })
 
 test('ask returns the tapped answer', async () => {

@@ -1,6 +1,12 @@
 import type { FormattedText } from '../format/index.ts'
 import type { RequestRecord } from '../state/index.ts'
 
+/** A file sent along with a message; `content` is never empty and `name` is a safe file name. */
+export type Attachment = {
+  readonly name: string
+  readonly content: Uint8Array
+}
+
 /**
  * As produced by `parseApprovalRequest`: timeout is clamped; without `allowText`, `timeoutOption`
  * is in `options`.
@@ -16,7 +22,14 @@ export type ApprovalRequest = {
   readonly options: readonly string[]
   readonly timeoutOption: string
   readonly timeoutSeconds: number
+  /** The decoded file to send with the question; `undefined` when the caller sent none. */
+  readonly attachment: Attachment | undefined
 }
+
+/**
+ * An `ApprovalRequest` once sent, without the attachment so a long wait doesn't keep its bytes.
+ */
+export type SentRequest = Omit<ApprovalRequest, 'attachment'>
 
 /** The answer sent back to the HTTP client. */
 export type Outcome = {
@@ -85,6 +98,8 @@ export type Messenger = {
     options: readonly string[],
     /** The owner may answer with a text reply. */
     allowText: boolean,
+    /** The file to send with the message; `undefined` when there is none. */
+    attachment: Attachment | undefined,
   ) => Promise<MessageReference>
   /** Request ended: show the final text and stop accepting answers. Absent means skipped. */
   readonly finalize?: (
@@ -108,14 +123,14 @@ export type ApprovalServiceOptions = {
 
 /** Records what happened to each request; implementations must not throw. */
 export type AuditSink = {
-  readonly asked: (id: string, request: ApprovalRequest, at: Date) => void
+  readonly asked: (id: string, request: SentRequest, at: Date) => void
   /** `ending` is a `Settlement`, or `expired` from startup recovery. */
   readonly settled: (id: string, ending: MessageEnding, at: Date) => void
 }
 
 /** A pending request with its timeout timer and the resolver that settles it. */
 export type PendingEntry = {
-  readonly request: ApprovalRequest
+  readonly request: SentRequest
   readonly openedAt: Date
   readonly timer: ReturnType<typeof setTimeout>
   readonly resolve: (settlement: Settlement) => void
@@ -124,6 +139,7 @@ export type PendingEntry = {
 /** A sent request now waiting in `PendingRequests`; `settlement` resolves once it settles. */
 export type OpenedRequest = {
   readonly id: string
+  readonly request: SentRequest
   readonly reference: MessageReference
   readonly openedAt: Date
   readonly settlement: Promise<Settlement>
@@ -148,7 +164,7 @@ export type HistoryEntry = {
 /** An open request as listed to the owner, oldest first. */
 export type PendingSummary = {
   readonly id: string
-  readonly request: ApprovalRequest
+  readonly request: SentRequest
   readonly openedAt: Date
 }
 

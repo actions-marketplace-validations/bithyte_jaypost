@@ -179,7 +179,7 @@ test('pairing sets the owner so requests go to them', async () => {
   const runtime = createTelegramRuntime({ botToken: TOKEN }, vi.fn(), () => bot)
   runtime.start({ ...handlers(), pair: () => 'paired' })
   await expect(
-    runtime.sendRequest('id1', { text: 'Q', spans: [] }, ['Yes'], false),
+    runtime.sendRequest('id1', { text: 'Q', spans: [] }, ['Yes'], false, undefined),
   ).rejects.toThrow()
   const pairingHandler = on.mock.calls.find((call) => call[0] === 'message:text')?.[1] as (
     context: unknown,
@@ -190,7 +190,9 @@ test('pairing sets the owner so requests go to them', async () => {
     message: { text: 'K7QM4XPD' },
     reply: vi.fn(async () => {}),
   })
-  expect(await runtime.sendRequest('id1', { text: 'Q', spans: [] }, ['Yes'], false)).toEqual({
+  expect(
+    await runtime.sendRequest('id1', { text: 'Q', spans: [] }, ['Yes'], false, undefined),
+  ).toEqual({
     chatId: 9,
     messageId: 5,
     hasButtons: true,
@@ -319,7 +321,7 @@ test('/pending sent as a reply to an open text question runs the command', async
   const reply = vi.fn(() => 'accepted' as const)
   const runtime = createTelegramRuntime({ botToken: TOKEN, ownerId: 9 }, vi.fn(), () => bot)
   runtime.start({ ...handlers(), command, reply })
-  await runtime.sendRequest('q1', { text: 'Which branch?', spans: [] }, [], true)
+  await runtime.sendRequest('q1', { text: 'Which branch?', spans: [] }, [], true, undefined)
   await bot.handleUpdate(
     commandUpdate(9, '/pending', {
       reply_to_message: {

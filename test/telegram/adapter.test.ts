@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vite-plus/test'
-import { Bot, GrammyError } from 'grammy'
+import { Bot, GrammyError, InputFile } from 'grammy'
 import type { UserFromGetMe } from 'grammy/types'
 import type { Span } from '../../src/format/index.ts'
 import { ApprovalService, OWNER_COMMANDS } from '../../src/approval/index.ts'
@@ -22,6 +22,7 @@ import {
   formatLegacyInstructions,
 } from '../../src/telegram/index.ts'
 import type { IncomingMessage, OpenQuestions, Owner, Reply } from '../../src/telegram/index.ts'
+import { NotificationService } from '../../src/notify/index.ts'
 import { Pairing } from '../../src/pairing/index.ts'
 import { QUIET_COMMANDS } from '../../src/quiet/index.ts'
 
@@ -70,6 +71,7 @@ test('sendRequest sends plain text with one button per row', async () => {
     plain('Deploy?'),
     ['Yes', 'No'],
     false,
+    undefined,
   )
   expect(ref).toEqual({ chatId: 42, messageId: 5, hasButtons: true })
   expect(sendMessage).toHaveBeenCalledWith(42, 'Deploy?', {
@@ -93,11 +95,16 @@ test('allowText with buttons appends the tap-or-reply hint', async () => {
     plain('Branch?'),
     ['main'],
     true,
+    undefined,
   )
   expect(sendMessage).toHaveBeenCalledWith(
     42,
     'Branch?\n\nTap a button or reply to this message to type an answer.',
-    { reply_markup: { inline_keyboard: [[{ text: 'main', callback_data: 'id1:0' }]] } },
+    {
+      reply_markup: {
+        inline_keyboard: [[{ text: 'main', callback_data: 'id1:0' }]],
+      },
+    },
   )
 })
 
@@ -109,6 +116,7 @@ test('text-only question has the reply hint and no reply_markup', async () => {
     plain('Branch?'),
     [],
     true,
+    undefined,
   )
   expect(ref).toEqual({ chatId: 42, messageId: 5, hasButtons: false })
   expect(sendMessage).toHaveBeenCalledWith(
@@ -121,12 +129,18 @@ test('text-only question has the reply hint and no reply_markup', async () => {
 test('send tracks the question and finalize forgets it', async () => {
   const openQuestions: OpenQuestions = new Map()
   const bot = {
-    api: { sendMessage: vi.fn(async () => sentMessage), editMessageText: vi.fn(async () => true) },
+    api: {
+      sendMessage: vi.fn(async () => sentMessage),
+      editMessageText: vi.fn(async () => true),
+    },
   } as unknown as Bot
   const messenger = createTelegramMessenger(bot, { id: 42 }, openQuestions)
-  const ref = await messenger.sendRequest('id1', plain('Branch?'), [], true)
+  const ref = await messenger.sendRequest('id1', plain('Branch?'), [], true, undefined)
   expect([...openQuestions]).toEqual([['42:5', { id: 'id1', allowText: true }]])
-  await messenger.finalize(ref, plain('done'), { kind: 'replied', answer: 'x' })
+  await messenger.finalize(ref, plain('done'), {
+    kind: 'replied',
+    answer: 'x',
+  })
   expect(openQuestions.size).toBe(0)
 })
 
@@ -141,7 +155,7 @@ test('a failed final edit still forgets the question', async () => {
     },
   } as unknown as Bot
   const messenger = createTelegramMessenger(bot, { id: 42 }, openQuestions)
-  const ref = await messenger.sendRequest('id1', plain('Branch?'), [], true)
+  const ref = await messenger.sendRequest('id1', plain('Branch?'), [], true, undefined)
   expect(openQuestions.size).toBe(1)
   await expect(messenger.finalize(ref, plain('done'), { kind: 'cancelled' })).rejects.toThrow(
     'message is not modified',
@@ -154,7 +168,9 @@ test.each([
   [{ chatId: 42, messageId: 5 }, { reply_markup: { inline_keyboard: [] } }],
   [{ chatId: 42, messageId: 5, hasButtons: false }, {}],
 ])('finalize of %o clears the keyboard only if it had one', async (reference, extra) => {
-  const editMessageText = vi.fn(async () => true)
+  const editMessageText = vi.fn(
+    async (_chatId: number, _messageId: number, _text: string, _other: object) => true,
+  )
   const bot = { api: { editMessageText } } as unknown as Bot
   await createTelegramMessenger(bot, { id: 42 }).finalize(reference, plain('done'), {
     kind: 'cancelled',
@@ -163,11 +179,17 @@ test.each([
 })
 
 test('restart expiry of a saved text-only request sends no reply_markup', async () => {
-  const editMessageText = vi.fn(async () => true)
+  const editMessageText = vi.fn(
+    async (_chatId: number, _messageId: number, _text: string, _other: object) => true,
+  )
   const bot = { api: { editMessageText } } as unknown as Bot
   const service = new ApprovalService(createTelegramMessenger(bot, { id: 42 }), () => at)
   await service.expireOrphans([
-    { id: 'old', reference: { chatId: 42, messageId: 5, hasButtons: false }, text: 'Branch?' },
+    {
+      id: 'old',
+      reference: { chatId: 42, messageId: 5, hasButtons: false },
+      text: 'Branch?',
+    },
   ])
   expect(editMessageText).toHaveBeenCalledWith(
     42,
@@ -186,17 +208,20 @@ function fakeBot() {
     fromId: number,
     data: string | undefined,
     deleteMessage = vi.fn(async () => true),
+    message: unknown = undefined,
   ) => {
     const answerCallbackQuery = vi.fn(async () => true)
+    const apiDeleteMessage = vi.fn(async (_chatId: number, _messageId: number) => true)
     const p = handler({
       from: { id: fromId },
-      callbackQuery: { data },
+      callbackQuery: { data, message },
       answerCallbackQuery,
       deleteMessage,
+      api: { deleteMessage: apiDeleteMessage },
     })
-    return { answerCallbackQuery, deleteMessage, p }
+    return { answerCallbackQuery, deleteMessage, apiDeleteMessage, p }
   }
-  return { bot: { on } as unknown as Bot, on, run }
+  return { bot: { on, botInfo: { id: 99 } } as unknown as Bot, on, run }
 }
 
 test('handler: owner accepted answers silently', async () => {
@@ -261,6 +286,88 @@ test('handler: failed dismiss delete is logged and the tap answered', async () =
   expect(answerCallbackQuery).toHaveBeenCalledWith()
 })
 
+const DISMISSED_MESSAGE = { message_id: 11, chat: { id: 42 } }
+
+test("handler: dismiss also deletes the bot's document the message replies to", async () => {
+  const { bot, run } = fakeBot()
+  registerTapHandler(bot, { id: 42 }, vi.fn(), () => true)
+  const message = {
+    ...DISMISSED_MESSAGE,
+    reply_to_message: {
+      message_id: 10,
+      from: { id: 99 },
+      document: { file_id: 'f' },
+    },
+  }
+  const { deleteMessage, apiDeleteMessage, answerCallbackQuery, p } = run(
+    42,
+    'dismiss/id1',
+    undefined,
+    message,
+  )
+  await p
+  expect(deleteMessage).toHaveBeenCalledTimes(1)
+  expect(apiDeleteMessage).toHaveBeenCalledTimes(1)
+  expect(apiDeleteMessage).toHaveBeenCalledWith(42, 10)
+  expect(answerCallbackQuery).toHaveBeenCalledWith()
+})
+
+test("handler: dismiss leaves a replied-to message that isn't the bot's document", async () => {
+  const { bot, run } = fakeBot()
+  registerTapHandler(bot, { id: 42 }, vi.fn(), () => true)
+  const owners = {
+    ...DISMISSED_MESSAGE,
+    reply_to_message: {
+      message_id: 10,
+      from: { id: 42 },
+      document: { file_id: 'f' },
+    },
+  }
+  const botText = {
+    ...DISMISSED_MESSAGE,
+    reply_to_message: { message_id: 10, from: { id: 99 } },
+  }
+  const first = run(42, 'dismiss/id1', undefined, owners)
+  const second = run(42, 'dismiss/id1', undefined, botText)
+  await first.p
+  await second.p
+  expect(first.apiDeleteMessage).not.toHaveBeenCalled()
+  expect(second.apiDeleteMessage).not.toHaveBeenCalled()
+})
+
+test('handler: dismiss without a replied-to message deletes only itself', async () => {
+  const { bot, run } = fakeBot()
+  registerTapHandler(bot, { id: 42 }, vi.fn(), () => true)
+  const { deleteMessage, apiDeleteMessage, p } = run(
+    42,
+    'dismiss/id1',
+    undefined,
+    DISMISSED_MESSAGE,
+  )
+  await p
+  expect(deleteMessage).toHaveBeenCalledTimes(1)
+  expect(apiDeleteMessage).not.toHaveBeenCalled()
+})
+
+test('handler: a failed document delete on dismiss is logged and the tap answered', async () => {
+  const { bot, run } = fakeBot()
+  const log = vi.fn()
+  registerTapHandler(bot, { id: 42 }, vi.fn(), () => true, log)
+  const message = {
+    ...DISMISSED_MESSAGE,
+    reply_to_message: {
+      message_id: 10,
+      from: { id: 99 },
+      document: { file_id: 'f' },
+    },
+  }
+  const { apiDeleteMessage, answerCallbackQuery, p } = run(42, 'dismiss/id1', undefined, message)
+  apiDeleteMessage.mockRejectedValueOnce(new Error('message to delete not found'))
+  await expect(p).resolves.toBeUndefined()
+  expect(log).toHaveBeenCalledWith('failed to delete notification: message to delete not found')
+  expect(answerCallbackQuery).toHaveBeenCalledWith()
+})
+
 test('handler: non-owner dismiss is ignored', async () => {
   const { bot, run } = fakeBot()
   const dismiss = vi.fn()
@@ -290,13 +397,18 @@ test("dismiss and approval payloads don't overlap", () => {
 test('sendNotification sends text with one Dismiss button', async () => {
   const sendMessage = vi.fn(async () => ({ message_id: 5, chat: { id: 42 } }))
   const bot = { api: { sendMessage } } as unknown as Bot
-  const ref = await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', plain('hi'), {
-    silent: false,
-  })
+  const ref = await createTelegramMessenger(bot, { id: 42 }).sendNotification(
+    'id1',
+    plain('hi'),
+    { silent: false },
+    undefined,
+  )
   expect(ref).toEqual({ chatId: 42, messageId: 5 })
   expect(sendMessage).toHaveBeenCalledWith(42, 'hi', {
     disable_notification: false,
-    reply_markup: { inline_keyboard: [[{ text: 'Dismiss', callback_data: 'dismiss/id1' }]] },
+    reply_markup: {
+      inline_keyboard: [[{ text: 'Dismiss', callback_data: 'dismiss/id1' }]],
+    },
   })
 })
 
@@ -306,10 +418,15 @@ test('sendNotification sets disable_notification when silent', async () => {
     chat: { id: 42 },
   }))
   const bot = { api: { sendMessage } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).sendNotification('id1', plain('hi'), {
-    silent: true,
+  await createTelegramMessenger(bot, { id: 42 }).sendNotification(
+    'id1',
+    plain('hi'),
+    { silent: true },
+    undefined,
+  )
+  expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({
+    disable_notification: true,
   })
-  expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({ disable_notification: true })
 })
 
 test('sendRequest never sets disable_notification', async () => {
@@ -323,6 +440,7 @@ test('sendRequest never sets disable_notification', async () => {
     plain('hi'),
     ['Yes', 'No'],
     false,
+    undefined,
   )
   expect(Object.hasOwn(sendMessage.mock.calls[0]?.[2] ?? {}, 'disable_notification')).toBe(false)
 })
@@ -331,9 +449,12 @@ test('sendNotification throws when unpaired', async () => {
   const sendMessage = vi.fn()
   const bot = { api: { sendMessage } } as unknown as Bot
   await expect(
-    createTelegramMessenger(bot, { id: undefined }).sendNotification('id1', plain('hi'), {
-      silent: true,
-    }),
+    createTelegramMessenger(bot, { id: undefined }).sendNotification(
+      'id1',
+      plain('hi'),
+      { silent: true },
+      undefined,
+    ),
   ).rejects.toThrow()
   expect(sendMessage).not.toHaveBeenCalled()
 })
@@ -341,7 +462,10 @@ test('sendNotification throws when unpaired', async () => {
 test('deleteMessage deletes by reference', async () => {
   const deleteMessage = vi.fn(async () => true)
   const bot = { api: { deleteMessage } } as unknown as Bot
-  await createTelegramMessenger(bot, { id: 42 }).deleteMessage({ chatId: 42, messageId: 5 })
+  await createTelegramMessenger(bot, { id: 42 }).deleteMessage({
+    chatId: 42,
+    messageId: 5,
+  })
   expect(deleteMessage).toHaveBeenCalledWith(42, 5)
 })
 
@@ -356,10 +480,10 @@ test('messenger sends to the owner id at call time', async () => {
   const bot = { api: { sendMessage } } as unknown as Bot
   const owner: Owner = { id: undefined }
   const m = createTelegramMessenger(bot, owner)
-  await expect(m.sendRequest('id1', plain('Q'), ['Yes'], false)).rejects.toThrow()
+  await expect(m.sendRequest('id1', plain('Q'), ['Yes'], false, undefined)).rejects.toThrow()
   expect(sendMessage).not.toHaveBeenCalled()
   owner.id = 9
-  await m.sendRequest('id1', plain('Q'), ['Yes'], false)
+  await m.sendRequest('id1', plain('Q'), ['Yes'], false, undefined)
   expect(sendMessage).toHaveBeenCalledWith(9, 'Q', expect.anything())
 })
 
@@ -447,7 +571,12 @@ test('pairing handler replies via ctx.reply and stays silent when ignored', asyn
   })
   expect(reply).toHaveBeenCalledWith('Paired. Approval requests will appear here.')
   reply.mockClear()
-  await handler({ from: { id: 2 }, chat: { type: 'private' }, message: { text: 'x' }, reply })
+  await handler({
+    from: { id: 2 },
+    chat: { type: 'private' },
+    message: { text: 'x' },
+    reply,
+  })
   expect(reply).not.toHaveBeenCalled()
 })
 
@@ -567,7 +696,10 @@ test('setCommandMenu sets the owner chat scope', async () => {
   expect(setMyCommands).toHaveBeenCalledWith(
     [
       { command: 'pending', description: 'List open requests' },
-      { command: 'cancel', description: 'Reject all open requests with their timeout answers' },
+      {
+        command: 'cancel',
+        description: 'Reject all open requests with their timeout answers',
+      },
       { command: 'history', description: 'Show recent answers' },
     ],
     { scope: { type: 'chat', chat_id: 9 } },
@@ -815,7 +947,9 @@ function setupReplyHandler(
         message: {
           message_id: 50,
           ...(options.text !== undefined && { text: options.text }),
-          ...(options.replyTo !== undefined && { reply_to_message: options.replyTo }),
+          ...(options.replyTo !== undefined && {
+            reply_to_message: options.replyTo,
+          }),
         },
         reply: contextReply,
       },
@@ -890,7 +1024,9 @@ test.each([
         kind === 'expired' ? vi.fn(() => 'expired' as const) : vi.fn(() => 'accepted' as const),
     })
     await run()
-    expect(contextReply).toHaveBeenCalledWith(copy, { reply_parameters: { message_id: 50 } })
+    expect(contextReply).toHaveBeenCalledWith(copy, {
+      reply_parameters: { message_id: 50 },
+    })
     expect(next).not.toHaveBeenCalled()
   },
 )
@@ -940,7 +1076,11 @@ function createDispatchBot() {
       ok: true,
       result:
         method === 'sendMessage'
-          ? { message_id: 1, date: 0, chat: { id: 9, type: 'private', first_name: 'O' } }
+          ? {
+              message_id: 1,
+              date: 0,
+              chat: { id: 9, type: 'private', first_name: 'O' },
+            }
           : true,
     }) as never
   })
@@ -1107,9 +1247,11 @@ test('toEntities drops a blockquote holding code', () => {
 test('plain sends have no entities key', async () => {
   const { bot, sendMessage, editMessageText } = createSendBot()
   const messenger = createTelegramMessenger(bot, { id: 42 })
-  await messenger.sendRequest('id1', plain('Q'), ['Yes'], false)
-  await messenger.sendNotification('id1', plain('hi'), { silent: false })
-  await messenger.finalize({ chatId: 42, messageId: 5 }, plain('done'), { kind: 'cancelled' })
+  await messenger.sendRequest('id1', plain('Q'), ['Yes'], false, undefined)
+  await messenger.sendNotification('id1', plain('hi'), { silent: false }, undefined)
+  await messenger.finalize({ chatId: 42, messageId: 5 }, plain('done'), {
+    kind: 'cancelled',
+  })
   for (const call of [
     ...sendMessage.mock.calls.map((c) => c[2]),
     editMessageText.mock.calls[0]?.[3],
@@ -1123,10 +1265,18 @@ test('plain sends have no entities key', async () => {
 
 test('markdown sends carry entities', async () => {
   const { bot, sendMessage } = createSendBot()
-  await createTelegramMessenger(bot, { id: 42 }).sendRequest('id1', RUN_LS, ['Yes'], false)
+  await createTelegramMessenger(bot, { id: 42 }).sendRequest(
+    'id1',
+    RUN_LS,
+    ['Yes'],
+    false,
+    undefined,
+  )
   expect(sendMessage).toHaveBeenCalledWith(42, 'Run ls', {
     entities: [{ type: 'code', offset: 4, length: 2 }],
-    reply_markup: { inline_keyboard: [[{ text: 'Yes', callback_data: 'id1:0' }]] },
+    reply_markup: {
+      inline_keyboard: [[{ text: 'Yes', callback_data: 'id1:0' }]],
+    },
   })
   expect(sendMessage.mock.calls[0]?.[2]).not.toHaveProperty('parse_mode')
 })
@@ -1139,6 +1289,7 @@ test('a 400 on a formatted send retries once as plain', async () => {
     RUN_LS,
     ['Yes'],
     false,
+    undefined,
   )
   expect(reference).toEqual({ chatId: 42, messageId: 5, hasButtons: true })
   expect(sendMessage).toHaveBeenCalledTimes(2)
@@ -1160,6 +1311,7 @@ test('a 400 on a plain send does not retry', async () => {
       plain('Q'),
       ['Yes'],
       false,
+      undefined,
     ),
   ).rejects.toThrow('chat not found')
   expect(sendMessage).toHaveBeenCalledTimes(1)
@@ -1177,6 +1329,7 @@ test('a failed retry throws', async () => {
       RUN_LS,
       ['Yes'],
       false,
+      undefined,
     ),
   ).rejects.toThrow('still bad')
   expect(sendMessage).toHaveBeenCalledTimes(2)
@@ -1191,6 +1344,7 @@ test('a non-400 failure on a formatted send does not retry', async () => {
       RUN_LS,
       ['Yes'],
       false,
+      undefined,
     ),
   ).rejects.toThrow('Too Many Requests')
   expect(sendMessage).toHaveBeenCalledTimes(1)
@@ -1226,13 +1380,215 @@ test('finalize carries entities and falls back the same way', async () => {
 test('notification falls back the same way', async () => {
   const log = vi.fn()
   const { bot, sendMessage } = createSendBot(createRejection(400, REJECTED_ENTITIES))
-  await createTelegramMessenger(bot, { id: 42 }, new Map(), log).sendNotification('id1', RUN_LS, {
-    silent: true,
-  })
+  await createTelegramMessenger(bot, { id: 42 }, new Map(), log).sendNotification(
+    'id1',
+    RUN_LS,
+    { silent: true },
+    undefined,
+  )
   expect(sendMessage).toHaveBeenCalledTimes(2)
   expect(sendMessage.mock.calls[1]?.[2]).toEqual({
     disable_notification: true,
-    reply_markup: { inline_keyboard: [[{ text: 'Dismiss', callback_data: 'dismiss/id1' }]] },
+    reply_markup: {
+      inline_keyboard: [[{ text: 'Dismiss', callback_data: 'dismiss/id1' }]],
+    },
   })
   expect(log).toHaveBeenCalledTimes(1)
+})
+
+const ATTACHMENT = { name: 'changes.diff', content: new Uint8Array([1, 2]) }
+const SEND_ERROR = new Error('boom')
+
+function createAttachmentBot() {
+  const sendDocument = vi.fn(async (_chatId: number, _file: InputFile, _other: object) => ({
+    chat: { id: 42 },
+    message_id: 10,
+  }))
+  const sendMessage = vi.fn(async (_chatId: number, _text: string, _other: object) => ({
+    chat: { id: 42 },
+    message_id: 11,
+  }))
+  const deleteMessage = vi.fn(async (_chatId: number, _messageId: number) => true)
+  const deleteMessages = vi.fn(async (_chatId: number, _messageIds: number[]) => true)
+  const editMessageText = vi.fn(
+    async (_chatId: number, _messageId: number, _text: string, _other: object) => true,
+  )
+  const log = vi.fn()
+  const bot = {
+    api: {
+      sendDocument,
+      sendMessage,
+      deleteMessage,
+      deleteMessages,
+      editMessageText,
+    },
+  } as unknown as Bot
+  return {
+    sendDocument,
+    sendMessage,
+    deleteMessage,
+    deleteMessages,
+    editMessageText,
+    log,
+    messenger: createTelegramMessenger(bot, { id: 42 }, new Map(), log),
+  }
+}
+
+test('a request with an attachment sends the document first, silently, then the question as a reply', async () => {
+  const { messenger, sendDocument, sendMessage } = createAttachmentBot()
+  const ref = await messenger.sendRequest(
+    'id1',
+    plain('Push?'),
+    ['Push', 'Stop'],
+    false,
+    ATTACHMENT,
+  )
+  expect(sendDocument).toHaveBeenCalledWith(42, expect.any(InputFile), {
+    disable_notification: true,
+  })
+  expect(sendDocument.mock.calls[0]?.[1].filename).toBe('changes.diff')
+  expect(sendMessage).toHaveBeenCalledWith(42, 'Push?', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Push', callback_data: 'id1:0' }],
+        [{ text: 'Stop', callback_data: 'id1:1' }],
+      ],
+    },
+    reply_parameters: { message_id: 10 },
+  })
+  expect(sendDocument.mock.invocationCallOrder[0]).toBeLessThan(
+    sendMessage.mock.invocationCallOrder[0] ?? 0,
+  )
+  expect(ref).toEqual({
+    chatId: 42,
+    messageId: 11,
+    hasButtons: true,
+    documentMessageId: 10,
+  })
+})
+
+test('a failed document send sends nothing else and throws', async () => {
+  const { messenger, sendDocument, sendMessage, deleteMessage } = createAttachmentBot()
+  sendDocument.mockRejectedValueOnce(SEND_ERROR)
+  await expect(
+    messenger.sendRequest('id1', plain('Push?'), ['Push'], false, ATTACHMENT),
+  ).rejects.toBe(SEND_ERROR)
+  expect(sendMessage).not.toHaveBeenCalled()
+  expect(deleteMessage).not.toHaveBeenCalled()
+})
+
+test('a failed question send deletes the document and throws the send error', async () => {
+  const { messenger, sendMessage, deleteMessage } = createAttachmentBot()
+  sendMessage.mockRejectedValueOnce(SEND_ERROR)
+  await expect(
+    messenger.sendRequest('id1', plain('Push?'), ['Push'], false, ATTACHMENT),
+  ).rejects.toBe(SEND_ERROR)
+  expect(deleteMessage).toHaveBeenCalledWith(42, 10)
+})
+
+test('a failed cleanup delete is logged without the file name', async () => {
+  const { messenger, sendMessage, deleteMessage, log } = createAttachmentBot()
+  sendMessage.mockRejectedValueOnce(SEND_ERROR)
+  deleteMessage.mockRejectedValueOnce(new Error('cannot delete'))
+  await expect(
+    messenger.sendRequest('id1', plain('Push?'), ['Push'], false, ATTACHMENT),
+  ).rejects.toBe(SEND_ERROR)
+  expect(log).toHaveBeenCalledTimes(1)
+  expect(log).toHaveBeenCalledWith('failed to delete attachment: cannot delete')
+  expect(JSON.stringify(log.mock.calls)).not.toContain('changes.diff')
+})
+
+test('a notification with an attachment replies to its document', async () => {
+  const { messenger, sendDocument, sendMessage } = createAttachmentBot()
+  const ref = await messenger.sendNotification('id1', plain('done'), { silent: false }, ATTACHMENT)
+  expect(sendDocument).toHaveBeenCalledWith(42, expect.any(InputFile), {
+    disable_notification: true,
+  })
+  expect(sendMessage).toHaveBeenCalledWith(42, 'done', {
+    disable_notification: false,
+    reply_markup: {
+      inline_keyboard: [[{ text: 'Dismiss', callback_data: 'dismiss/id1' }]],
+    },
+    reply_parameters: { message_id: 10 },
+  })
+  expect(ref).toEqual({ chatId: 42, messageId: 11, documentMessageId: 10 })
+})
+
+test('a quiet notification with an attachment does not ping', async () => {
+  const { messenger, sendDocument, sendMessage } = createAttachmentBot()
+  await messenger.sendNotification('id1', plain('done'), { silent: true }, ATTACHMENT)
+  expect(sendDocument.mock.calls[0]?.[2]).toEqual({
+    disable_notification: true,
+  })
+  expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({
+    disable_notification: true,
+  })
+})
+
+test('without an attachment nothing changes', async () => {
+  const { messenger, sendDocument, sendMessage } = createAttachmentBot()
+  const ref = await messenger.sendRequest('id1', plain('Push?'), ['Push'], false, undefined)
+  expect(sendDocument).not.toHaveBeenCalled()
+  expect(sendMessage).toHaveBeenCalledWith(42, 'Push?', {
+    reply_markup: {
+      inline_keyboard: [[{ text: 'Push', callback_data: 'id1:0' }]],
+    },
+  })
+  expect(ref).toEqual({ chatId: 42, messageId: 11, hasButtons: true })
+})
+
+test('deleteMessage deletes the document too when the reference has one', async () => {
+  const { messenger, deleteMessage, deleteMessages } = createAttachmentBot()
+  await messenger.deleteMessage({
+    chatId: 42,
+    messageId: 11,
+    documentMessageId: 10,
+  })
+  expect(deleteMessages).toHaveBeenCalledTimes(1)
+  expect(deleteMessages).toHaveBeenCalledWith(42, [10, 11])
+  expect(deleteMessage).not.toHaveBeenCalled()
+})
+
+test('deleteMessage of a reference without a document deletes only the message', async () => {
+  const { messenger, deleteMessage, deleteMessages } = createAttachmentBot()
+  await messenger.deleteMessage({ chatId: 42, messageId: 11 })
+  expect(deleteMessage).toHaveBeenCalledWith(42, 11)
+  expect(deleteMessages).not.toHaveBeenCalled()
+})
+
+test('finalize edits only the question', async () => {
+  const { messenger, editMessageText, deleteMessage, deleteMessages } = createAttachmentBot()
+  await messenger.finalize(
+    { chatId: 42, messageId: 11, hasButtons: true, documentMessageId: 10 },
+    plain('done'),
+    { kind: 'cancelled' },
+  )
+  expect(editMessageText).toHaveBeenCalledTimes(1)
+  expect(editMessageText).toHaveBeenCalledWith(42, 11, 'done', expect.any(Object))
+  expect(deleteMessage).not.toHaveBeenCalled()
+  expect(deleteMessages).not.toHaveBeenCalled()
+})
+
+test('a restored overdue notification with a document deletes both messages', async () => {
+  const { messenger, deleteMessage, deleteMessages } = createAttachmentBot()
+  const service = new NotificationService(messenger)
+  service.restore([
+    {
+      id: 'id1',
+      reference: { chatId: 42, messageId: 11, documentMessageId: 10 },
+      expiresAtMs: 0,
+    },
+  ])
+  await service.deleteOverdue()
+  expect(deleteMessages).toHaveBeenCalledWith(42, [10, 11])
+  expect(deleteMessage).not.toHaveBeenCalled()
+})
+
+test('a restored overdue notification saved before attachments deletes one message', async () => {
+  const { messenger, deleteMessage, deleteMessages } = createAttachmentBot()
+  const service = new NotificationService(messenger)
+  service.restore([{ id: 'id1', reference: { chatId: 42, messageId: 11 }, expiresAtMs: 0 }])
+  await service.deleteOverdue()
+  expect(deleteMessage).toHaveBeenCalledWith(42, 11)
+  expect(deleteMessages).not.toHaveBeenCalled()
 })

@@ -2,6 +2,7 @@ export { runOwnerCommand } from './commands.ts'
 export {
   DEFAULT_TIMEOUT_SECONDS,
   HISTORY_LIMIT,
+  MAX_ATTACHMENT_BYTES,
   MAX_OPTION_LENGTH,
   MAX_PROJECT_LENGTH,
   MAX_TIMEOUT_SECONDS,
@@ -22,6 +23,7 @@ export {
   checkProjectText,
   BLANK_FORMATTED_ERROR,
   createApprovalRequestSchema,
+  createAttachmentSchema,
   createFormatSchema,
   createProjectSchema,
   createTextSchema,
@@ -33,6 +35,7 @@ export { ApprovalService, SendError } from './service.ts'
 export type {
   ApprovalRequest,
   ApprovalServiceOptions,
+  Attachment,
   AuditSink,
   HistoryEntry,
   MessageEnding,
@@ -46,6 +49,7 @@ export type {
   RequestResult,
   RequestState,
   RequestStore,
+  SentRequest,
   Settlement,
   StartedRequest,
   WaitParseResult,

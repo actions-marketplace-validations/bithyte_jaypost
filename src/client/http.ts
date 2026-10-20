@@ -1,6 +1,8 @@
 import { request as httpRequest } from 'node:http'
 import { DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS } from '../approval/constants.ts'
 import {
+  ATTACHMENT_GRACE_MS,
+  ATTACHMENT_NOT_SUPPORTED_MESSAGE,
   BACKGROUND_TOO_OLD_MESSAGE,
   CANCELLED_MESSAGE,
   FETCH_GRACE_MS,
@@ -77,11 +79,23 @@ export async function callApi(
 
 const KEEPALIVE_MS = 60_000
 
-/** HTTP timeout for a /request call: the capped approval timeout plus a grace period. */
-export function toFetchTimeoutMs(timeoutSeconds: number | undefined): number {
+/**
+ * HTTP timeout for a /request call: the capped approval timeout plus a grace period, and more
+ * when the call uploads an attachment.
+ */
+export function toFetchTimeoutMs(
+  timeoutSeconds: number | undefined,
+  hasAttachment = false,
+): number {
   return (
-    Math.min(timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000 + FETCH_GRACE_MS
+    Math.min(timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000 +
+    toSendTimeoutMs(hasAttachment)
   )
+}
+
+/** HTTP timeout for a call that returns once the message is sent (/notify, /request/async). */
+export function toSendTimeoutMs(hasAttachment: boolean): number {
+  return FETCH_GRACE_MS + (hasAttachment ? ATTACHMENT_GRACE_MS : 0)
 }
 
 /**
@@ -97,7 +111,7 @@ export async function requestApi(
   const startMs = now()
   const result = await postApi(port, '/request', body, {
     ...options,
-    timeoutMs: toFetchTimeoutMs(body.timeout),
+    timeoutMs: toFetchTimeoutMs(body.timeout, body.attachment !== undefined),
   })
   const elapsedMs = now() - startMs
   if (result.kind === 'failed') {
@@ -263,7 +277,9 @@ function describeStatus(status: number, path: ApiPath, text: string, sentToken: 
     return describeUnknownRequest(path.slice('/request/'.length).split('?')[0] ?? '')
   }
   if (status === 501) {
-    return NOT_SUPPORTED_MESSAGE
+    return error === 'attachments not supported'
+      ? ATTACHMENT_NOT_SUPPORTED_MESSAGE
+      : NOT_SUPPORTED_MESSAGE
   }
   if (status === 503) {
     return NOT_PAIRED_MESSAGE

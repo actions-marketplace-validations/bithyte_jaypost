@@ -1,5 +1,5 @@
 import { CANCELLED_SETTLEMENT } from './constants.ts'
-import type { ApprovalRequest, PendingEntry, PendingSummary, Settlement } from './types.ts'
+import type { PendingEntry, PendingSummary, SentRequest, Settlement } from './types.ts'
 
 /**
  * Open requests by id, each settling exactly once (answer, typed reply, timeout, reject or cancel);
@@ -16,7 +16,7 @@ export class PendingRequests {
    * Registers `request` and resolves with how it settled. The timeout settles it with the request's
    * timeout option.
    */
-  open(id: string, request: ApprovalRequest, openedAt: Date): Promise<Settlement> {
+  open(id: string, request: SentRequest, openedAt: Date): Promise<Settlement> {
     return new Promise((resolve) => {
       const timer = setTimeout(
         () => this.#settle(id, { kind: 'timedOut', answer: request.timeoutOption }),

@@ -1,4 +1,9 @@
-import type { MessageEnding, MessageReference, OwnerCommand } from '../approval/index.ts'
+import type {
+  Attachment,
+  MessageEnding,
+  MessageReference,
+  OwnerCommand,
+} from '../approval/index.ts'
 import type { FormattedText } from '../format/index.ts'
 import type { PairResult } from '../pairing/index.ts'
 import type { SendNotificationOptions } from '../notify/index.ts'
@@ -66,6 +71,7 @@ export type ProviderRuntime = {
     message: FormattedText,
     options: readonly string[],
     allowText: boolean,
+    attachment: Attachment | undefined,
   ) => Promise<MessageReference>
   /** Request ended; called once per ended request, `expired` included. Absent means skipped. */
   readonly finalize?: (
@@ -78,6 +84,7 @@ export type ProviderRuntime = {
     id: string,
     message: FormattedText,
     options: SendNotificationOptions,
+    attachment: Attachment | undefined,
   ) => Promise<MessageReference>
   readonly deleteMessage?: (reference: MessageReference) => Promise<void>
   /** Present iff the provider pairs; `code` is raw (no dash). */
@@ -92,6 +99,8 @@ export type Provider = {
   readonly name: string
   readonly label: string
   readonly maxTextLength: number
+  /** Largest attachment this provider sends, in bytes; absent means no attachment support. */
+  readonly maxAttachmentBytes?: number
   readonly settings: readonly ProviderSetting[]
   readonly setup: ProviderSetup
   readonly createRuntime: (settings: SettingValues, log: (line: string) => void) => ProviderRuntime

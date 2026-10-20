@@ -1,4 +1,5 @@
 import type { ClientToken } from '../auth/index.ts'
+import type { AttachmentSource } from '../client/index.ts'
 import type { MessageFormat } from '../format/index.ts'
 import type { CliLocation, InstallPaths, Target, TargetName } from '../install/index.ts'
 import type { Provider } from '../provider/index.ts'
@@ -178,6 +179,8 @@ export type SendRequestArgs = {
   readonly format?: MessageFormat
   /** Print `{ answer, timedOut }` instead of the bare answer. */
   readonly json?: boolean
+  /** A file to send with the question. */
+  readonly attachment?: AttachmentSource
 }
 
 /** `send notify` input. */
@@ -185,6 +188,8 @@ export type SendNotifyArgs = {
   readonly text: string
   readonly project?: string
   readonly format?: MessageFormat
+  /** A file to send with the message. */
+  readonly attachment?: AttachmentSource
 }
 
 /** Where `send` talks to and writes; aborting `signal` cancels the call. */

@@ -4,6 +4,7 @@ import { ApprovalService, RESULT_TTL_MS, SendError } from '../../src/approval/in
 import type { RequestRecord } from '../../src/state/index.ts'
 import type {
   ApprovalRequest,
+  Attachment,
   AuditSink,
   MessageEnding,
   MessageReference,
@@ -20,11 +21,20 @@ const req: ApprovalRequest = {
   timeoutOption: 'Decline',
   allowText: false,
   timeoutSeconds: 30,
+  attachment: undefined,
 }
+
+const ATTACHMENT: Attachment = { name: 'changes.diff', content: new Uint8Array([1, 2, 3]) }
 
 class FakeMessenger implements Messenger {
   ref: MessageReference = { chatId: 1, messageId: 2 }
-  sent: { id: string; text: string; options: readonly string[]; allowText: boolean }[] = []
+  sent: {
+    id: string
+    text: string
+    options: readonly string[]
+    allowText: boolean
+    attachment: Attachment | undefined
+  }[] = []
   finalized: { ref: MessageReference; text: string; settlement: MessageEnding }[] = []
   finalizedMessages: FormattedText[] = []
   sendError: Error | undefined
@@ -36,11 +46,12 @@ class FakeMessenger implements Messenger {
     message: FormattedText,
     options: readonly string[],
     allowText: boolean,
+    attachment: Attachment | undefined,
   ): Promise<MessageReference> {
     if (this.sendError) {
       throw this.sendError
     }
-    this.sent.push({ id, text: message.text, options, allowText })
+    this.sent.push({ id, text: message.text, options, allowText, attachment })
     return this.ref
   }
 
@@ -871,4 +882,53 @@ test('start send failure throws SendError and leaves nothing pending', async () 
   expect(svc.listPending()).toEqual([])
   expect(store.added).toEqual([])
   expect(vi.getTimerCount()).toBe(0)
+})
+
+test('the attachment reaches sendRequest', async () => {
+  const { m, svc } = setup()
+  void svc.request({ ...req, attachment: ATTACHMENT })
+  await flush()
+  expect(m.sent[0]?.attachment).toBe(ATTACHMENT)
+})
+
+test('a request without an attachment passes undefined to sendRequest', async () => {
+  const { m, svc } = setup()
+  void svc.request(req)
+  await flush()
+  expect(m.sent[0]?.attachment).toBeUndefined()
+})
+
+test('a pending request does not hold its attachment after the send', async () => {
+  const { svc } = setup()
+  const pending = svc.request({ ...req, attachment: ATTACHMENT })
+  await flush()
+  const [summary] = svc.listPending()
+  expect(summary !== undefined && Object.hasOwn(summary.request, 'attachment')).toBe(false)
+  svc.tap('id1', 0)
+  await pending
+})
+
+test('a background question does not hold its attachment after the send', async () => {
+  const { svc } = setup()
+  await svc.start({ ...req, attachment: ATTACHMENT })
+  const [summary] = svc.listPending()
+  expect(summary !== undefined && Object.hasOwn(summary.request, 'attachment')).toBe(false)
+  svc.tap('id1', 0)
+  await flush()
+})
+
+test('the audit sink gets the request without its attachment', async () => {
+  const { events, audit } = createAudit()
+  const svc = new ApprovalService(
+    new FakeMessenger(),
+    () => at,
+    () => 'id1',
+    { audit },
+  )
+  const pending = svc.request({ ...req, attachment: ATTACHMENT })
+  await flush()
+  const asked = events.find((event) => event[0] === 'asked')
+  expect(asked !== undefined && Object.hasOwn(asked[2] as object, 'attachment')).toBe(false)
+  svc.tap('id1', 0)
+  await pending
 })

@@ -62,6 +62,15 @@ It's single owner: one Telegram user, proven by a pairing code. The service can 
 | `allow_text`      | boolean  | no                  | Let the user type an answer by replying. Default false.                                       |
 | `timeout_option`  | string   | yes                 | Answer returned on timeout. One of `options`, or with `allow_text` any answer up to 64 chars. |
 | `timeout_seconds` | number   | no                  | Default 300, max 86400 (24 h); longer values are capped.                                      |
+| `attachment`      | object   | no                  | A file or text shown as a document above the message; see below.                              |
+
+`attachment` takes exactly one of `path` and `text`, plus an optional `name`. The MCP server reads the file, so relative paths resolve against the directory it started in. Up to 10 MiB, and the service's limit applies; a service that is too old or a provider without attachments gives a tool error. It works the same on `ask_for_permission_in_background` and `notify_user`.
+
+| Param             | Type   | Required       | Notes                                                                                                                           |
+| ----------------- | ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `attachment.path` | string | one of the two | File to attach, read by the MCP server. Absolute, or relative to its cwd.                                                       |
+| `attachment.text` | string | one of the two | Text to attach, such as a diff you already have in context.                                                                     |
+| `attachment.name` | string | no             | File name in Telegram, max 255 chars. Default the path's basename, or `attachment.txt`. Use a real extension (`.diff`, `.log`). |
 
 While a question waits, the server sends MCP progress notifications every 60 seconds. Claude Code aborts a silent stdio tool call after 30 minutes (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`); progress keeps it alive when Claude Code sends a progress token. I haven't verified that it does. If it doesn't, raise the per-server `timeout` in `.mcp.json` or use `ask_for_permission_in_background`.
 
@@ -93,6 +102,7 @@ Closing the agent session (the MCP server's stdin) cancels the background questi
 | `project_name` | string | yes      | Max 100 chars.                                                  |
 | `text`         | string | yes      | The message.                                                    |
 | `format`       | string | no       | `plain` (default) or `markdown`; see [Formatting](#formatting). |
+| `attachment`   | object | no       | Same as on `ask_for_permission`.                                |
 
 Register it with Claude Code:
 
@@ -192,9 +202,10 @@ It fails open. If the service is down or not paired, the hook does nothing and t
 answer=$(telegram-ask send request 'Deploy?' -o Approve -d Decline --timeout 60)
 telegram-ask send notify 'backup finished' --project nas
 telegram-ask send request $'Force-push `main`?' -o Yes -d No --format markdown
+git diff | telegram-ask send request 'Ship it?' -o Yes -d Stop --attach - --attach-name changes.diff
 ```
 
-`send request` prints the answer on stdout (the `-d` default on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button; `-d` adds the default as the last button unless an `-o` already names it. `--allow-text` also lets you answer by replying with text; then `-o` is optional and `-d` can be any short answer, not added as a button. `send notify` prints nothing and exits 0 once sent. `--format markdown` on either one reads the text as [markdown](#formatting). Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. The port is picked the same way as for [`mcp`](#agents-mcp).
+`send request` prints the answer on stdout (the `-d` default on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button; `-d` adds the default as the last button unless an `-o` already names it. `--allow-text` also lets you answer by replying with text; then `-o` is optional and `-d` can be any short answer, not added as a button. `send notify` prints nothing and exits 0 once sent. `--format markdown` on either one reads the text as [markdown](#formatting). Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. `--attach FILE` sends a file along with the message (10 MiB at most; the service's limit applies); `--attach -` reads stdin, named `attachment.txt` unless `--attach-name NAME` says otherwise. `--attach-name` without `--attach` exits 2. The port is picked the same way as for [`mcp`](#agents-mcp).
 
 ### From Node
 
@@ -214,6 +225,17 @@ await client.notify({ text: 'backup finished' })
 ```
 
 `new Client()` takes optional `host` (default `127.0.0.1`), `port` (default 8787), `token` and `project`, which every call sends unless it passes its own. Without `token`, each call looks one up: `TELEGRAM_ASK_TOKEN` if set, else the token file, else none is sent. An invalid `token` throws a `RangeError`. `request` takes the [`/request` fields](#ask-a-question) plus an optional `signal`, and `request` and `notify` take `format: 'markdown'` (see [Formatting](#formatting)). When you put untrusted text into a markdown message, `escapeMarkdown(text)` makes it show as typed and `formatCodeBlock(code, language?)` wraps code in a fence that can't be closed from inside. Both are exported from the package; aborting it cancels the question and rejects with the signal's reason. Failures (service down, a 400, a send error) throw a `TelegramAskError` with the same message the CLI prints. A timeout isn't a failure: it resolves with `timeoutOption` and `timedOut: true`.
+
+`request` and `notify` also take an `attachment`, one file sent along with the message (see the HTTP `attachment` field for limits):
+
+```ts
+type AttachmentInput =
+  | { path: string; name?: string } // read from disk; name defaults to the basename
+  | { name: string; text: string }
+  | { name: string; data: Uint8Array }
+```
+
+The file is read and checked against the service's limit before anything is sent, so a missing file, an oversize file or a provider without attachment support fails with a `TelegramAskError` up front. Attachments need a service at least as new as this client; an older one fails with a message telling you to run `telegram-ask init`.
 
 ### Ask a question
 
@@ -256,10 +278,11 @@ Reply to the question's message in Telegram; if it's the only open text question
 | `timeout`       | number   | no                 | Seconds. Default 300, max 86400 (24 h); longer values are capped. Must be positive.                                     |
 | `project`       | string   | no                 | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900.                                 |
 | `format`        | string   | no                 | `plain` (default) or `markdown`. See [Formatting](#formatting).                                                         |
+| `attachment`    | object   | no                 | One file sent with the question. See [Attachments](#attachments).                                                       |
 
 The cap used to be 300, so a `timeout: 900` was clamped to 300 before and now waits the full 900 s.
 
-Callers on Node's global `fetch` (undici, 300 s headers timeout) should keep `timeout` at 290 or less, raise `headersTimeout` with a custom dispatcher, or use [`POST /request/async`](#background-questions). curl, `node:http` and this package's CLI, `Client` and MCP server aren't affected.
+Callers on Node's global `fetch` (undici, 300 s headers timeout) should keep `timeout` at 290 or less (an attachment eats into that headroom, since its Telegram upload happens before the timer starts), raise `headersTimeout` with a custom dispatcher, or use [`POST /request/async`](#background-questions). curl, `node:http` and this package's CLI, `Client` and MCP server aren't affected.
 
 Errors are JSON `{ "error": "..." }`:
 
@@ -267,7 +290,8 @@ Errors are JSON `{ "error": "..." }`:
 | ------ | -------------------------------------------------------------------------------------------------- |
 | 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram.                            |
 | 401    | Missing or wrong token.                                                                            |
-| 413    | Body over 64 KiB.                                                                                  |
+| 413    | Body over 14 MiB.                                                                                  |
+| 501    | The body has an `attachment` and the provider can't send files (`attachments not supported`).      |
 | 502    | Message couldn't be sent.                                                                          |
 | 500    | Internal error, or the request was cancelled.                                                      |
 | 404    | Path isn't `/request`, `/request/async`, `/request/{id}`, `/notify`, `/status` or `/openapi.yaml`. |
@@ -311,24 +335,25 @@ It returns `200 { "ok": true }` as soon as Telegram accepts the message. The mes
 
 `POST /notify` body:
 
-| Field     | Type   | Required | Notes                                                                                                |
-| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------- |
-| `text`    | string | yes      | Shown in Telegram. Non-empty, max 3900 chars (with `markdown`, counted after the markup is removed). |
-| `project` | string | no       | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900.              |
-| `format`  | string | no       | `plain` (default) or `markdown`. See [Formatting](#formatting).                                      |
+| Field        | Type   | Required | Notes                                                                                                |
+| ------------ | ------ | -------- | ---------------------------------------------------------------------------------------------------- |
+| `text`       | string | yes      | Shown in Telegram. Non-empty, max 3900 chars (with `markdown`, counted after the markup is removed). |
+| `project`    | string | no       | Shown as `[project]` on the first line. Trimmed, max 100 chars. Counts toward the 3900.              |
+| `format`     | string | no       | `plain` (default) or `markdown`. See [Formatting](#formatting).                                      |
+| `attachment` | object | no       | One file sent with the message. See [Attachments](#attachments).                                     |
 
 Errors are JSON `{ "error": "..." }`:
 
-| Status | Meaning                                                                 |
-| ------ | ----------------------------------------------------------------------- |
-| 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram. |
-| 401    | Missing or wrong token.                                                 |
-| 413    | Body over 64 KiB.                                                       |
-| 501    | Notifications aren't supported.                                         |
-| 502    | Message couldn't be sent.                                               |
-| 503    | Not paired yet.                                                         |
-| 405    | Method isn't POST.                                                      |
-| 500    | Internal error.                                                         |
+| Status | Meaning                                                                                            |
+| ------ | -------------------------------------------------------------------------------------------------- |
+| 400    | Body isn't valid JSON or fails validation. Nothing is sent to Telegram.                            |
+| 401    | Missing or wrong token.                                                                            |
+| 413    | Body over 14 MiB.                                                                                  |
+| 501    | Notifications aren't supported, or the body has an `attachment` and the provider can't send files. |
+| 502    | Message couldn't be sent.                                                                          |
+| 503    | Not paired yet.                                                                                    |
+| 405    | Method isn't POST.                                                                                 |
+| 500    | Internal error.                                                                                    |
 
 ### Formatting
 
@@ -364,9 +389,41 @@ If Telegram refuses the formatting, the service sends the message again as plain
 
 `format` needs a service at least as new as this release; an older one shows the markdown as typed. Re-run `init` to upgrade.
 
+### Attachments
+
+`POST /request`, `POST /request/async` and `POST /notify` take an optional `attachment`, one file shown as a document above the message. It stays after the question is answered and is deleted with the notification.
+
+On Telegram the file arrives as a document right above the message, always without a notification sound (quiet hours or not); the message replies to it. Tapping Dismiss on a notification deletes the document too.
+
+| Field             | Type   | Required       | Notes                                                                                                                                                        |
+| ----------------- | ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `attachment.name` | string | yes            | File name shown in Telegram; its extension decides how Telegram opens it. Max 255 chars, no `/` or `\`, no control characters, not `.` or `..`. Not trimmed. |
+| `attachment.text` | string | one of the two | File contents as UTF-8 text.                                                                                                                                 |
+| `attachment.data` | string | one of the two | File contents as base64 (standard alphabet, padding optional, whitespace ignored).                                                                           |
+
+Send exactly one of `text` and `data`. The content must be at least 1 byte and at most `maxAttachmentBytes` from [`GET /status`](#status) (10 MiB for Telegram); over it is a `400 attachment must be at most N bytes`. A bad `attachment` is a `400` with an `attachment...` message, and `null` counts as bad. A provider without file support answers `501 attachments not supported` for any body with an `attachment` key.
+
+```
+curl -s -X POST http://127.0.0.1:8787/request \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer $(cat ~/.config/telegram-ask/token)" \
+  -d '{"text":"Push this diff?","options":["Push","Stop"],"timeoutOption":"Stop",
+       "attachment":{"name":"changes.diff","text":"diff --git a/x b/x\n..."}}'
+
+jq -n --arg data "$(base64 -w0 screen.png)" \
+  '{text:"Login page is blank, see screenshot",attachment:{name:"screen.png",data:$data}}' |
+  curl -s -X POST http://127.0.0.1:8787/notify \
+    -H 'content-type: application/json' \
+    -H "authorization: Bearer $(cat ~/.config/telegram-ask/token)" -d @-
+```
+
+The body limit is 14 MiB, which fits the base64 of a 10 MiB file. Send big files as `data`: a `text` attachment near 10 MiB with many quotes or control characters grows when JSON-escaped and can hit the `413`.
+
+Attachments need a service at least as new as this release; an older one ignores the field. Clients check `maxAttachmentBytes` first and say so if it's missing.
+
 ### Status
 
-`GET /status` needs the token too. It returns `provider` and `displayName` along with `paired` and `bot`, plus `code` and `instructions` while unpaired. `telegram-ask status` is the friendlier way to read it.
+`GET /status` needs the token too. It returns `provider` and `displayName` along with `paired` and `bot`, plus `code` and `instructions` while unpaired. `maxAttachmentBytes` is the largest attachment the provider takes, `0` when it can't send files; a service from before attachments leaves it out. `telegram-ask status` is the friendlier way to read it.
 
 ### OpenAPI spec
 
@@ -561,8 +618,8 @@ telegram-ask start
 telegram-ask mcp [--port N]
 telegram-ask hook [--port N] [--project NAME] [--timeout S]
 telegram-ask openapi [FILE] [--port N]
-telegram-ask send request TEXT [-o OPTION...] [--allow-text] -d DEFAULT [--timeout S] [--project NAME] [--format plain|markdown] [--json] [--port N]
-telegram-ask send notify TEXT [--project NAME] [--format plain|markdown] [--port N]
+telegram-ask send request TEXT [-o OPTION...] [--allow-text] -d DEFAULT [--timeout S] [--project NAME] [--format plain|markdown] [--attach FILE|-] [--attach-name NAME] [--json] [--port N]
+telegram-ask send notify TEXT [--project NAME] [--format plain|markdown] [--attach FILE|-] [--attach-name NAME] [--port N]
 ```
 
 - `init`: installs or replaces the service. See [Install options](#install-options).

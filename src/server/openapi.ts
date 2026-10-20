@@ -2,6 +2,7 @@ import { stringify } from 'yaml'
 import { z } from 'zod'
 import {
   createApprovalRequestSchema,
+  createAttachmentSchema,
   DEFAULT_TIMEOUT_SECONDS,
   MAX_OPTION_LENGTH,
   MAX_TIMEOUT_SECONDS,
@@ -14,6 +15,11 @@ import { statusInfoSchema } from './schema.ts'
 import type { OpenApiOptions } from './types.ts'
 
 type JsonSchema = z.core.JSONSchema.BaseSchema
+
+// A fresh object per use, so the yaml writer doesn't emit anchors and aliases.
+function attachmentReference(): { $ref: string } {
+  return { $ref: '#/components/schemas/Attachment' }
+}
 
 function toTextDescription(maxTextLength: number): string {
   return `Message shown in the chat. Must not be blank, at most ${maxTextLength} characters; with \`format: markdown\` the markup is removed before counting. With \`project\`, the limit covers the \`[project]\` line too, so the text gets \`project.length + 4\` fewer characters.`
@@ -38,6 +44,39 @@ const BODY_DESCRIPTIONS: Readonly<Record<string, JsonSchema>> = {
   },
 }
 
+const ATTACHMENT_DESCRIPTIONS: Readonly<Record<string, JsonSchema>> = {
+  name: {
+    description:
+      'File name shown in Telegram. Its extension decides how Telegram opens it. Not trimmed; no `/`, `\\` or control characters, not `.` or `..`.',
+  },
+  text: { description: 'File contents as UTF-8 text. Exactly one of `text` and `data`.' },
+  data: {
+    description:
+      'File contents as base64 (standard alphabet, padding optional, line breaks allowed). Exactly one of `text` and `data`.',
+  },
+}
+
+function toAttachmentSchema(maxAttachmentBytes: number): JsonSchema {
+  const { $schema: _schema, ...json } = z.toJSONSchema(createAttachmentSchema(maxAttachmentBytes), {
+    io: 'input',
+  })
+  const limit =
+    maxAttachmentBytes === 0
+      ? 'Attachments are not supported by this provider (501).'
+      : `Decoded size 1 to ${maxAttachmentBytes} bytes. Send big files as data; heavy JSON escaping in text can push the body over the size limit.`
+  const properties = Object.fromEntries(
+    Object.entries(json.properties ?? {}).map(([name, property]) => [
+      name,
+      typeof property === 'object' ? { ...property, ...ATTACHMENT_DESCRIPTIONS[name] } : property,
+    ]),
+  )
+  return {
+    ...json,
+    description: `An optional file sent to the chat as a document with the message. Exactly one of \`text\` (UTF-8) or \`data\` (standard base64, line breaks allowed). ${limit}`,
+    properties,
+  }
+}
+
 function errorResponse(description: string) {
   return {
     description,
@@ -58,12 +97,12 @@ function toBodySchema(schema: z.ZodType, maxTextLength: number): JsonSchema {
       typeof property === 'object' ? { ...property, ...extras[name] } : property,
     ]),
   )
-  return { ...json, properties }
+  return { ...json, properties: { ...properties, attachment: attachmentReference() } }
 }
 
 /** OpenAPI 3.1 document of the HTTP API, for a service on `port` with the given text limit. */
 export function createOpenApiDocument(options: OpenApiOptions) {
-  const { port, maxTextLength } = options
+  const { port, maxTextLength, maxAttachmentBytes } = options
   const { $schema: _schema, ...status } = z.toJSONSchema(statusInfoSchema)
   return {
     openapi: '3.1.0',
@@ -101,6 +140,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
             '413': { $ref: '#/components/responses/PayloadTooLarge' },
             '500': errorResponse('Internal error, or the request was cancelled.'),
             '502': { $ref: '#/components/responses/SendFailed' },
+            '501': { $ref: '#/components/responses/NotSupported' },
             '503': { $ref: '#/components/responses/NotPaired' },
           },
         },
@@ -134,6 +174,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
             '401': { $ref: '#/components/responses/Unauthorized' },
             '413': { $ref: '#/components/responses/PayloadTooLarge' },
             '502': { $ref: '#/components/responses/SendFailed' },
+            '501': { $ref: '#/components/responses/NotSupported' },
             '503': { $ref: '#/components/responses/NotPaired' },
           },
         },
@@ -213,6 +254,7 @@ export function createOpenApiDocument(options: OpenApiOptions) {
             '401': { $ref: '#/components/responses/Unauthorized' },
             '413': { $ref: '#/components/responses/PayloadTooLarge' },
             '502': { $ref: '#/components/responses/SendFailed' },
+            '501': { $ref: '#/components/responses/NotSupported' },
             '503': { $ref: '#/components/responses/NotPaired' },
           },
         },
@@ -256,7 +298,11 @@ export function createOpenApiDocument(options: OpenApiOptions) {
         },
       },
       schemas: {
-        ApprovalRequest: toBodySchema(createApprovalRequestSchema(maxTextLength), maxTextLength),
+        ApprovalRequest: toBodySchema(
+          createApprovalRequestSchema(maxTextLength, maxAttachmentBytes),
+          maxTextLength,
+        ),
+        Attachment: toAttachmentSchema(maxAttachmentBytes),
         Outcome: {
           type: 'object',
           properties: {
@@ -301,7 +347,10 @@ export function createOpenApiDocument(options: OpenApiOptions) {
             },
           ],
         },
-        NotifyRequest: toBodySchema(createNotifyRequestSchema(maxTextLength), maxTextLength),
+        NotifyRequest: toBodySchema(
+          createNotifyRequestSchema(maxTextLength, maxAttachmentBytes),
+          maxTextLength,
+        ),
         Status: status,
         Error: {
           type: 'object',
@@ -327,6 +376,9 @@ export function createOpenApiDocument(options: OpenApiOptions) {
           'Body is not valid JSON or fails validation; `error` is the first problem found. Nothing is sent.',
         ),
         PayloadTooLarge: errorResponse(`Body over ${MAX_BODY_BYTES} bytes.`),
+        NotSupported: errorResponse(
+          'Notifications or attachments are not supported by this provider.',
+        ),
         SendFailed: errorResponse("The message couldn't be sent."),
         NotPaired: errorResponse('No owner is paired yet.'),
       },

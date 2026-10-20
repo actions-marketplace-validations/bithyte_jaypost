@@ -1,5 +1,5 @@
 import type { Provider, SettingValue } from '../provider/index.ts'
-import { TELEGRAM_MAX_TEXT_LENGTH } from './constants.ts'
+import { TELEGRAM_MAX_ATTACHMENT_BYTES, TELEGRAM_MAX_TEXT_LENGTH } from './constants.ts'
 import { createTelegramRuntime } from './runtime.ts'
 import { validateToken } from './setup.ts'
 
@@ -25,6 +25,7 @@ export const telegramProvider: Provider = {
   name: 'telegram',
   label: 'Telegram',
   maxTextLength: TELEGRAM_MAX_TEXT_LENGTH,
+  maxAttachmentBytes: TELEGRAM_MAX_ATTACHMENT_BYTES,
   settings: [
     {
       configKey: 'botToken',

@@ -1,10 +1,12 @@
-import type { MessageReference } from '../approval/index.ts'
+import type { Attachment, MessageReference } from '../approval/index.ts'
 import type { FormattedText } from '../format/index.ts'
 import type { NotificationRecord } from '../state/index.ts'
 
 /** As produced by `parseNotifyRequest`. */
 export type NotifyRequest = {
   readonly message: FormattedText
+  /** The decoded file to send with the notification; `undefined` when the caller sent none. */
+  readonly attachment: Attachment | undefined
 }
 
 /** Outcome of validating a /notify body; `error` is the client-facing message. */
@@ -27,6 +29,8 @@ export type Notifier = {
     id: string,
     message: FormattedText,
     options: SendNotificationOptions,
+    /** The file to send with the notification; `undefined` when there is none. */
+    attachment: Attachment | undefined,
   ) => Promise<MessageReference>
   readonly deleteMessage?: (reference: MessageReference) => Promise<void>
 }

@@ -4,7 +4,11 @@ import { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
 import {
+  ATTACHMENT_GRACE_MS,
+  ATTACHMENT_NOT_SUPPORTED_MESSAGE,
+  ATTACHMENT_TOO_OLD_MESSAGE,
   BACKGROUND_TOO_OLD_MESSAGE,
+  FETCH_GRACE_MS,
   TIMEOUT_TOO_OLD_MESSAGE,
   TOKEN_REJECTED_MESSAGE,
   TOKEN_REQUIRED_MESSAGE,
@@ -13,6 +17,7 @@ import {
   postApi,
   requestApi,
   toFetchTimeoutMs,
+  toSendTimeoutMs,
 } from '../../src/client/index.ts'
 
 const servers: Server[] = []
@@ -100,6 +105,14 @@ test.each([
     'telegram-ask service is too old for notifications (run telegram-ask init to upgrade)',
   ],
   [501, '/notify', '{"error":"x"}', 'notifications not supported by this provider'],
+  [501, '/request', '{"error":"attachments not supported"}', ATTACHMENT_NOT_SUPPORTED_MESSAGE],
+  [501, '/notify', '{"error":"attachments not supported"}', ATTACHMENT_NOT_SUPPORTED_MESSAGE],
+  [
+    501,
+    '/request/async',
+    '{"error":"notifications not supported"}',
+    'notifications not supported by this provider',
+  ],
   [503, '/request', '{"error":"x"}', "telegram-ask isn't paired yet (run telegram-ask status)"],
   [502, '/request', '{"error":"x"}', "couldn't send the message to the user"],
   [
@@ -137,7 +150,12 @@ test('a fractional timeout reads as unreachable instead of throwing', async () =
   expect(
     await requestApi(
       port,
-      { text: 'Deploy?', options: ['Approve'], timeoutOption: 'Approve', timeout: 1.0005 },
+      {
+        text: 'Deploy?',
+        options: ['Approve'],
+        timeoutOption: 'Approve',
+        timeout: 1.0005,
+      },
       { signal: new AbortController().signal },
     ),
   ).toEqual({ kind: 'failed', message: unreachable(port) })
@@ -195,6 +213,13 @@ test('timeout is capped at 24 h', () => {
   expect(toFetchTimeoutMs(10)).toBe(40_000)
 })
 
+test('an attachment adds its grace to the timeouts', () => {
+  expect(toFetchTimeoutMs(30, true)).toBe(30_000 + FETCH_GRACE_MS + ATTACHMENT_GRACE_MS)
+  expect(toFetchTimeoutMs(30, false)).toBe(30_000 + FETCH_GRACE_MS)
+  expect(toSendTimeoutMs(false)).toBe(FETCH_GRACE_MS)
+  expect(toSendTimeoutMs(true)).toBe(FETCH_GRACE_MS + ATTACHMENT_GRACE_MS)
+})
+
 test('the token is sent as a bearer header only when given', async () => {
   const seen: (string | undefined)[] = []
   const port = await startStub((request, response) => {
@@ -222,7 +247,11 @@ const PENDING = '{"id":"x","state":"pending","expiresAt":"2026-10-20T06:00:00.00
 test.each(['GET', 'DELETE'] as const)('%s sends no body and 202 is ok', async (method) => {
   let seen: { method?: string; url?: string; length?: string } = {}
   const port = await startStub((request, response) => {
-    seen = { method: request.method, url: request.url, length: request.headers['content-length'] }
+    seen = {
+      method: request.method,
+      url: request.url,
+      length: request.headers['content-length'],
+    }
     response.statusCode = 202
     response.end(PENDING)
   })
@@ -230,7 +259,11 @@ test.each(['GET', 'DELETE'] as const)('%s sends no body and 202 is ok', async (m
     kind: 'ok',
     body: JSON.parse(PENDING),
   })
-  expect(seen).toEqual({ method, url: '/request/x?wait=5', length: undefined })
+  expect(seen).toEqual({
+    method,
+    url: '/request/x?wait=5',
+    length: undefined,
+  })
 })
 
 test('404 on /request/async means the service is too old', async () => {
@@ -257,7 +290,11 @@ test('sockets use tcp keepalive', async () => {
   expect(spy).toHaveBeenCalledWith(true, 60_000)
 })
 
-const ASK = { text: 'ok?', options: ['Approve', 'Decline'], timeoutOption: 'Decline' }
+const ASK = {
+  text: 'ok?',
+  options: ['Approve', 'Decline'],
+  timeoutOption: 'Decline',
+}
 
 function clock(values: readonly number[]): () => number {
   let index = 0
@@ -278,7 +315,10 @@ async function ask(
 }
 
 const TIMED_OUT = '{"answer":"Decline","timedOut":true}'
-const TIMED_OUT_OUTCOME = { kind: 'ok', outcome: { answer: 'Decline', timedOut: true } }
+const TIMED_OUT_OUTCOME = {
+  kind: 'ok',
+  outcome: { answer: 'Decline', timedOut: true },
+}
 
 test('an early timeout on a request over 300 s means the service is too old', async () => {
   expect(await ask(900, TIMED_OUT, [0, 300_000])).toEqual({
@@ -331,4 +371,11 @@ test('the too-old messages use the spec wording', () => {
   expect(BACKGROUND_TOO_OLD_MESSAGE).toBe(
     'telegram-ask service is too old for background questions (run telegram-ask init to upgrade)',
   )
+})
+
+test('the attachment messages use the spec wording', () => {
+  expect(ATTACHMENT_TOO_OLD_MESSAGE).toBe(
+    'telegram-ask service is too old for attachments (run telegram-ask init to upgrade)',
+  )
+  expect(ATTACHMENT_NOT_SUPPORTED_MESSAGE).toBe('attachments not supported by this provider')
 })

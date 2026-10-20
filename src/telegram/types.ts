@@ -58,6 +58,8 @@ export type TelegramMessageReference = {
   readonly messageId: number
   /** Absent in references saved before text replies (and on notifications); absent means true. */
   readonly hasButtons?: boolean
+  /** The document sent above the message; absent without an attachment and in references saved before attachments. */
+  readonly documentMessageId?: number
 }
 
 /** A request awaiting an answer, keyed by `formatMessageKey` in `OpenQuestions`. */

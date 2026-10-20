@@ -1,3 +1,4 @@
+import { MAX_ATTACHMENT_BYTES } from '../approval/index.ts'
 import type { Provider, ProviderSetting, SettingValue, SettingValues } from './types.ts'
 
 export function findProvider(providers: readonly Provider[], name: string): Provider | undefined {
@@ -45,4 +46,9 @@ export function listSecretValues(provider: Provider, settings: SettingValues): r
       const value = settings[setting.configKey]
       return value === undefined ? [] : [String(value)]
     })
+}
+
+/** The attachment size limit to enforce for `provider`: its own, capped at `MAX_ATTACHMENT_BYTES`. */
+export function resolveMaxAttachmentBytes(provider: Provider): number {
+  return Math.min(provider.maxAttachmentBytes ?? 0, MAX_ATTACHMENT_BYTES)
 }

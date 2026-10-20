@@ -1,7 +1,7 @@
 import { appendText, prependText } from '../format/index.ts'
 import type { FormattedText } from '../format/index.ts'
 import { MAX_REPLY_ANSWER_LENGTH, SUMMARY_MAX_LENGTH } from './constants.ts'
-import type { ApprovalRequest, HistoryEntry, MessageEnding, PendingSummary } from './types.ts'
+import type { HistoryEntry, MessageEnding, PendingSummary, SentRequest } from './types.ts'
 
 function formatTime(at: Date): string {
   const hours = String(at.getHours()).padStart(2, '0')
@@ -61,7 +61,7 @@ function truncate(text: string, maxLength: number): string {
   return `${text.slice(0, keep)}…`
 }
 
-function formatOptionsPart(request: ApprovalRequest): string {
+function formatOptionsPart(request: SentRequest): string {
   if (request.options.length === 0) {
     return 'Typed reply'
   }

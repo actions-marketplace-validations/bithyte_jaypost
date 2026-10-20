@@ -55,6 +55,7 @@ const pendingOf = (
     options,
     timeoutOption,
     timeoutSeconds,
+    attachment: undefined,
   },
   openedAt: OPENED_AT,
 })

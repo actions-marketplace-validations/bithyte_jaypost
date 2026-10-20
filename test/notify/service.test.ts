@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
 import { SendError } from '../../src/approval/index.ts'
 import type { FormattedText } from '../../src/format/index.ts'
-import type { MessageReference } from '../../src/approval/index.ts'
+import type { Attachment, MessageReference } from '../../src/approval/index.ts'
 import { NOTIFICATION_TTL_MS, NotificationService } from '../../src/notify/index.ts'
 import type {
   Notifier,
@@ -16,6 +16,7 @@ const REFERENCE: MessageReference = { chatId: 1, messageId: 9 }
 
 class FakeNotifier implements Notifier {
   sent: { id: string; text: string }[] = []
+  attachments: (Attachment | undefined)[] = []
   silent: boolean[] = []
   deleted: MessageReference[] = []
   sendError: Error | undefined
@@ -26,11 +27,13 @@ class FakeNotifier implements Notifier {
     id: string,
     message: FormattedText,
     options: SendNotificationOptions,
+    attachment: Attachment | undefined,
   ): Promise<MessageReference> {
     if (this.sendError) {
       throw this.sendError
     }
     this.sent.push({ id, text: message.text })
+    this.attachments.push(attachment)
     this.silent.push(options.silent)
     const messageId = this.#nextMessageId
     this.#nextMessageId += 1
@@ -92,7 +95,7 @@ afterEach(() => {
 test('notify sends and starts the expiry', async () => {
   const m = new FakeNotifier()
   const { svc } = setup(m)
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(m.sent).toEqual([{ id: 'id1', text: 'hi' }])
   expect(svc.size).toBe(1)
   expect(m.deleted).toEqual([])
@@ -101,7 +104,7 @@ test('notify sends and starts the expiry', async () => {
 test('deletes at exactly 8 hours', async () => {
   const m = new FakeNotifier()
   const { svc } = setup(m)
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   await vi.advanceTimersByTimeAsync(NOTIFICATION_TTL_MS - 1)
   expect(m.deleted).toEqual([])
   await vi.advanceTimersByTimeAsync(1)
@@ -112,7 +115,7 @@ test('deletes at exactly 8 hours', async () => {
 test('dismiss clears the expiry', async () => {
   const m = new FakeNotifier()
   const { svc } = setup(m)
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(svc.dismiss('id1')).toBe(true)
   await vi.advanceTimersByTimeAsync(NOTIFICATION_TTL_MS)
   expect(m.deleted).toEqual([])
@@ -122,8 +125,8 @@ test('dismiss clears the expiry', async () => {
 test('dismissing one notification leaves the others', async () => {
   const m = new FakeNotifier()
   const { svc } = setup(m)
-  await svc.notify({ message: { text: 'a', spans: [] } })
-  await svc.notify({ message: { text: 'b', spans: [] } })
+  await svc.notify({ message: { text: 'a', spans: [] }, attachment: undefined })
+  await svc.notify({ message: { text: 'b', spans: [] }, attachment: undefined })
   svc.dismiss('id1')
   await vi.advanceTimersByTimeAsync(NOTIFICATION_TTL_MS)
   expect(m.deleted).toEqual([{ chatId: 1, messageId: 2 }])
@@ -132,7 +135,7 @@ test('dismissing one notification leaves the others', async () => {
 test('dismiss for an unknown or expired id returns false', async () => {
   const { svc } = setup()
   expect(svc.dismiss('nope')).toBe(false)
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   await vi.advanceTimersByTimeAsync(NOTIFICATION_TTL_MS)
   expect(svc.dismiss('id1')).toBe(false)
 })
@@ -141,7 +144,7 @@ test('expiry delete failure is logged and not thrown', async () => {
   const m = new FakeNotifier()
   const { svc, log } = setup(m)
   m.deleteError = new Error('message to delete not found')
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   await vi.advanceTimersByTimeAsync(NOTIFICATION_TTL_MS)
   expect(log).toHaveBeenCalledTimes(1)
   expect(log).toHaveBeenCalledWith('failed to delete notification: message to delete not found')
@@ -153,7 +156,9 @@ test('send failure throws SendError with cause and starts no timer', async () =>
   const { svc } = setup(m)
   const boom = new Error('boom')
   m.sendError = boom
-  const error = await svc.notify({ message: { text: 'hi', spans: [] } }).catch((e: unknown) => e)
+  const error = await svc
+    .notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
+    .catch((e: unknown) => e)
   expect(error).toBeInstanceOf(SendError)
   expect((error as SendError).cause).toBe(boom)
   expect(svc.size).toBe(0)
@@ -162,8 +167,13 @@ test('send failure throws SendError with cause and starts no timer', async () =>
 test('without deleteMessage no timer is started', async () => {
   const sendNotification = vi.fn(async () => ({ chatId: 1, messageId: 1 }))
   const { svc } = setup({ sendNotification })
-  await svc.notify({ message: { text: 'hi', spans: [] } })
-  expect(sendNotification).toHaveBeenCalledWith('id1', { text: 'hi', spans: [] }, { silent: false })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
+  expect(sendNotification).toHaveBeenCalledWith(
+    'id1',
+    { text: 'hi', spans: [] },
+    { silent: false },
+    undefined,
+  )
   expect(svc.size).toBe(0)
 })
 
@@ -176,7 +186,7 @@ function setupWithStore() {
 
 test('records the notification with its absolute expiry', async () => {
   const { store, svc } = setupWithStore()
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(store.added).toEqual([
     { id: 'id1', reference: { chatId: 1, messageId: 1 }, expiresAtMs: NOW + NOTIFICATION_TTL_MS },
   ])
@@ -184,7 +194,7 @@ test('records the notification with its absolute expiry', async () => {
 
 test('removes the record after the expiry delete', async () => {
   const { store, svc } = setupWithStore()
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   await vi.advanceTimersByTimeAsync(NOTIFICATION_TTL_MS)
   expect(store.removed).toEqual(['id1'])
 })
@@ -192,14 +202,14 @@ test('removes the record after the expiry delete', async () => {
 test('removes the record after a failed expiry delete', async () => {
   const { m, store, svc } = setupWithStore()
   m.deleteError = new Error('gone')
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   await vi.advanceTimersByTimeAsync(NOTIFICATION_TTL_MS)
   expect(store.removed).toEqual(['id1'])
 })
 
 test('removes the record on dismiss', async () => {
   const { store, svc } = setupWithStore()
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   svc.dismiss('id1')
   expect(store.removed).toEqual(['id1'])
 })
@@ -207,7 +217,7 @@ test('removes the record on dismiss', async () => {
 test('records nothing without deleteMessage', async () => {
   const store = createStore()
   const { svc } = setup({ sendNotification: async () => REFERENCE }, { store, now: () => NOW })
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(store.added).toEqual([])
 })
 
@@ -286,7 +296,7 @@ test('restore without deleteMessage only removes the records', async () => {
 
 test('stop clears the timers', async () => {
   const { m, store, svc } = setupWithStore()
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   svc.restore([{ id: 'old', reference: REFERENCE, expiresAtMs: NOW + 60_000 }])
   svc.restore([{ id: 'late', reference: REFERENCE, expiresAtMs: NOW - 1 }])
   svc.stop()
@@ -301,7 +311,7 @@ test('not quiet: sent with a ping and expires after 8h', async () => {
   const m = new FakeNotifier()
   const store = createStore()
   const { svc } = setup(m, { store, now: () => NOW })
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(m.silent).toEqual([false])
   expect(store.added.map((record) => record.expiresAtMs)).toEqual([NOW + NOTIFICATION_TTL_MS])
 })
@@ -310,7 +320,7 @@ test('quiet: sent silently and expires 8h after the quiet period ends', async ()
   const m = new FakeNotifier()
   const store = createStore()
   const { svc } = setup(m, { store, now: () => NOW, quiet: quietUntil(9 * HOUR_MS) })
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(m.silent).toEqual([true])
   expect(store.added.map((record) => record.expiresAtMs)).toEqual([NOW + 17 * HOUR_MS])
   await vi.advanceTimersByTimeAsync(17 * HOUR_MS - 1)
@@ -323,7 +333,7 @@ test('quiet: no expiry when it would pass 47h after the send', async () => {
   const m = new FakeNotifier()
   const store = createStore()
   const { svc } = setup(m, { store, now: () => NOW, quiet: quietUntil(39 * HOUR_MS + 1) })
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(m.silent).toEqual([true])
   expect(store.added).toEqual([])
   expect(svc.size).toBe(0)
@@ -338,7 +348,7 @@ test('quiet: an expiry of exactly 47h is still scheduled', async () => {
     now: () => NOW,
     quiet: quietUntil(39 * HOUR_MS),
   })
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(store.added.map((record) => record.expiresAtMs)).toEqual([NOW + 47 * HOUR_MS])
   expect(svc.size).toBe(1)
 })
@@ -346,6 +356,22 @@ test('quiet: an expiry of exactly 47h is still scheduled', async () => {
 test('quietUntil is read once per notify', async () => {
   const quiet = quietUntil(HOUR_MS)
   const { svc } = setup(new FakeNotifier(), { now: () => NOW, quiet })
-  await svc.notify({ message: { text: 'hi', spans: [] } })
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
   expect(quiet.quietUntil).toHaveBeenCalledTimes(1)
+})
+
+test('the attachment reaches sendNotification', async () => {
+  const m = new FakeNotifier()
+  const { svc } = setup(m)
+  const attachment: Attachment = { name: 'changes.diff', content: new Uint8Array([1, 2, 3]) }
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment })
+  expect(m.attachments).toEqual([attachment])
+  expect(m.attachments[0]).toBe(attachment)
+})
+
+test('a notification without an attachment passes undefined', async () => {
+  const m = new FakeNotifier()
+  const { svc } = setup(m)
+  await svc.notify({ message: { text: 'hi', spans: [] }, attachment: undefined })
+  expect(m.attachments).toEqual([undefined])
 })

@@ -34,6 +34,7 @@ function asked(id: string, at: string, project?: string): string {
     options: ['Approve', 'Decline'],
     timeoutOption: 'Decline',
     timeoutSeconds: 300,
+    attachment: undefined,
   })}\n`
 }
 

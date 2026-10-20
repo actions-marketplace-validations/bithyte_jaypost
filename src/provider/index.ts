@@ -7,6 +7,7 @@ export {
   hasRequiredSecrets,
   listSecretValues,
   requireProvider,
+  resolveMaxAttachmentBytes,
 } from './settings.ts'
 export type {
   CredentialCheck,

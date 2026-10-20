@@ -10,6 +10,8 @@ export const DISMISS_DATA_PATTERN = /^dismiss\/([^:]+)$/
 export const TOKEN_CHECK_TIMEOUT_SECONDS = 10
 /** Longest request text sent to Telegram. */
 export const TELEGRAM_MAX_TEXT_LENGTH = 3900
+/** Largest attachment sent as a Telegram document (10 MiB). */
+export const TELEGRAM_MAX_ATTACHMENT_BYTES = 10_485_760
 /** Hint appended to a text-enabled request that has buttons. */
 export const TEXT_HINT_WITH_BUTTONS = 'Tap a button or reply to this message to type an answer.'
 /** Hint appended to a text-enabled request without buttons. */

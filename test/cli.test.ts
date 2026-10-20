@@ -218,6 +218,7 @@ function bigAuditLog(count: number): string {
       options: ['Approve', 'Decline'],
       timeoutOption: 'Decline',
       timeoutSeconds: 300,
+      attachment: undefined,
     }),
   ).join('\n')
 }
@@ -254,4 +255,14 @@ test('log writes output larger than a pipe buffer whole, as json and as a table'
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test('send --attach-name without --attach exits 2', async () => {
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  expect(
+    await main(['send', 'request', 'Deploy?', '-o', 'Yes', '-d', 'No', '--attach-name', 'a']),
+  ).toBe(2)
+  expect(await main(['send', 'notify', 'done', '--attach-name', 'a'])).toBe(2)
+  const output = stderr.mock.calls.map((call) => String(call[0])).join('')
+  expect(output).toContain("error: option '--attach-name <name>' needs '--attach <file>'")
 })

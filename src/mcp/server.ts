@@ -7,6 +7,7 @@ import type {
   ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
+import type { ClientToken } from '../auth/index.ts'
 import { MESSAGE_FORMATS } from '../format/index.ts'
 import {
   DEFAULT_TIMEOUT_SECONDS,
@@ -17,13 +18,22 @@ import {
 } from '../approval/index.ts'
 import {
   callApi,
+  DEFAULT_ATTACHMENT_NAME,
   describeUnknownRequest,
   FETCH_GRACE_MS,
   isStateBody,
   postApi,
+  prepareAttachment,
   requestApi,
+  toSendTimeoutMs,
 } from '../client/index.ts'
-import type { ApiOptions, AskBody, StateBody } from '../client/index.ts'
+import type {
+  ApiOptions,
+  AskBody,
+  AttachmentBody,
+  AttachmentSource,
+  StateBody,
+} from '../client/index.ts'
 import { VERSION } from '../config/constants.ts'
 import {
   CANCELLED_QUESTION_TEXT,
@@ -32,7 +42,16 @@ import {
   STILL_WAITING_TEXT,
 } from './constants.ts'
 import { OpenQuestions } from './questions.ts'
-import type { AskArguments, McpServerOptions, PollResult, ServiceAddress } from './types.ts'
+import type {
+  AskArguments,
+  AttachmentArgument,
+  McpServerOptions,
+  PollResult,
+  ServiceAddress,
+} from './types.ts'
+
+const ATTACH_SENTENCE =
+  'Optionally attach a file (path) or long text (over 3900 characters, such as a diff or log) to show the user as a document above the message.'
 
 const ASK_DESCRIPTION = [
   'Ask the user a question on their phone and wait for their answer.',
@@ -42,6 +61,7 @@ const ASK_DESCRIPTION = [
   'on timeout it returns timeout_option, so make that the safe choice.',
   `Default wait ${DEFAULT_TIMEOUT_SECONDS} s, max ${MAX_TIMEOUT_SECONDS} s (24 h).`,
   'For commands and diffs, set format to "markdown" and put them in a fenced code block.',
+  ATTACH_SENTENCE,
 ].join(' ')
 
 const ASK_IN_BACKGROUND_DESCRIPTION = [
@@ -53,6 +73,7 @@ const ASK_IN_BACKGROUND_DESCRIPTION = [
   `Default timeout ${DEFAULT_TIMEOUT_SECONDS} s, max ${MAX_TIMEOUT_SECONDS} s (24 h).`,
   'Questions still open when this session ends are cancelled.',
   'For commands and diffs, set format to "markdown" and put them in a fenced code block.',
+  ATTACH_SENTENCE,
 ].join(' ')
 
 const WAIT_DESCRIPTION = [
@@ -66,6 +87,7 @@ const NOTIFY_DESCRIPTION = [
   "Tell the user something they don't need to answer, for example that a task finished",
   "or that you're stuck and need help. Returns once sent; doesn't wait for the user.",
   'For commands and diffs, set format to "markdown" and put them in a fenced code block.',
+  ATTACH_SENTENCE,
 ].join(' ')
 
 const projectNameSchema = z
@@ -83,6 +105,34 @@ const FORMAT_DESCRIPTION =
   'markdown shows **bold**, *italic*, `inline code` and fenced ``` blocks; put commands and diffs in a fenced block (```diff, ```sh) so the user sees them exactly'
 
 const formatSchema = z.enum(MESSAGE_FORMATS).optional().describe(FORMAT_DESCRIPTION)
+
+const attachmentSchema = z
+  .union([
+    z.strictObject({
+      path: z
+        .string()
+        .min(1)
+        .describe('File to attach, read by the MCP server. Absolute, or relative to its cwd'),
+      name: attachmentNameSchema(),
+    }),
+    z.strictObject({
+      text: z.string().min(1).describe('Text to attach, e.g. a diff you already have in context'),
+      name: attachmentNameSchema(),
+    }),
+  ])
+  .optional()
+  .describe('One file or text shown as a document above the message; give path or text, not both')
+
+function attachmentNameSchema() {
+  return z
+    .string()
+    .min(1)
+    .max(255)
+    .optional()
+    .describe(
+      `File name shown in Telegram; use a real extension (.diff, .log) since Telegram uses it. Default the path's basename, or ${DEFAULT_ATTACHMENT_NAME}`,
+    )
+}
 
 const askInputSchema = {
   project_name: projectNameSchema,
@@ -108,6 +158,7 @@ const askInputSchema = {
     .describe(
       `Seconds to wait for an answer; default ${DEFAULT_TIMEOUT_SECONDS}, max ${MAX_TIMEOUT_SECONDS} (24 h); longer values are capped`,
     ),
+  attachment: attachmentSchema,
 }
 
 /**
@@ -135,13 +186,18 @@ export function createMcpServer(
       if (token.kind === 'unusable') {
         return toErrorResult(token.message)
       }
+      const callSignal = AbortSignal.any([extra.signal, signal])
+      const attachment = await prepare(address.port, args.attachment, token, callSignal)
+      if (attachment.kind === 'failed') {
+        return toErrorResult(attachment.message)
+      }
       const stopProgress = startProgress(
         extra,
         Math.min(args.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS),
         progressIntervalMs,
       )
-      const result = await requestApi(address.port, toAskBody(args), {
-        signal: AbortSignal.any([extra.signal, signal]),
+      const result = await requestApi(address.port, toAskBody(args, attachment.body), {
+        signal: callSignal,
         ...(token.kind === 'token' ? { token: token.token } : {}),
       }).finally(stopProgress)
       if (result.kind === 'failed') {
@@ -166,11 +222,22 @@ export function createMcpServer(
       if (token.kind === 'unusable') {
         return toErrorResult(token.message)
       }
-      const result = await callApi(address.port, 'POST', '/request/async', toAskBody(args), {
-        signal: AbortSignal.any([extra.signal, signal]),
-        timeoutMs: FETCH_GRACE_MS,
-        ...(token.kind === 'token' ? { token: token.token } : {}),
-      })
+      const callSignal = AbortSignal.any([extra.signal, signal])
+      const attachment = await prepare(address.port, args.attachment, token, callSignal)
+      if (attachment.kind === 'failed') {
+        return toErrorResult(attachment.message)
+      }
+      const result = await callApi(
+        address.port,
+        'POST',
+        '/request/async',
+        toAskBody(args, attachment.body),
+        {
+          signal: callSignal,
+          timeoutMs: toSendTimeoutMs(args.attachment !== undefined),
+          ...(token.kind === 'token' ? { token: token.token } : {}),
+        },
+      )
       if (result.kind === 'failed') {
         return toErrorResult(result.message)
       }
@@ -249,12 +316,22 @@ export function createMcpServer(
     'notify_user',
     {
       description: NOTIFY_DESCRIPTION,
-      inputSchema: { project_name: projectNameSchema, text: textSchema, format: formatSchema },
+      inputSchema: {
+        project_name: projectNameSchema,
+        text: textSchema,
+        format: formatSchema,
+        attachment: attachmentSchema,
+      },
     },
     async (args, extra): Promise<CallToolResult> => {
       const token = address.readToken()
       if (token.kind === 'unusable') {
         return toErrorResult(token.message)
+      }
+      const callSignal = AbortSignal.any([extra.signal, signal])
+      const attachment = await prepare(address.port, args.attachment, token, callSignal)
+      if (attachment.kind === 'failed') {
+        return toErrorResult(attachment.message)
       }
       const result = await postApi(
         address.port,
@@ -263,10 +340,11 @@ export function createMcpServer(
           project: args.project_name,
           text: args.text,
           ...(args.format === undefined ? {} : { format: args.format }),
+          ...(attachment.body === undefined ? {} : { attachment: attachment.body }),
         },
         {
-          signal: AbortSignal.any([extra.signal, signal]),
-          timeoutMs: FETCH_GRACE_MS,
+          signal: callSignal,
+          timeoutMs: toSendTimeoutMs(args.attachment !== undefined),
           ...(token.kind === 'token' ? { token: token.token } : {}),
         },
       )
@@ -383,7 +461,39 @@ function toWaitResult(state: StateBody): CallToolResult {
   }
 }
 
-function toAskBody(args: AskArguments): AskBody {
+type Prepared =
+  | { readonly kind: 'ready'; readonly body: AttachmentBody | undefined }
+  | { readonly kind: 'failed'; readonly message: string }
+
+async function prepare(
+  port: number,
+  attachment: AttachmentArgument | undefined,
+  token: ClientToken,
+  signal: AbortSignal,
+): Promise<Prepared> {
+  if (attachment === undefined) {
+    return { kind: 'ready', body: undefined }
+  }
+  const result = await prepareAttachment(port, toAttachmentSource(attachment), {
+    signal,
+    ...(token.kind === 'token' ? { token: token.token } : {}),
+  })
+  if (result.kind === 'failed') {
+    return result
+  }
+  return { kind: 'ready', body: result.attachment }
+}
+
+function toAttachmentSource(attachment: AttachmentArgument): AttachmentSource {
+  if ('path' in attachment) {
+    return attachment.name === undefined
+      ? { path: attachment.path }
+      : { path: attachment.path, name: attachment.name }
+  }
+  return { name: attachment.name ?? DEFAULT_ATTACHMENT_NAME, text: attachment.text }
+}
+
+function toAskBody(args: AskArguments, attachment: AttachmentBody | undefined): AskBody {
   return {
     project: args.project_name,
     text: args.text,
@@ -392,6 +502,7 @@ function toAskBody(args: AskArguments): AskBody {
     ...(args.allow_text === undefined ? {} : { allowText: args.allow_text }),
     timeoutOption: args.timeout_option,
     ...(args.timeout_seconds === undefined ? {} : { timeout: args.timeout_seconds }),
+    ...(attachment === undefined ? {} : { attachment }),
   }
 }
 

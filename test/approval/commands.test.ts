@@ -11,6 +11,7 @@ const REQUEST: ApprovalRequest = {
   timeoutOption: 'Decline',
   allowText: false,
   timeoutSeconds: 300,
+  attachment: undefined,
 }
 
 const flush = () => vi.advanceTimersByTimeAsync(0)

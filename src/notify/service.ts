@@ -53,9 +53,12 @@ export class NotificationService {
     const quietEnd = this.#quiet?.quietUntil()
     let reference
     try {
-      reference = await this.#notifier.sendNotification(id, request.message, {
-        silent: quietEnd !== undefined,
-      })
+      reference = await this.#notifier.sendNotification(
+        id,
+        request.message,
+        { silent: quietEnd !== undefined },
+        request.attachment,
+      )
     } catch (cause) {
       throw new SendError('failed to send notification', { cause })
     }

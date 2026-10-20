@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { ApprovalRequest, AuditSink, MessageEnding } from '../approval/index.ts'
+import type { AuditSink, MessageEnding, SentRequest } from '../approval/index.ts'
 import { SECRET_FILE_MODE } from '../config/index.ts'
 import { isMissingFileError } from '../system/index.ts'
 import {
@@ -34,7 +34,7 @@ export class AuditLog implements AuditSink {
     this.#log = options.log ?? console.error
   }
 
-  public asked(id: string, request: ApprovalRequest, at: Date): void {
+  public asked(id: string, request: SentRequest, at: Date): void {
     this.#append(() => {
       const record: AskedRecord = {
         v: AUDIT_FORMAT_VERSION,

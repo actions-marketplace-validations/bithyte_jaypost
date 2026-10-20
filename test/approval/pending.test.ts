@@ -8,6 +8,7 @@ const req = {
   timeoutOption: 'Decline',
   allowText: false,
   timeoutSeconds: 10,
+  attachment: undefined,
 }
 
 const OPENED_AT = new Date(2026, 0, 1, 9, 0)

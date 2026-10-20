@@ -6,7 +6,7 @@ import type { Config } from '../config/index.ts'
 import { NotificationService } from '../notify/index.ts'
 import { formatCode, generateCode as generateDefaultCode, Pairing } from '../pairing/index.ts'
 import type { PairResult } from '../pairing/index.ts'
-import { findOwnerSetting } from '../provider/index.ts'
+import { findOwnerSetting, resolveMaxAttachmentBytes } from '../provider/index.ts'
 import type { RuntimeHandlers } from '../provider/index.ts'
 import { QUIET_COMMANDS, QuietService } from '../quiet/index.ts'
 import { createApiServer } from '../server/index.ts'
@@ -122,6 +122,7 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
     maxTextLength: provider.maxTextLength,
     providerName: provider.name,
     auth: config.auth,
+    maxAttachmentBytes: resolveMaxAttachmentBytes(provider),
     ...(notifications === undefined ? {} : { notifications }),
   })
   const handlers: RuntimeHandlers = {

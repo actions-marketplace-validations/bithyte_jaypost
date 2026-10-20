@@ -1,10 +1,20 @@
+import { spawn } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import type { FormattedText } from '../../src/format/index.ts'
 import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, expect, test } from 'vite-plus/test'
-import { ApprovalService } from '../../src/approval/index.ts'
-import type { MessageEnding, MessageReference, Messenger } from '../../src/approval/index.ts'
+import { ApprovalService, MAX_ATTACHMENT_BYTES } from '../../src/approval/index.ts'
+import type {
+  Attachment,
+  MessageEnding,
+  MessageReference,
+  Messenger,
+} from '../../src/approval/index.ts'
 import { runSendNotify, runSendRequest } from '../../src/commands/index.ts'
 import type { SendDeps } from '../../src/commands/index.ts'
 import { NotificationService } from '../../src/notify/index.ts'
@@ -20,10 +30,18 @@ const REFERENCE: MessageReference = { chatId: 1, messageId: 2 }
 class RecordingMessenger implements Messenger {
   sent: { id: string; text: string }[] = []
   messages: FormattedText[] = []
+  attachments: (Attachment | undefined)[] = []
   finalized: MessageEnding[] = []
 
-  async sendRequest(id: string, message: FormattedText): Promise<MessageReference> {
+  async sendRequest(
+    id: string,
+    message: FormattedText,
+    _options: readonly string[],
+    _allowText: boolean,
+    attachment: Attachment | undefined,
+  ): Promise<MessageReference> {
     this.sent.push({ id, text: message.text })
+    this.attachments.push(attachment)
     this.messages.push(message)
     return REFERENCE
   }
@@ -40,27 +58,43 @@ class RecordingMessenger implements Messenger {
 class RecordingNotifier implements Notifier {
   sent: string[] = []
   messages: FormattedText[] = []
+  attachments: (Attachment | undefined)[] = []
 
-  sendNotification = async (_id: string, message: FormattedText): Promise<MessageReference> => {
+  sendNotification = async (
+    _id: string,
+    message: FormattedText,
+    _options: unknown,
+    attachment?: Attachment,
+  ): Promise<MessageReference> => {
     this.sent.push(message.text)
+    this.attachments.push(attachment)
     this.messages.push(message)
     return REFERENCE
   }
 }
 
 const servers: FastifyInstance[] = []
+const directories: string[] = []
 afterEach(async () => {
+  for (const directory of directories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true })
+  }
   await Promise.all(servers.splice(0).map((server) => server.close()))
 })
 
 async function startApi(
-  options: { readonly notifications?: boolean; readonly auth?: ApiAuth } = {},
+  options: {
+    readonly notifications?: boolean
+    readonly auth?: ApiAuth
+    readonly maxAttachmentBytes?: number
+  } = {},
 ) {
   const messenger = new RecordingMessenger()
   const notifier = new RecordingNotifier()
   const service = new ApprovalService(messenger)
   const server = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
     maxTextLength: 3900,
+    maxAttachmentBytes: options.maxAttachmentBytes ?? MAX_ATTACHMENT_BYTES,
     providerName: 'test',
     auth: options.auth ?? NO_AUTH,
     ...(options.notifications === false
@@ -258,4 +292,140 @@ test('notify passes format', async () => {
   expect(notifier.messages).toEqual([
     { text: 'Run ls?', spans: [{ kind: 'code', offset: 4, length: 2 }] },
   ])
+})
+
+function createTempDirectory(): string {
+  const directory = mkdtempSync(join(tmpdir(), 'telegram-ask-send-'))
+  directories.push(directory)
+  return directory
+}
+
+test('request with a file attachment delivers it', async () => {
+  const { port, service, messenger } = await startApi()
+  const path = join(createTempDirectory(), 'report.txt')
+  writeFileSync(path, 'all green')
+  const { deps, out, errors } = createDeps(port)
+  const pending = runSendRequest({ ...ASK, attachment: { path } }, deps)
+  await waitFor(() => messenger.sent.length === 1)
+  service.tap(messenger.sent[0]?.id ?? '', 0)
+  expect(await pending).toBe(0)
+  expect(out).toEqual(['Approve'])
+  expect(errors).toEqual([])
+  const [attachment] = messenger.attachments
+  expect(attachment?.name).toBe('report.txt')
+  expect(Buffer.from(attachment?.content ?? []).toString()).toBe('all green')
+})
+
+test('notify with a stdin attachment delivers it', async () => {
+  const { port, notifier } = await startApi()
+  const { deps, errors } = createDeps(port)
+  const attachment = {
+    stream: Readable.from(['log line\n']),
+    name: 'attachment.txt',
+  }
+  expect(await runSendNotify({ text: 'done', attachment }, deps)).toBe(0)
+  expect(errors).toEqual([])
+  const [sent] = notifier.attachments
+  expect(sent?.name).toBe('attachment.txt')
+  expect(Buffer.from(sent?.content ?? []).toString()).toBe('log line\n')
+})
+
+test('a missing attachment prints the reason and exits 1', async () => {
+  const { port, messenger, notifier } = await startApi()
+  const path = join(createTempDirectory(), 'missing.txt')
+  const { deps, errors } = createDeps(port)
+  expect(await runSendNotify({ text: 'done', attachment: { path } }, deps)).toBe(1)
+  expect(await runSendRequest({ ...ASK, attachment: { path } }, deps)).toBe(1)
+  expect(errors).toEqual([
+    `telegram-ask: attachment ${JSON.stringify(path)} not found`,
+    `telegram-ask: attachment ${JSON.stringify(path)} not found`,
+  ])
+  expect(notifier.sent).toEqual([])
+  expect(messenger.sent).toEqual([])
+})
+
+const ROOT = new URL('../..', import.meta.url).pathname
+
+type Cli = {
+  readonly code: number | null
+  readonly stdout: string
+  readonly stderr: string
+}
+
+// Async spawn: the API server runs in this process, so a blocking spawnSync would deadlock.
+function runCli(args: readonly string[], port: number, stdin?: Readable | string): Promise<Cli> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['src/cli.ts', ...args, '--port', String(port)], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        XDG_CONFIG_HOME: createTempDirectory(),
+        TELEGRAM_ASK_TOKEN: '',
+      },
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ code, stdout, stderr }))
+    // the child may exit before reading everything (size cap)
+    child.stdin.on('error', () => {})
+    if (typeof stdin === 'string') {
+      child.stdin.end(stdin)
+    } else if (stdin === undefined) {
+      child.stdin.end()
+    } else {
+      stdin.pipe(child.stdin)
+    }
+  })
+}
+
+test('send request --attach sends the file', async () => {
+  const { port, service, messenger } = await startApi()
+  const path = join(createTempDirectory(), 'notes.md')
+  writeFileSync(path, '# notes')
+  const pending = runCli(
+    ['send', 'request', 'Deploy?', '-o', 'Yes', '-d', 'No', '--attach', path],
+    port,
+  )
+  await waitFor(() => messenger.sent.length === 1)
+  service.tap(messenger.sent[0]?.id ?? '', 0)
+  expect(await pending).toEqual({ code: 0, stdout: 'Yes\n', stderr: '' })
+  expect(messenger.attachments[0]?.name).toBe('notes.md')
+  expect(Buffer.from(messenger.attachments[0]?.content ?? []).toString()).toBe('# notes')
+})
+
+test('send notify --attach - reads stdin with the default name', async () => {
+  const { port, notifier } = await startApi()
+  const result = await runCli(['send', 'notify', 'done', '--attach', '-'], port, 'hello')
+  expect(result).toEqual({ code: 0, stdout: '', stderr: '' })
+  expect(notifier.attachments[0]?.name).toBe('attachment.txt')
+  expect(Buffer.from(notifier.attachments[0]?.content ?? []).toString()).toBe('hello')
+})
+
+test('send notify --attach - --attach-name uses the name', async () => {
+  const { port, notifier } = await startApi()
+  const args = ['send', 'notify', 'done', '--attach', '-', '--attach-name', 'changes.diff']
+  const result = await runCli(args, port, 'diff')
+  expect(result.code).toBe(0)
+  expect(notifier.attachments[0]?.name).toBe('changes.diff')
+})
+
+test('send notify --attach - stops at the size cap on an endless stdin', async () => {
+  const { port, notifier } = await startApi()
+  const endless = Readable.from(
+    (function* () {
+      while (true) {
+        yield Buffer.alloc(65_536)
+      }
+    })(),
+  )
+  const result = await runCli(['send', 'notify', 'done', '--attach', '-'], port, endless)
+  endless.destroy()
+  expect(result.code).toBe(1)
+  expect(result.stderr).toBe(
+    `telegram-ask: attachment from stdin is over ${MAX_ATTACHMENT_BYTES} bytes\n`,
+  )
+  expect(notifier.sent).toEqual([])
 })

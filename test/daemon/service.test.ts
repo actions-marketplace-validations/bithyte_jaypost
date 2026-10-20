@@ -98,6 +98,13 @@ const post = (url: string, path: string, body: unknown, signal?: AbortSignal) =>
 
 const getStatus = async (url: string) => (await fetch(`${url}/status`)).json()
 
+test('status reports the effective attachment limit, 0 without support', async () => {
+  const supported = await start(createFakeProvider({ maxAttachmentBytes: 1000 }))
+  expect(await getStatus(supported.url)).toMatchObject({ maxAttachmentBytes: 1000 })
+  const plain = await start(createFakeProvider())
+  expect(await getStatus(plain.url)).toMatchObject({ maxAttachmentBytes: 0 })
+})
+
 test('fake without optional parts: request is sent and an answer settles it', async () => {
   const { url, runtime } = await start(createFakeProvider())
   const response = post(url, '/request', REQUEST)
@@ -128,7 +135,12 @@ test('fake without optional parts: timeout and cancel settle, no finalize attemp
 
 test('fake without pairing is paired from start', async () => {
   const { url, runtime } = await start(createFakeProvider())
-  expect(await getStatus(url)).toEqual({ paired: true, provider: 'fake', displayName: 'fake' })
+  expect(await getStatus(url)).toEqual({
+    paired: true,
+    provider: 'fake',
+    displayName: 'fake',
+    maxAttachmentBytes: 0,
+  })
   const response = post(url, '/request', REQUEST)
   await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
   runtime.handlers?.answer(runtime.sent[0]?.id ?? '', 0)
@@ -151,9 +163,15 @@ test('pairing fake: unpaired status, pair, then paired and saved', async () => {
     displayName: 'fake',
     code: 'K7QM-4XPD',
     instructions: 'Say K7QM4XPD to fake',
+    maxAttachmentBytes: 0,
   })
   expect(runtime.handlers?.pair?.('u1', 'k7qm-4xpd')).toBe('paired')
-  expect(await getStatus(url)).toEqual({ paired: true, provider: 'fakepair', displayName: 'fake' })
+  expect(await getStatus(url)).toEqual({
+    paired: true,
+    provider: 'fakepair',
+    displayName: 'fake',
+    maxAttachmentBytes: 0,
+  })
   expect(JSON.parse(readFileSync(configPath, 'utf8'))).toEqual({ fakeOwner: 'u1' })
 })
 
@@ -167,7 +185,12 @@ test('owner save failure is logged and pairing still completes', async () => {
   expect(log).toHaveBeenCalledWith(
     `paired with u1 but couldn't save the owner to ${configPath}; it'll be lost on restart`,
   )
-  expect(await getStatus(url)).toEqual({ paired: true, provider: 'fakepair', displayName: 'fake' })
+  expect(await getStatus(url)).toEqual({
+    paired: true,
+    provider: 'fakepair',
+    displayName: 'fake',
+    maxAttachmentBytes: 0,
+  })
 })
 
 test('unparseable owner is logged and not saved', async () => {

@@ -1,8 +1,17 @@
 import { parseToken, resolveClientToken, resolveTokenFile } from '../auth/index.ts'
 import { DEFAULT_PORT } from '../config/constants.ts'
-import { FETCH_GRACE_MS, HOST } from './constants.ts'
-import { postApi, requestApi } from './http.ts'
-import type { Answer, ApiPath, AskRequest, ClientOptions, Notification } from './types.ts'
+import { prepareAttachment } from './attachment.ts'
+import { HOST } from './constants.ts'
+import { postApi, requestApi, toSendTimeoutMs } from './http.ts'
+import type {
+  Answer,
+  ApiPath,
+  AskRequest,
+  AttachmentBody,
+  AttachmentInput,
+  ClientOptions,
+  Notification,
+} from './types.ts'
 
 /** Thrown by `Client` when the service is unreachable, rejects the input or can't send. */
 export class TelegramAskError extends Error {
@@ -41,6 +50,7 @@ export class Client {
     const project = request.project ?? this.#project
     const signal = request.signal ?? new AbortController().signal
     const token = this.#resolveToken()
+    const attachment = await this.#prepare(request.attachment, signal, token)
     const result = await requestApi(
       this.#port,
       {
@@ -51,6 +61,7 @@ export class Client {
         ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
         ...(project === undefined ? {} : { project }),
         ...(request.format === undefined ? {} : { format: request.format }),
+        ...(attachment === undefined ? {} : { attachment }),
       },
       { signal, host: this.#host, ...(token === undefined ? {} : { token }) },
     )
@@ -65,15 +76,44 @@ export class Client {
 
   /** Resolves once Telegram accepts the message. Throws like `request`. */
   async notify(notification: Notification): Promise<void> {
+    const attachment = await this.#prepare(
+      notification.attachment,
+      notification.signal ?? new AbortController().signal,
+      this.#resolveToken(),
+    )
     await this.#post(
       '/notify',
       {
         text: notification.text,
         ...(notification.format === undefined ? {} : { format: notification.format }),
+        ...(attachment === undefined ? {} : { attachment }),
       },
       notification,
-      FETCH_GRACE_MS,
+      toSendTimeoutMs(attachment !== undefined),
     )
+  }
+
+  /** Reads and checks the attachment, if any; throws `TelegramAskError` when it can't be sent. */
+  async #prepare(
+    input: AttachmentInput | undefined,
+    signal: AbortSignal,
+    token: string | undefined,
+  ): Promise<AttachmentBody | undefined> {
+    if (input === undefined) {
+      return undefined
+    }
+    const result = await prepareAttachment(this.#port, input, {
+      signal,
+      host: this.#host,
+      ...(token === undefined ? {} : { token }),
+    })
+    if (signal.aborted) {
+      throw signal.reason
+    }
+    if (result.kind === 'failed') {
+      throw new TelegramAskError(result.message)
+    }
+    return result.attachment
   }
 
   async #post(

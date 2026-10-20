@@ -1,7 +1,7 @@
-import { GrammyError } from 'grammy'
+import { GrammyError, InputFile } from 'grammy'
 import type { Bot } from 'grammy'
 import type { MessageEntity } from 'grammy/types'
-import type { MessageReference, Messenger, OwnerCommand } from '../approval/index.ts'
+import type { Attachment, MessageReference, Messenger, OwnerCommand } from '../approval/index.ts'
 import { appendText } from '../format/index.ts'
 import type { FormattedText, Span } from '../format/index.ts'
 import type { Notifier } from '../notify/index.ts'
@@ -204,6 +204,10 @@ export function routeReply(
   return reply(only.id, text.trim()) === 'accepted' ? 'accepted' : 'ignored'
 }
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 /**
  * Sends requests as inline-keyboard messages to the owner; the final edit removes the buttons.
  * A request without options has no keyboard, and `allowText` appends a hint on how to reply.
@@ -217,8 +221,36 @@ export function createTelegramMessenger(
   openQuestions: OpenQuestions = new Map(),
   log: (line: string) => void = console.error,
 ): Required<Messenger> & Required<Notifier> {
+  // The document is always silent; the message that follows decides whether the phone pings.
+  async function sendDocument(ownerId: number, attachment: Attachment): Promise<number> {
+    const sent = await bot.api.sendDocument(
+      ownerId,
+      new InputFile(attachment.content, attachment.name),
+      { disable_notification: true },
+    )
+    return sent.message_id
+  }
+  // Runs `send`; when it throws after the document went out, removes the document and rethrows.
+  async function sendAfterDocument<Result>(
+    ownerId: number,
+    documentMessageId: number | undefined,
+    send: () => Promise<Result>,
+  ): Promise<Result> {
+    try {
+      return await send()
+    } catch (error) {
+      if (documentMessageId !== undefined) {
+        try {
+          await bot.api.deleteMessage(ownerId, documentMessageId)
+        } catch (cleanupError) {
+          log(`failed to delete attachment: ${describeError(cleanupError)}`)
+        }
+      }
+      throw error
+    }
+  }
   return {
-    async sendRequest(id, message, options, allowText): Promise<MessageReference> {
+    async sendRequest(id, message, options, allowText, attachment): Promise<MessageReference> {
       const ownerId = owner.id
       if (ownerId === undefined) {
         throw new Error('bot is not paired yet')
@@ -226,23 +258,34 @@ export function createTelegramMessenger(
       const hasButtons = options.length > 0
       const hint = hasButtons ? TEXT_HINT_WITH_BUTTONS : TEXT_HINT_WITHOUT_BUTTONS
       const shown = allowText ? appendText(message, `\n\n${hint}`) : message
-      const sent = await sendFormatted(shown, log, (extra) =>
-        bot.api.sendMessage(ownerId, shown.text, {
-          ...extra,
-          ...(hasButtons && {
-            reply_markup: {
-              inline_keyboard: options.map((label, index) => [
-                { text: label, callback_data: formatCallbackData(id, index) },
-              ]),
-            },
+      const documentMessageId =
+        attachment === undefined ? undefined : await sendDocument(ownerId, attachment)
+      const sent = await sendAfterDocument(ownerId, documentMessageId, () =>
+        sendFormatted(shown, log, (extra) =>
+          bot.api.sendMessage(ownerId, shown.text, {
+            ...extra,
+            ...(hasButtons && {
+              reply_markup: {
+                inline_keyboard: options.map((label, index) => [
+                  { text: label, callback_data: formatCallbackData(id, index) },
+                ]),
+              },
+            }),
+            ...(documentMessageId !== undefined && {
+              reply_parameters: { message_id: documentMessageId },
+            }),
           }),
-        }),
+        ),
       )
-      openQuestions.set(formatMessageKey(sent.chat.id, sent.message_id), { id, allowText })
+      openQuestions.set(formatMessageKey(sent.chat.id, sent.message_id), {
+        id,
+        allowText,
+      })
       return {
         chatId: sent.chat.id,
         messageId: sent.message_id,
         hasButtons,
+        ...(documentMessageId !== undefined && { documentMessageId }),
       } satisfies TelegramMessageReference
     },
     async finalize(reference, message) {
@@ -251,36 +294,54 @@ export function createTelegramMessenger(
       await sendFormatted(message, log, (extra) =>
         bot.api.editMessageText(chatId, messageId, message.text, {
           ...extra,
-          ...(hasButtons !== false && { reply_markup: { inline_keyboard: [] } }),
+          ...(hasButtons !== false && {
+            reply_markup: { inline_keyboard: [] },
+          }),
         }),
       )
     },
-    async sendNotification(id, message, options): Promise<MessageReference> {
+    async sendNotification(id, message, options, attachment): Promise<MessageReference> {
       const ownerId = owner.id
       if (ownerId === undefined) {
         throw new Error('bot is not paired yet')
       }
-      const sent = await sendFormatted(message, log, (extra) =>
-        bot.api.sendMessage(ownerId, message.text, {
-          ...extra,
-          disable_notification: options.silent,
-          reply_markup: {
-            inline_keyboard: [[{ text: DISMISS_LABEL, callback_data: formatDismissData(id) }]],
-          },
-        }),
+      const documentMessageId =
+        attachment === undefined ? undefined : await sendDocument(ownerId, attachment)
+      const sent = await sendAfterDocument(ownerId, documentMessageId, () =>
+        sendFormatted(message, log, (extra) =>
+          bot.api.sendMessage(ownerId, message.text, {
+            ...extra,
+            disable_notification: options.silent,
+            reply_markup: {
+              inline_keyboard: [[{ text: DISMISS_LABEL, callback_data: formatDismissData(id) }]],
+            },
+            ...(documentMessageId !== undefined && {
+              reply_parameters: { message_id: documentMessageId },
+            }),
+          }),
+        ),
       )
-      return { chatId: sent.chat.id, messageId: sent.message_id } satisfies TelegramMessageReference
+      return {
+        chatId: sent.chat.id,
+        messageId: sent.message_id,
+        ...(documentMessageId !== undefined && { documentMessageId }),
+      } satisfies TelegramMessageReference
     },
     async deleteMessage(reference) {
-      const { chatId, messageId } = reference as TelegramMessageReference
-      await bot.api.deleteMessage(chatId, messageId)
+      const { chatId, messageId, documentMessageId } = reference as TelegramMessageReference
+      if (documentMessageId === undefined) {
+        await bot.api.deleteMessage(chatId, messageId)
+        return
+      }
+      await bot.api.deleteMessages(chatId, [documentMessageId, messageId])
     },
   }
 }
 
 /**
  * Routes approval taps to `tap`. An owner's Dismiss tap deletes the tapped message (so it works
- * without in-memory state, e.g. after a restart) and calls `dismiss`; a failed delete is logged.
+ * without in-memory state, e.g. after a restart) and the bot's document it replies to, and calls
+ * `dismiss`; a failed delete is logged.
  * Always answers the callback so the button stops spinning.
  */
 export function registerTapHandler(
@@ -295,12 +356,27 @@ export function registerTapHandler(
     if (dismissId !== undefined) {
       if (owner.id !== undefined && context.from.id === owner.id) {
         dismiss(dismissId)
+        const message = context.callbackQuery.message
+        const document =
+          message !== undefined && 'reply_to_message' in message
+            ? message.reply_to_message
+            : undefined
+        const chatId = message?.chat.id
         try {
           await context.deleteMessage()
         } catch (error) {
-          log(
-            `failed to delete notification: ${error instanceof Error ? error.message : String(error)}`,
-          )
+          log(`failed to delete notification: ${describeError(error)}`)
+        }
+        if (
+          chatId !== undefined &&
+          document?.from?.id === bot.botInfo.id &&
+          'document' in document
+        ) {
+          try {
+            await context.api.deleteMessage(chatId, document.message_id)
+          } catch (error) {
+            log(`failed to delete notification: ${describeError(error)}`)
+          }
         }
       }
       await context.answerCallbackQuery()
@@ -372,7 +448,9 @@ export function registerReplyHandler(
       return
     }
     try {
-      await context.reply(copy, { reply_parameters: { message_id: context.message.message_id } })
+      await context.reply(copy, {
+        reply_parameters: { message_id: context.message.message_id },
+      })
     } catch (error) {
       log(`failed to reply: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -413,7 +491,11 @@ export function registerPairingHandler(
 ): void {
   bot.on('message:text', async (context) => {
     const reply = handlePairingMessage(
-      { fromId: context.from.id, chatType: context.chat.type, text: context.message.text },
+      {
+        fromId: context.from.id,
+        chatType: context.chat.type,
+        text: context.message.text,
+      },
       pair,
       onPaired,
     )
@@ -465,7 +547,10 @@ export function setCommandMenu(
   void (async () => {
     try {
       await bot.api.setMyCommands(
-        commands.map(({ name, description }) => ({ command: name, description })),
+        commands.map(({ name, description }) => ({
+          command: name,
+          description,
+        })),
         { scope: { type: 'chat', chat_id: chatId } },
       )
     } catch (error) {

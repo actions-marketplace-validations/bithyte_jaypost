@@ -10,6 +10,7 @@ export const statusInfoSchema = z.discriminatedUnion('paired', [
     provider: z.string().optional(),
     displayName: z.string().optional(),
     bot: z.string().optional(),
+    maxAttachmentBytes: z.number().optional(),
   }),
   z.looseObject({
     paired: z.literal(false),
@@ -18,5 +19,6 @@ export const statusInfoSchema = z.discriminatedUnion('paired', [
     displayName: z.string().optional(),
     instructions: z.string().optional(),
     bot: z.string().optional(),
+    maxAttachmentBytes: z.number().optional(),
   }),
 ])

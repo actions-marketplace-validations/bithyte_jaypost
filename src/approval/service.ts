@@ -23,6 +23,7 @@ import type {
   RequestResult,
   RequestState,
   RequestStore,
+  SentRequest,
   Settlement,
   StartedRequest,
 } from './types.ts'
@@ -62,27 +63,10 @@ export class ApprovalService {
    * Resolves once settled. Throws `SendError` if the message can't be sent; a failed final edit is
    * only logged. An aborted `signal` settles as cancelled.
    */
-  async request(request: ApprovalRequest, signal?: AbortSignal): Promise<RequestResult> {
-    const { id, reference, settlement: settled } = await this.#open(request)
-    const onAbort = () => {
-      this.#pending.cancel(id)
-    }
-    // Checked after open() so an abort during sendRequest is not missed.
-    if (signal?.aborted) {
-      onAbort()
-    } else {
-      signal?.addEventListener('abort', onAbort, { once: true })
-    }
-    const settlement = await settled
-    signal?.removeEventListener('abort', onAbort)
-    await this.#finish(id, request, reference, settlement)
-    if (settlement.kind === 'cancelled') {
-      return CANCELLED_RESULT
-    }
-    return {
-      kind: 'completed',
-      outcome: { answer: settlement.answer, timedOut: settlement.kind === 'timedOut' },
-    }
+  request(request: ApprovalRequest, signal?: AbortSignal): Promise<RequestResult> {
+    // Not async on purpose: V8 keeps an async function's params alive across every await, which
+    // would pin the attachment bytes for the whole wait. #wait only sees the SentRequest.
+    return this.#open(request).then((opened) => this.#wait(opened, signal))
   }
 
   /**
@@ -92,12 +76,12 @@ export class ApprovalService {
    */
   async start(request: ApprovalRequest): Promise<StartedRequest> {
     const opened = await this.#open(request)
-    const expiresAt = new Date(opened.openedAt.getTime() + request.timeoutSeconds * 1000)
+    const expiresAt = new Date(opened.openedAt.getTime() + opened.request.timeoutSeconds * 1000)
     const settled = opened.settlement.then((settlement) => {
       const state = ApprovalService.#toRequestState(settlement)
       // Recorded before the final edit, so a read right after a settle never sees an unknown id.
       this.#background.set(opened.id, { state, settled })
-      this.#finishBackground(opened, request, settlement).catch((error) =>
+      this.#finishBackground(opened, settlement).catch((error) =>
         console.error('failed to finish background request', error),
       )
       return state
@@ -198,6 +182,8 @@ export class ApprovalService {
 
   async #open(request: ApprovalRequest): Promise<OpenedRequest> {
     const id = this.#newId()
+    // Everything kept past the send uses `sent`, so a long wait doesn't hold the attachment bytes.
+    const { attachment: _attachment, ...sent } = request
     let reference
     try {
       reference = await this.#messenger.sendRequest(
@@ -205,6 +191,7 @@ export class ApprovalService {
         request.message,
         request.options,
         request.allowText,
+        request.attachment,
       )
     } catch (cause) {
       throw new SendError('failed to send approval request', { cause })
@@ -213,19 +200,42 @@ export class ApprovalService {
       this.#store?.addRequest({
         id,
         reference,
-        text: request.message.text,
-        ...(request.message.spans.length > 0 && { spans: request.message.spans }),
+        text: sent.message.text,
+        ...(sent.message.spans.length > 0 && { spans: sent.message.spans }),
       })
     }
     const openedAt = this.#now()
-    this.#audit?.asked(id, request, openedAt)
-    const settlement = this.#pending.open(id, request, openedAt)
-    return { id, reference, openedAt, settlement }
+    this.#audit?.asked(id, sent, openedAt)
+    const settlement = this.#pending.open(id, sent, openedAt)
+    return { id, request: sent, reference, openedAt, settlement }
+  }
+
+  async #wait(opened: OpenedRequest, signal?: AbortSignal): Promise<RequestResult> {
+    const { id, reference, settlement: settled } = opened
+    const onAbort = () => {
+      this.#pending.cancel(id)
+    }
+    // Checked after open() so an abort during sendRequest is not missed.
+    if (signal?.aborted) {
+      onAbort()
+    } else {
+      signal?.addEventListener('abort', onAbort, { once: true })
+    }
+    const settlement = await settled
+    signal?.removeEventListener('abort', onAbort)
+    await this.#finish(id, opened.request, reference, settlement)
+    if (settlement.kind === 'cancelled') {
+      return CANCELLED_RESULT
+    }
+    return {
+      kind: 'completed',
+      outcome: { answer: settlement.answer, timedOut: settlement.kind === 'timedOut' },
+    }
   }
 
   async #finish(
     id: string,
-    request: ApprovalRequest,
+    request: SentRequest,
     reference: MessageReference,
     settlement: Settlement,
   ): Promise<void> {
@@ -239,13 +249,9 @@ export class ApprovalService {
     this.#store?.removeRequest(id)
   }
 
-  async #finishBackground(
-    opened: OpenedRequest,
-    request: ApprovalRequest,
-    settlement: Settlement,
-  ): Promise<void> {
+  async #finishBackground(opened: OpenedRequest, settlement: Settlement): Promise<void> {
     try {
-      await this.#finish(opened.id, request, opened.reference, settlement)
+      await this.#finish(opened.id, opened.request, opened.reference, settlement)
     } finally {
       setTimeout(() => this.#background.delete(opened.id), RESULT_TTL_MS).unref()
     }
