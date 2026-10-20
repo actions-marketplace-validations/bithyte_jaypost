@@ -87,7 +87,12 @@ function fake(name: TargetName, ok = true, secrets: Secrets = NO_SECRETS): Mutab
 
 function deps(over: Partial<InitDeps> & { targets?: Record<TargetName, Target> } = {}): InitDeps {
   return {
-    targets: { quadlet: fake('quadlet'), compose: fake('compose'), systemd: fake('systemd') },
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: fake('compose'),
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
     paths,
     prompt: {
       confirm: vi.fn(async () => true),
@@ -104,6 +109,7 @@ function deps(over: Partial<InitDeps> & { targets?: Record<TargetName, Target> }
     print: (s) => out.push(s),
     version: '1.2.3',
     env: {},
+    platform: 'linux',
     ...over,
   }
 }
@@ -142,7 +148,12 @@ test('replace: reads secrets, removes old without purge, checks port after remov
   seed('compose')
   const old = fake('compose', true, saved({ botToken: 't', ownerId: 42 }))
   const d = deps({
-    targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
   })
   expect(await runInit({ target: 'quadlet' }, d)).toBe(0)
   expect(order).toEqual(['remove', 'port', 'install:quadlet'])
@@ -158,7 +169,12 @@ test('declining replace changes nothing', async () => {
   seed('compose')
   const old = fake('compose', true, saved({ botToken: 't' }))
   const d = deps({
-    targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
   })
   vi.mocked(d.prompt.confirm).mockImplementation(async () => false)
   expect(await runInit({}, d)).toBe(0)
@@ -174,6 +190,7 @@ test('requested target unavailable returns 1 with the reason', async () => {
       quadlet: fake('quadlet', false),
       compose: fake('compose'),
       systemd: fake('systemd'),
+      launchd: fake('launchd'),
     },
   })
   expect(await runInit({ target: 'quadlet' }, d)).toBe(1)
@@ -187,6 +204,7 @@ test('no target available returns 1 with reasons', async () => {
       quadlet: fake('quadlet', false),
       compose: fake('compose', false),
       systemd: fake('systemd', false),
+      launchd: fake('launchd', false),
     },
   })
   expect(await runInit({}, d)).toBe(1)
@@ -225,7 +243,12 @@ test('stored token invalid falls back to prompt', async () => {
     settings.botToken === 'stale' ? REJECTED : ACCEPTED,
   )
   const d = deps({
-    targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
     providers: [telegram(validate)],
   })
   expect(await runInit({}, d)).toBe(0)
@@ -264,7 +287,12 @@ test('legacy systemd unit is replaced and its config reused', async () => {
   writeFileSync(paths.configFile, JSON.stringify({ port: 9123 }))
   const old = fake('systemd', true, saved({ botToken: 'lt', ownerId: 7 }))
   const d = deps({
-    targets: { quadlet: fake('quadlet'), compose: fake('compose'), systemd: old },
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: fake('compose'),
+      systemd: old,
+      launchd: fake('launchd'),
+    },
   })
   expect(await runInit({ target: 'systemd' }, d)).toBe(0)
   expect(out.join('\n').toLowerCase()).toContain('legacy')
@@ -285,6 +313,26 @@ test('passes tarball and signal through', async () => {
   expect(d.wait).toHaveBeenCalledWith(expect.objectContaining({ signal: ac.signal, port: 8787 }))
 })
 
+test('darwin offers launchd first and defaults to it', async () => {
+  const d = deps({ platform: 'darwin' })
+  expect(await runInit({}, d)).toBe(0)
+  const [, options, initialValue] = vi.mocked(d.prompt.select).mock.calls[0]!
+  expect(options.map((option) => option.value)).toEqual([
+    'launchd',
+    'quadlet',
+    'compose',
+    'systemd',
+  ])
+  expect(initialValue).toBe('launchd')
+})
+
+test('linux never lists launchd', async () => {
+  const d = deps({ platform: 'linux' })
+  expect(await runInit({}, d)).toBe(0)
+  const [, options] = vi.mocked(d.prompt.select).mock.calls[0]!
+  expect(options.map((option) => option.value)).toEqual(['quadlet', 'compose', 'systemd'])
+})
+
 test('Ctrl-C at target select returns 130, nothing installed', async () => {
   const d = deps()
   vi.mocked(d.prompt.select).mockImplementation(async () => {
@@ -297,7 +345,14 @@ test('Ctrl-C at target select returns 130, nothing installed', async () => {
 test('Ctrl-C at Replace prompt returns 130 before any remove', async () => {
   seed('compose')
   const old = fake('compose', true, saved({ botToken: 't' }))
-  const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
+  const d = deps({
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
+  })
   vi.mocked(d.prompt.confirm).mockImplementation(async () => {
     throw new PromptAborted()
   })
@@ -354,7 +409,14 @@ test('old remove throwing returns 1, no install', async () => {
   old.remove = vi.fn(async () => {
     throw new Error('nope')
   })
-  const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
+  const d = deps({
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
+  })
   expect(await runInit({}, d)).toBe(1)
   expect(d.targets.quadlet.install).not.toHaveBeenCalled()
 })
@@ -362,7 +424,14 @@ test('old remove throwing returns 1, no install', async () => {
 test('target error message is shown with a reused token redacted', async () => {
   seed('compose')
   const old = fake('compose', true, saved({ botToken: '123:SECRET' }))
-  const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
+  const d = deps({
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
+  })
   vi.mocked(d.targets.quadlet.install).mockImplementation(async () => {
     throw new Error('npm install failed: bad url https://x/bot123:SECRET/getMe')
   })
@@ -375,7 +444,12 @@ test('target error message is shown with a reused token redacted', async () => {
 test('failure after removing the old target keeps install.json so a re-run reuses secrets', async () => {
   seed('compose')
   const old = fake('compose', true, saved({ botToken: 'TOK1', ownerId: 42 }))
-  const targets = { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') }
+  const targets = {
+    quadlet: fake('quadlet'),
+    compose: old,
+    systemd: fake('systemd'),
+    launchd: fake('launchd'),
+  }
   const d1 = deps({ targets, isPortFree: vi.fn(async () => false) })
   expect(await runInit({ target: 'quadlet' }, d1)).toBe(1)
   expect(old.remove).toHaveBeenCalledTimes(1)
@@ -451,7 +525,14 @@ test('a reused secret is masked when removing the old install fails', async () =
   old.remove = vi.fn(async () => {
     throw new Error('down failed: TOK1')
   })
-  const d = deps({ targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') } })
+  const d = deps({
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
+  })
   expect(await runInit({ target: 'quadlet' }, d)).toBe(1)
   const text = out.join('\n')
   expect(text).toContain('Install failed: down failed: ***')
@@ -504,7 +585,12 @@ test('switching provider asks, clears the old owner and drops old settings', asy
   seed('compose')
   const old = fake('compose', true, saved({ botToken: 't', ownerId: 42 }))
   const d = deps({
-    targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
     providers: [telegram(), createPairingFakeProvider()],
   })
   expect(await runInit({ target: 'quadlet', provider: 'fakepair' }, d)).toBe(0)
@@ -525,7 +611,12 @@ test('declining the switch changes nothing', async () => {
   seed('compose')
   const old = fake('compose', true, saved({ botToken: 't', ownerId: 42 }))
   const d = deps({
-    targets: { quadlet: fake('quadlet'), compose: old, systemd: fake('systemd') },
+    targets: {
+      quadlet: fake('quadlet'),
+      compose: old,
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    },
     providers: [telegram(), createPairingFakeProvider()],
   })
   vi.mocked(d.prompt.confirm).mockImplementation(async (message) => message === 'Replace it?')

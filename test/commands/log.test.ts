@@ -65,6 +65,7 @@ function setup(log: string | Error = '', version = '1.0.0', recordVersion = '1.0
     quadlet: fake('quadlet'),
     compose: fake('compose'),
     systemd: fake('systemd', log),
+    launchd: fake('launchd'),
   }
   writeInstall(paths.installFile, { target: 'systemd', port: 9000, version: recordVersion })
   return targets
@@ -212,7 +213,12 @@ test('without an install reads the files next to the env config', async () => {
   const directory = join(tmp, 'elsewhere')
   mkdirSync(directory)
   writeFileSync(join(directory, 'audit.jsonl'), asked('a', '2026-10-19T06:00:00.000Z'))
-  const targets = { quadlet: fake('quadlet'), compose: fake('compose'), systemd: fake('systemd') }
+  const targets = {
+    quadlet: fake('quadlet'),
+    compose: fake('compose'),
+    systemd: fake('systemd'),
+    launchd: fake('launchd'),
+  }
   const code = await runLog(
     {},
     deps(targets, { env: { HOME: tmp, TELEGRAM_ASK_CONFIG: join(directory, 'config.json') } }),
@@ -230,7 +236,12 @@ test.skipIf(process.getuid?.() === 0)(
     const file = join(directory, 'audit.jsonl')
     writeFileSync(file, asked('a', '2026-10-19T06:00:00.000Z'))
     chmodSync(file, 0o000)
-    const targets = { quadlet: fake('quadlet'), compose: fake('compose'), systemd: fake('systemd') }
+    const targets = {
+      quadlet: fake('quadlet'),
+      compose: fake('compose'),
+      systemd: fake('systemd'),
+      launchd: fake('launchd'),
+    }
     const code = await runLog(
       {},
       deps(targets, { env: { HOME: tmp, TELEGRAM_ASK_CONFIG: join(directory, 'config.json') } }),

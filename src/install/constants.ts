@@ -2,6 +2,13 @@ import type { TargetName } from './types.ts'
 
 /** Preference order; the first available target is the default. */
 export const TARGET_ORDER: readonly TargetName[] = ['quadlet', 'compose', 'systemd']
+/** Preference order on macOS, where launchd leads and is the only native service manager. */
+export const DARWIN_TARGET_ORDER: readonly TargetName[] = [
+  'launchd',
+  'quadlet',
+  'compose',
+  'systemd',
+]
 /** Name of the systemd unit and container. */
 export const SERVICE_NAME = 'telegram-ask'
 /** npm package name, also the container's command. */
@@ -35,3 +42,11 @@ export const EXECUTABLE_MODE = 0o755
 /** Printed when a binary install's ~/.local/bin isn't on PATH. */
 export const PATH_HINT =
   "~/.local/bin isn't on your PATH; add it to run telegram-ask from anywhere."
+/** The launchd agent's label, reverse-DNS as launchd labels conventionally are. */
+export const LAUNCHD_LABEL = 'io.github.cozminu.telegram-ask'
+/** `launchctl bootout` stderr meaning the agent wasn't loaded, which is fine. */
+export const LAUNCHD_NOT_LOADED_PATTERN = /no such process|could not find/i
+/** The service's own top-level `pid = N` line in `launchctl print` output. */
+export const LAUNCHD_PID_PATTERN = /^\tpid = \d+$/m
+/** Set by browsers on downloads; Gatekeeper may refuse an ad-hoc signed binary carrying it. */
+export const QUARANTINE_ATTRIBUTE = 'com.apple.quarantine'

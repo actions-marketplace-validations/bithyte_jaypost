@@ -6,7 +6,7 @@ import type { installRecordSchema } from './schema.ts'
 
 /** What install.json stores: which target is installed, its port and version. */
 export type InstallRecord = Readonly<z.infer<typeof installRecordSchema>>
-/** Install target id, one of systemd, compose or quadlet. */
+/** Install target id, one of systemd, compose, quadlet or launchd. */
 export type TargetName = InstallRecord['target']
 
 /** Absolute locations for each target's files. */
@@ -22,8 +22,12 @@ export type InstallPaths = {
   readonly quadletUnit: string
   /** Fallback npm prefix for installing the CLI when the global one isn't writable. */
   readonly userNpmPrefix: string
-  /** Where a systemd install copies the standalone binary; always ~/.local/bin, never XDG. */
+  /** Where a systemd or launchd install copies the standalone binary; always ~/.local/bin. */
   readonly binaryCopy: string
+  /** The launchd agent's plist in ~/Library/LaunchAgents. */
+  readonly launchdPlist: string
+  /** Where the launchd agent's stdout and stderr go; launchd has no journal. */
+  readonly launchdLogFile: string
 }
 
 /** Provider name and its settings found in an existing install; absent settings weren't found. */
@@ -84,6 +88,10 @@ export type TargetDeps = {
   readonly user: string
   /** Registered providers, for reading secrets back and clearing the owner. */
   readonly providers: readonly Provider[]
+  /** Node's `process.platform`; launchd is only available on `darwin`. */
+  readonly platform: string
+  /** The user's uid, for the launchd `gui/<uid>` domain. */
+  readonly uid: number
 }
 
 /**
@@ -93,6 +101,9 @@ export type TargetDeps = {
 export type CliLocation =
   | { readonly kind: 'npm'; readonly selfPath: string; readonly nodePath: string }
   | { readonly kind: 'binary'; readonly binaryPath: string }
+
+/** What the service execs before `start`: the CLI path and the full command words. */
+export type CliCommand = { readonly cliPath: string; readonly words: readonly string[] }
 
 /** A target name with its availability. */
 export type DetectedTarget = { readonly name: TargetName } & Availability

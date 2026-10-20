@@ -15,6 +15,7 @@ import {
   findExistingInstall,
   findLeftoverSecrets,
   resolveRecordProvider,
+  resolveTargetOrder,
   writeInstall,
 } from '../install/index.ts'
 import type { InstallRecord, Secrets, TargetName } from '../install/index.ts'
@@ -169,7 +170,10 @@ export async function runInit(args: InitArgs, deps: InitDeps): Promise<number> {
 async function runInitInner(args: InitArgs, deps: InitDeps, seen: string[]): Promise<number> {
   const { print, prompt } = deps
   const env = deps.env ?? process.env
-  const detected = await detectTargets(deps.targets)
+  const detected = await detectTargets(
+    deps.targets,
+    resolveTargetOrder(deps.platform ?? process.platform),
+  )
   let name: TargetName
   if (args.target) {
     const chosen = detected.find((candidate) => candidate.name === args.target)

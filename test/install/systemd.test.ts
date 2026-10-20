@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -20,6 +21,7 @@ import {
   findUnitExecWords,
   formatSystemdUnit,
 } from '../../src/install/index.ts'
+import { MissingCommandError } from '../../src/system/index.ts'
 import type { Exec } from '../../src/system/index.ts'
 import { NO_AUTH } from '../../src/auth/index.ts'
 import { telegramProvider } from '../../src/telegram/index.ts'
@@ -58,6 +60,8 @@ function make(env: NodeJS.ProcessEnv = {}, selfPath = '/src/dist/cli.js') {
       env: e,
       user: 'me',
       providers: [telegramProvider, createFakeProvider()],
+      platform: 'linux',
+      uid: 501,
     },
     { kind: 'npm', selfPath, nodePath: '/usr/bin/node' },
   )
@@ -78,6 +82,8 @@ function makeBinary(env: NodeJS.ProcessEnv = {}, binaryPath = join(tmp, 'dl', 't
       env: e,
       user: 'me',
       providers: [telegramProvider, createFakeProvider()],
+      platform: 'linux',
+      uid: 501,
     },
     { kind: 'binary', binaryPath },
   )
@@ -95,7 +101,7 @@ const base = {
 }
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'sd-'))
+  tmp = realpathSync(mkdtempSync(join(tmpdir(), 'sd-')))
   calls = []
   prefixOut = '/usr'
   rootOut = '/usr/lib/node_modules'
@@ -197,6 +203,25 @@ test('remove without purge keeps config; with purge deletes it', async () => {
   await t.remove(rec, true)
   expect(existsSync(paths.configFile)).toBe(false)
   expect(existsSync(stateFile)).toBe(false)
+})
+
+test('available is false when systemctl is missing', async () => {
+  const e = { HOME: tmp }
+  const t = createSystemdTarget(
+    {
+      exec: async (cmd) => {
+        throw new MissingCommandError(cmd)
+      },
+      paths: resolveInstallPaths(e),
+      env: e,
+      user: 'me',
+      providers: [telegramProvider],
+      platform: 'darwin',
+      uid: 501,
+    },
+    { kind: 'npm', selfPath: '/src/dist/cli.js', nodePath: '/usr/bin/node' },
+  )
+  expect(await t.available()).toEqual({ ok: false, reason: 'systemctl not available' })
 })
 
 test('available, isRunning, restart, logsHint', async () => {
@@ -486,6 +511,8 @@ test('npm install deletes a leftover binary copy before npm i -g', async () => {
       env: { HOME: tmp },
       user: 'me',
       providers: [telegramProvider, createFakeProvider()],
+      platform: 'linux',
+      uid: 501,
     },
     { kind: 'npm', selfPath: '/src/dist/cli.js', nodePath: '/usr/bin/node' },
   )

@@ -4,16 +4,13 @@ import { DEFAULT_PORT, readConfigFile } from '../config/index.ts'
 import { findProvider, hasRequiredSecrets, PROVIDERS } from '../provider/index.ts'
 import type { Provider } from '../provider/index.ts'
 import { createComposeTarget } from './compose.ts'
-import { TARGET_ORDER } from './constants.ts'
+import { DARWIN_TARGET_ORDER, TARGET_ORDER } from './constants.ts'
 import { readEnvSecrets } from './envfile.ts'
+import { createLaunchdTarget } from './launchd.ts'
 import { createQuadletTarget } from './quadlet.ts'
 import { readInstall } from './state.ts'
-import {
-  createSystemdTarget,
-  findUnitConfigFile,
-  readConfigSecrets,
-  resolveDefaultConfigFile,
-} from './systemd.ts'
+import { readConfigSecrets, resolveDefaultConfigFile } from './native.ts'
+import { createSystemdTarget, findUnitConfigFile } from './systemd.ts'
 import type {
   CliLocation,
   DetectedTarget,
@@ -25,7 +22,7 @@ import type {
   TargetName,
 } from './types.ts'
 
-/** Builds all three install targets from the same dependencies. */
+/** Builds every install target from the same dependencies. */
 export function createTargets(
   deps: TargetDeps,
   cli: CliLocation,
@@ -34,15 +31,22 @@ export function createTargets(
     quadlet: createQuadletTarget(deps),
     compose: createComposeTarget(deps),
     systemd: createSystemdTarget(deps, cli),
+    launchd: createLaunchdTarget(deps, cli),
   }
 }
 
-/** Asks each target if it is usable, in `TARGET_ORDER`. */
+/** Target preference order for a `process.platform` value; launchd only appears on darwin. */
+export function resolveTargetOrder(platform: string): readonly TargetName[] {
+  return platform === 'darwin' ? DARWIN_TARGET_ORDER : TARGET_ORDER
+}
+
+/** Asks each target if it is usable, in `order` (the Linux `TARGET_ORDER` by default). */
 export async function detectTargets(
   targets: Readonly<Record<TargetName, Target>>,
+  order: readonly TargetName[] = TARGET_ORDER,
 ): Promise<readonly DetectedTarget[]> {
   const detected: DetectedTarget[] = []
-  for (const name of TARGET_ORDER) {
+  for (const name of order) {
     detected.push({ name, ...(await targets[name].available()) })
   }
   return detected

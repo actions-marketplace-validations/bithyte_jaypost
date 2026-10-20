@@ -2,6 +2,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { resolveTokenFile } from '../auth/index.ts'
 import { resolveConfigDirectory } from '../config/index.ts'
+import { LAUNCHD_LABEL } from './constants.ts'
 import type { InstallPaths } from './types.ts'
 
 function toNonEmpty(value: string | undefined): string | undefined {
@@ -25,5 +26,7 @@ export function resolveInstallPaths(env: NodeJS.ProcessEnv = process.env): Insta
     quadletUnit: join(xdgConfigHome, 'containers', 'systemd', 'telegram-ask.container'),
     userNpmPrefix: join(xdgDataHome, 'telegram-ask', 'npm'),
     binaryCopy: join(home, '.local', 'bin', 'telegram-ask'),
+    launchdPlist: join(home, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`),
+    launchdLogFile: join(home, 'Library', 'Logs', 'telegram-ask', 'telegram-ask.log'),
   }
 }

@@ -78,6 +78,7 @@ test('replaces the destination with the verified binary', async () => {
   await replaceBinary({
     release: releaseAt(base, ['SHA256SUMS', ASSET]),
     assetName: ASSET,
+    platform: 'linux',
     destination,
     exec: reportsVersion('0.5.0\n'),
   })
@@ -93,6 +94,7 @@ test('refuses a missing asset', async () => {
     replaceBinary({
       release: releaseAt(base, ['SHA256SUMS']),
       assetName: ASSET,
+      platform: 'linux',
       destination,
       exec: reportsVersion('0.5.0\n'),
     }),
@@ -109,6 +111,7 @@ test('refuses a missing checksum entry', async () => {
     replaceBinary({
       release: releaseAt(base, ['SHA256SUMS', ASSET]),
       assetName: ASSET,
+      platform: 'linux',
       destination,
       exec: reportsVersion('0.5.0\n'),
     }),
@@ -125,6 +128,7 @@ test('refuses a checksum mismatch', async () => {
     replaceBinary({
       release: releaseAt(base, ['SHA256SUMS', ASSET]),
       assetName: ASSET,
+      platform: 'linux',
       destination,
       exec: reportsVersion('0.5.0\n'),
     }),
@@ -141,6 +145,7 @@ test('refuses a binary that reports another version', async () => {
     replaceBinary({
       release: releaseAt(base, ['SHA256SUMS', ASSET]),
       assetName: ASSET,
+      platform: 'linux',
       destination,
       exec: reportsVersion('0.4.0\n'),
     }),
@@ -154,6 +159,7 @@ test('stops when aborted', async () => {
   const pending = replaceBinary({
     release: releaseAt(base, ['SHA256SUMS', ASSET]),
     assetName: ASSET,
+    platform: 'linux',
     destination,
     exec: reportsVersion('0.5.0\n'),
     signal: controller.signal,
@@ -161,4 +167,82 @@ test('stops when aborted', async () => {
   setTimeout(() => controller.abort(), 50)
   await expect(pending).rejects.toThrow()
   assertUntouched()
+})
+
+type Recorded = readonly [string, readonly string[]]
+
+function recordingExec(
+  calls: Recorded[],
+  codesignCodes: readonly number[],
+  version = '0.5.0\n',
+): Exec {
+  const queue = [...codesignCodes]
+  return async (command, args) => {
+    calls.push([command, args])
+    if (command === 'codesign') {
+      return { code: queue.shift() ?? 0, stdout: '', stderr: 'sign broke' }
+    }
+    return { code: 0, stdout: version, stderr: '' }
+  }
+}
+
+async function replaceOnDarwin(calls: Recorded[], codesignCodes: readonly number[]): Promise<void> {
+  const base = await serve({
+    '/SHA256SUMS': `${sha256(GZIPPED)}  ${ASSET}\n`,
+    [`/${ASSET}`]: GZIPPED,
+  })
+  await replaceBinary({
+    release: releaseAt(base, ['SHA256SUMS', ASSET]),
+    assetName: ASSET,
+    platform: 'darwin',
+    destination,
+    exec: recordingExec(calls, codesignCodes),
+  })
+}
+
+test('darwin: a validly signed binary is not re-signed', async () => {
+  const calls: Recorded[] = []
+  await replaceOnDarwin(calls, [0])
+  const temp = calls[0]?.[1][1] ?? ''
+  expect(temp.endsWith('.tmp')).toBe(true)
+  expect(calls).toEqual([
+    ['codesign', ['--verify', temp]],
+    [temp, ['--version']],
+  ])
+})
+
+test('darwin: an unsigned binary is ad-hoc signed before it runs', async () => {
+  const calls: Recorded[] = []
+  await replaceOnDarwin(calls, [1, 0])
+  const temp = calls[0]?.[1][1] ?? ''
+  expect(calls).toEqual([
+    ['codesign', ['--verify', temp]],
+    ['codesign', ['--sign', '-', '--force', temp]],
+    [temp, ['--version']],
+  ])
+})
+
+test('darwin: a failed signature aborts and keeps the old binary', async () => {
+  const calls: Recorded[] = []
+  await expect(replaceOnDarwin(calls, [1, 1])).rejects.toThrow(
+    `couldn't sign downloaded ${ASSET}: sign broke`,
+  )
+  expect(calls.map(([command]) => command)).toEqual(['codesign', 'codesign'])
+  assertUntouched()
+})
+
+test('linux: no codesign', async () => {
+  const base = await serve({
+    '/SHA256SUMS': `${sha256(GZIPPED)}  ${ASSET}\n`,
+    [`/${ASSET}`]: GZIPPED,
+  })
+  const calls: Recorded[] = []
+  await replaceBinary({
+    release: releaseAt(base, ['SHA256SUMS', ASSET]),
+    assetName: ASSET,
+    platform: 'linux',
+    destination,
+    exec: recordingExec(calls, []),
+  })
+  expect(calls.map(([command]) => command)).not.toContain('codesign')
 })

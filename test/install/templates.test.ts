@@ -1,14 +1,20 @@
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { expect, test } from 'vite-plus/test'
 import {
   formatComposeYaml,
   formatDockerfile,
   formatEnvFile,
+  formatLaunchdPlist,
+  findPlistExecWords,
   formatQuadletContainer,
   quoteSystemdValue,
   formatSystemdUnit,
 } from '../../src/install/index.ts'
 import { NO_AUTH } from '../../src/auth/index.ts'
 import { telegramProvider } from '../../src/telegram/index.ts'
+import { realExec } from '../../src/system/index.ts'
 import { createFakeProvider } from '../provider/fake.ts'
 
 const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
@@ -128,3 +134,82 @@ test('formatEnvFile rejects a value with a newline', () => {
     expect(format).toThrow('setting "botToken" contains a line break')
   }
 })
+
+test('formatLaunchdPlist writes the agent plist', () => {
+  expect(
+    formatLaunchdPlist({
+      label: 'io.github.cozminu.telegram-ask',
+      exec: ['/h/.local/bin/telegram-ask'],
+      config: '/h/.config/telegram-ask/config.json',
+      logFile: '/h/Library/Logs/telegram-ask/telegram-ask.log',
+    }),
+  ).toBe(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.cozminu.telegram-ask</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/h/.local/bin/telegram-ask</string>
+    <string>start</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TELEGRAM_ASK_CONFIG</key>
+    <string>/h/.config/telegram-ask/config.json</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>/h/Library/Logs/telegram-ask/telegram-ask.log</string>
+  <key>StandardErrorPath</key>
+  <string>/h/Library/Logs/telegram-ask/telegram-ask.log</string>
+</dict>
+</plist>
+`)
+})
+
+test('formatLaunchdPlist escapes & < > in every value', () => {
+  const plist = formatLaunchdPlist({
+    label: 'l',
+    exec: ['/a&b/<n>/node', '/c.js'],
+    config: '/x&y/c.json',
+    logFile: '/l<g>.log',
+  })
+  expect(plist).toContain('<string>/a&amp;b/&lt;n&gt;/node</string>')
+  expect(plist).toContain('<string>/x&amp;y/c.json</string>')
+  expect(plist).toContain('<string>/l&lt;g&gt;.log</string>')
+})
+
+test('findPlistExecWords undoes formatLaunchdPlist', () => {
+  const words = ['/a b/&amp;/<x>/node', '/c.js']
+  const plist = formatLaunchdPlist({ label: 'l', exec: words, config: '/c', logFile: '/l' })
+  expect(findPlistExecWords(plist)).toEqual(words)
+  expect(findPlistExecWords('<plist><dict></dict></plist>')).toBeUndefined()
+})
+
+test.skipIf(process.platform !== 'darwin')(
+  'plutil accepts the plist with awkward paths',
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'plist-'))
+    const file = join(dir, 'a.plist')
+    await writeFile(
+      file,
+      formatLaunchdPlist({
+        label: 'io.github.cozminu.telegram-ask',
+        exec: ['/a & b/<n>/node', '/c d/cli.js'],
+        config: '/x & y/<c>/config.json',
+        logFile: '/l & <g>/my log.log',
+      }),
+    )
+    expect((await realExec('plutil', ['-lint', file])).code).toBe(0)
+  },
+)

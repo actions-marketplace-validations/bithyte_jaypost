@@ -138,3 +138,73 @@ RestartSec=5
 WantedBy=default.target
 `
 }
+
+function escapeXml(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+function unescapeXml(value: string): string {
+  return value.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')
+}
+
+/**
+ * LaunchAgent plist that runs the `exec` words plus `start` at load, restarts after a non-zero
+ * exit, and logs stdout and stderr to `logFile`. Every value is XML-escaped.
+ */
+export function formatLaunchdPlist(options: {
+  readonly label: string
+  readonly exec: readonly string[]
+  readonly config: string
+  readonly logFile: string
+}): string {
+  const words = [...options.exec, 'start']
+    .map((word) => `    <string>${escapeXml(word)}</string>`)
+    .join('\n')
+  const logFile = escapeXml(options.logFile)
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${escapeXml(options.label)}</string>
+  <key>ProgramArguments</key>
+  <array>
+${words}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TELEGRAM_ASK_CONFIG</key>
+    <string>${escapeXml(options.config)}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>${logFile}</string>
+  <key>StandardErrorPath</key>
+  <string>${logFile}</string>
+</dict>
+</plist>
+`
+}
+
+/**
+ * The unescaped `ProgramArguments` words of a plist written by `formatLaunchdPlist`, minus the
+ * trailing `start`; undefined when there's no `ProgramArguments` array.
+ */
+export function findPlistExecWords(plist: string): readonly string[] | undefined {
+  const match = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(plist)
+  if (match === null) {
+    return undefined
+  }
+  const words = [...(match[1] ?? '').matchAll(/<string>([\s\S]*?)<\/string>/g)].map((entry) =>
+    unescapeXml(entry[1] ?? ''),
+  )
+  return words.at(-1) === 'start' ? words.slice(0, -1) : words
+}

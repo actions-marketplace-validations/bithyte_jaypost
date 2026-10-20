@@ -6,6 +6,7 @@ export const TARGET_LABELS: Readonly<Record<TargetName, string>> = {
   quadlet: 'Podman Quadlet (user service)',
   compose: 'Docker Compose',
   systemd: 'systemd user service (npm)',
+  launchd: 'launchd user agent (macOS)',
 }
 /** How long to wait for the service to answer /status for the first time. */
 export const DEFAULT_START_TIMEOUT_MS = 60_000

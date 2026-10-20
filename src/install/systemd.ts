@@ -1,92 +1,27 @@
-import {
-  accessSync,
-  chmodSync,
-  constants,
-  copyFileSync,
-  lstatSync,
-  mkdirSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
-import { delimiter, dirname, join, resolve, sep } from 'node:path'
-import { readAuditFiles, removeAuditFiles, resolveAuditPath } from '../audit/index.ts'
-import { readConfigFile, updateConfigFile } from '../config/index.ts'
-import { collectSettings, DEFAULT_PROVIDER, findProvider } from '../provider/index.ts'
-import type { Provider } from '../provider/index.ts'
-import { resolveStatePath } from '../state/index.ts'
-import { ensureLinger, isMissingFileError } from '../system/index.ts'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { readAuditFiles, resolveAuditPath } from '../audit/index.ts'
+import { updateConfigFile } from '../config/index.ts'
+import { ensureLinger, MissingCommandError } from '../system/index.ts'
 import {
   CONFIG_ENV_PREFIX,
   ENVIRONMENT_LINE_PATTERN,
   ESCAPED_CHAR_PATTERN,
   EXEC_START_LINE_PATTERN,
-  EXECUTABLE_MODE,
-  PACKAGE_NAME,
-  PATH_HINT,
   SERVICE_NAME,
 } from './constants.ts'
+import {
+  findBinaryCopyConflict,
+  printPathHint,
+  purgeServiceFiles,
+  readConfigSecrets,
+  resolveCliCommand,
+  resolveDefaultConfigFile,
+  writeServiceConfig,
+} from './native.ts'
 import { requireRecordOwner } from './state.ts'
 import { formatSystemdUnit } from './templates.ts'
-import type {
-  CliLocation,
-  InstallOptions,
-  InstallPaths,
-  InstallRecord,
-  Secrets,
-  Target,
-  TargetDeps,
-} from './types.ts'
-
-function isUnder(file: string, root: string): boolean {
-  return root !== '' && file.startsWith(root.endsWith(sep) ? root : root + sep)
-}
-
-/** Copies `source` over `destination` via a temp file and rename, so a running copy is never half-written. */
-function copyExecutable(source: string, destination: string): void {
-  mkdirSync(dirname(destination), { recursive: true })
-  const temp = `${destination}.${process.pid}.tmp`
-  try {
-    copyFileSync(source, temp)
-    // chmod after copying: the umask can strip bits at creation.
-    chmodSync(temp, EXECUTABLE_MODE)
-    renameSync(temp, destination)
-  } catch (error) {
-    rmSync(temp, { force: true })
-    throw error
-  }
-}
-
-/** What sits at `path` without following links; `missing` when nothing does. */
-function inspectEntry(path: string): 'missing' | 'symlink' | 'file' | 'other' {
-  let stats
-  try {
-    stats = lstatSync(path)
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return 'missing'
-    }
-    throw error
-  }
-  if (stats.isSymbolicLink()) {
-    return 'symlink'
-  }
-  return stats.isFile() ? 'file' : 'other'
-}
-
-function isWritable(directory: string): boolean {
-  try {
-    accessSync(directory, constants.W_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** The config file a systemd install uses when nothing recorded one: $TELEGRAM_ASK_CONFIG or the default, absolute. */
-export function resolveDefaultConfigFile(paths: InstallPaths, env: NodeJS.ProcessEnv): string {
-  return resolve(env.TELEGRAM_ASK_CONFIG || paths.configFile)
-}
+import type { CliLocation, InstallRecord, Secrets, Target, TargetDeps } from './types.ts'
 
 /** Best-effort read of the TELEGRAM_ASK_CONFIG value from a unit's Environment= lines. */
 export function findUnitConfigFile(unit: string): string | undefined {
@@ -167,38 +102,6 @@ export function findUnitExecWords(unit: string): readonly string[] | undefined {
 }
 
 /**
- * Provider named in the config file (Telegram when absent) and its settings; settings are empty for
- * an unknown provider. Throws on a corrupt config file.
- */
-export function readConfigSecrets(path: string, providers: readonly Provider[]): Secrets {
-  const config = readConfigFile(path)
-  const name = config.provider ?? DEFAULT_PROVIDER
-  const provider = findProvider(providers, name)
-  if (provider === undefined) {
-    return { provider: name, settings: {} }
-  }
-  return {
-    provider: name,
-    settings: collectSettings(provider, (setting) => config[setting.configKey]),
-  }
-}
-
-/**
- * `null` for every config key other providers use, so switching providers drops the old settings.
- */
-function formatOtherProviderKeys(
-  providers: readonly Provider[],
-  current: Provider,
-): Readonly<Record<string, null>> {
-  const ownKeys = new Set(current.settings.map((setting) => setting.configKey))
-  const keys = providers
-    .filter((provider) => provider.name !== current.name)
-    .flatMap((provider) => provider.settings.map((setting) => setting.configKey))
-    .filter((key) => !ownKeys.has(key))
-  return Object.fromEntries(keys.map((key) => [key, null]))
-}
-
-/**
  * systemd user service target running the npm-installed CLI, or a copy of the standalone binary in
  * ~/.local/bin; keeps its settings in the config file.
  */
@@ -209,87 +112,29 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
   // so later commands don't depend on the environment they happen to run in.
   const configFile = resolveDefaultConfigFile(paths, env)
   const resolveConfigFile = (record: InstallRecord) => record.configFile ?? configFile
-  const fallbackRoot = join(paths.userNpmPrefix, 'lib', 'node_modules')
-  async function resolveCli(selfPath: string, options: InstallOptions): Promise<string> {
-    const root = (await exec('npm', ['root', '-g'])).stdout.trim()
-    if (isUnder(selfPath, root)) {
-      options.print(`Using the installed CLI at ${selfPath}`)
-      return selfPath
-    }
-    if (isUnder(selfPath, fallbackRoot)) {
-      options.print(`Using the installed CLI at ${selfPath}`)
-      return selfPath
-    }
-    const packageSpec = options.tarball ?? `${PACKAGE_NAME}@${options.version}`
-    const prefix = (await exec('npm', ['prefix', '-g'])).stdout.trim()
-    let installRoot: string
-    let args: string[]
-    if (prefix !== '' && isWritable(prefix)) {
-      options.print(`Installing ${packageSpec} globally with npm`)
-      args = ['i', '-g', packageSpec]
-      installRoot = root
-    } else {
-      options.print(
-        `Global npm prefix isn't writable; installing ${packageSpec} into ${paths.userNpmPrefix}`,
-      )
-      mkdirSync(paths.userNpmPrefix, { recursive: true })
-      args = ['i', '-g', '--prefix', paths.userNpmPrefix, packageSpec]
-      installRoot = fallbackRoot
-    }
-    const result = await exec('npm', args)
-    if (result.code !== 0) {
-      throw new Error(`npm install failed: ${result.stderr.trim()}`)
-    }
-    return join(installRoot, PACKAGE_NAME, 'dist', 'cli.js')
-  }
-  /** Installs or locates the CLI; `words` is what the unit execs before `start`. */
-  async function resolveExec(
-    options: InstallOptions,
-  ): Promise<{ readonly cliPath: string; readonly words: readonly string[] }> {
-    if (cli.kind === 'npm') {
-      // A leftover binary copy would shadow npm's launcher on PATH; a symlink there is npm's own.
-      if (inspectEntry(paths.binaryCopy) === 'file') {
-        options.print(`Removing the old standalone binary at ${paths.binaryCopy}`)
-        rmSync(paths.binaryCopy, { force: true })
-      }
-      const cliPath = await resolveCli(cli.selfPath, options)
-      return { cliPath, words: [cli.nodePath, cliPath] }
-    }
-    if (resolve(cli.binaryPath) !== resolve(paths.binaryCopy)) {
-      options.print(`Copying ${cli.binaryPath} to ${paths.binaryCopy}`)
-      copyExecutable(cli.binaryPath, paths.binaryCopy)
-    }
-    return { cliPath: paths.binaryCopy, words: [paths.binaryCopy] }
-  }
-  function isOnPath(directory: string): boolean {
-    return (env.PATH ?? '')
-      .split(delimiter)
-      .some((entry) => entry !== '' && resolve(entry) === resolve(directory))
-  }
   const target: Target = {
     name: 'systemd',
     async available() {
-      if (cli.kind === 'binary' && inspectEntry(paths.binaryCopy) === 'symlink') {
-        return {
-          ok: false,
-          reason: `~/.local/bin/${PACKAGE_NAME} is a symlink (npm's launcher?); run "npm rm -g ${PACKAGE_NAME}" first`,
-        }
+      const conflict = findBinaryCopyConflict(paths, cli)
+      if (conflict !== undefined) {
+        return { ok: false, reason: conflict }
       }
-      const result = await systemctl('show-environment')
+      let result: Awaited<ReturnType<typeof systemctl>>
+      try {
+        result = await systemctl('show-environment')
+      } catch (error) {
+        if (error instanceof MissingCommandError) {
+          return { ok: false, reason: 'systemctl not available' }
+        }
+        throw error
+      }
       return result.code === 0
         ? { ok: true }
         : { ok: false, reason: 'systemd user session not available' }
     },
     async install(options): Promise<InstallRecord> {
-      const command = await resolveExec(options)
-      // Only touch the owner when we have one; clearOwner is the explicit way to drop it.
-      updateConfigFile(configFile, {
-        ...formatOtherProviderKeys(providers, options.provider),
-        provider: options.provider.name,
-        port: options.port,
-        ...options.settings,
-        apiToken: options.auth.kind === 'token' ? options.auth.token : null,
-      })
+      const command = await resolveCliCommand(deps, cli, options)
+      writeServiceConfig(configFile, providers, options)
       mkdirSync(dirname(paths.systemdUnit), { recursive: true })
       writeFileSync(
         paths.systemdUnit,
@@ -302,9 +147,7 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
         }
       }
       await ensureLinger(exec, user, options.print)
-      if (cli.kind === 'binary' && !isOnPath(dirname(paths.binaryCopy))) {
-        options.print(PATH_HINT)
-      }
+      printPathHint(deps, cli, options.print)
       return {
         target: 'systemd',
         provider: options.provider.name,
@@ -329,22 +172,7 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       rmSync(paths.systemdUnit, { force: true })
       await systemctl('daemon-reload')
       if (purge) {
-        rmSync(resolveConfigFile(record), { force: true })
-        rmSync(resolveStatePath(resolveConfigFile(record)), { force: true })
-        removeAuditFiles(resolveAuditPath(resolveConfigFile(record)))
-        if (record.cliKind === 'binary') {
-          if (record.cliPath !== undefined) {
-            rmSync(record.cliPath, { force: true })
-          }
-          return
-        }
-        const prefix =
-          record.cliPath !== undefined && isUnder(record.cliPath, fallbackRoot)
-            ? `--prefix ${paths.userNpmPrefix} `
-            : ''
-        console.log(
-          `The npm package was left in place; remove it with: npm rm -g ${prefix}${PACKAGE_NAME}`,
-        )
+        purgeServiceFiles(record, resolveConfigFile(record), paths)
       }
     },
     async restart() {

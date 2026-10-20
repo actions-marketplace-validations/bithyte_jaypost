@@ -48,7 +48,15 @@ function make() {
   const env = { HOME: tmp }
   const paths = resolveInstallPaths(env)
   return {
-    t: createQuadletTarget({ exec: fakeExec, paths, env, user: 'me', providers: PROVIDERS }),
+    t: createQuadletTarget({
+      exec: fakeExec,
+      paths,
+      env,
+      user: 'me',
+      providers: PROVIDERS,
+      platform: 'linux',
+      uid: 501,
+    }),
     paths,
   }
 }
@@ -102,6 +110,8 @@ test('quadlet unavailable when podman missing', async () => {
     env: {},
     user: 'me',
     providers: PROVIDERS,
+    platform: 'linux',
+    uid: 501,
   })
   expect((await t.available()).ok).toBe(false)
 })

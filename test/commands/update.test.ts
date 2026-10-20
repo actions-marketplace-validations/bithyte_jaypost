@@ -9,7 +9,12 @@ import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
 import { writeTokenFile } from '../../src/auth/index.ts'
 import { runFinishUpdate, runUpdate } from '../../src/commands/index.ts'
 import type { UpdateDeps } from '../../src/commands/index.ts'
-import { readInstall, resolveInstallPaths, writeInstall } from '../../src/install/index.ts'
+import {
+  formatLaunchdPlist,
+  readInstall,
+  resolveInstallPaths,
+  writeInstall,
+} from '../../src/install/index.ts'
 import type {
   CliLocation,
   InstallOptions,
@@ -153,7 +158,12 @@ function createExec(
 }
 
 function deps(over: Partial<UpdateDeps> = {}): UpdateDeps {
-  const targets = { systemd: fake('systemd'), quadlet: fake('quadlet'), compose: fake('compose') }
+  const targets = {
+    systemd: fake('systemd'),
+    quadlet: fake('quadlet'),
+    compose: fake('compose'),
+    launchd: fake('launchd'),
+  }
   return {
     targets,
     paths,
@@ -241,6 +251,48 @@ test('npm systemd install runs npm i -g then hands off with the unit node', asyn
     ['i', '-g', 'telegram-ask@0.5.0'],
   ])
   expect(lastCall()).toEqual([NODE, [NPM_CLI, 'update', '--finish'], { inherit: true }])
+})
+
+function seedLaunchd(cliKind: 'npm' | 'binary', cliPath: string): void {
+  mkdirSync(dirname(paths.launchdPlist), { recursive: true })
+  writeFileSync(
+    paths.launchdPlist,
+    formatLaunchdPlist({
+      label: 'ask.telegram',
+      exec: cliKind === 'npm' ? [NODE, cliPath] : [cliPath],
+      config: join(tmp, 'config.json'),
+      logFile: paths.launchdLogFile,
+    }),
+  )
+  writeInstall(paths.installFile, {
+    target: 'launchd',
+    port: 9000,
+    version: '0.4.0',
+    cliPath,
+    cliKind,
+  })
+}
+
+test('launchd npm install updates the package the plist runs', async () => {
+  seedLaunchd('npm', NPM_CLI)
+  const d = deps({ exec: createExec({ [NPM_CLI]: '0.4.0' }) })
+  expect(await runUpdate(d)).toBe(0)
+  expect(calls.map(([command, args]) => [command, args])).toContainEqual([
+    'npm',
+    ['i', '-g', 'telegram-ask@0.5.0'],
+  ])
+  expect(lastCall()).toEqual([NODE, [NPM_CLI, 'update', '--finish'], { inherit: true }])
+})
+
+test('launchd binary install replaces the recorded copy', async () => {
+  const copy = paths.binaryCopy
+  mkdirSync(dirname(copy), { recursive: true })
+  writeFileSync(copy, OLD_BINARY)
+  seedLaunchd('binary', copy)
+  const d = deps({ exec: createExec({ [copy]: '0.4.0' }) })
+  expect(await runUpdate(d)).toBe(0)
+  expect(readFileSync(copy)).toEqual(NEW_BINARY)
+  expect(lastCall()).toEqual([copy, ['update', '--finish'], { inherit: true }])
 })
 
 test('npm install under the fallback prefix passes --prefix', async () => {

@@ -1,6 +1,7 @@
 export { createComposeTarget } from './compose.ts'
-export { TARGET_ORDER } from './constants.ts'
+export { DARWIN_TARGET_ORDER, TARGET_ORDER } from './constants.ts'
 export { readEnvFile, removeEnvKey, writeEnvFile } from './envfile.ts'
+export { createLaunchdTarget, resolveStableNodePath } from './launchd.ts'
 export { resolveInstallPaths } from './paths.ts'
 export { createQuadletTarget } from './quadlet.ts'
 export {
@@ -9,13 +10,16 @@ export {
   findDefaultTarget,
   findExistingInstall,
   findLeftoverSecrets,
+  resolveTargetOrder,
 } from './registry.ts'
 export { readInstall, removeInstall, resolveRecordProvider, writeInstall } from './state.ts'
 export { createSystemdTarget, findUnitConfigFile, findUnitExecWords } from './systemd.ts'
 export {
   formatComposeYaml,
+  findPlistExecWords,
   formatDockerfile,
   formatEnvFile,
+  formatLaunchdPlist,
   formatQuadletContainer,
   formatSystemdUnit,
   quoteExecWord,

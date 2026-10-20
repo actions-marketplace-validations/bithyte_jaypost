@@ -8,6 +8,7 @@ import {
   findExistingInstall,
   findLeftoverSecrets,
   resolveInstallPaths,
+  resolveTargetOrder,
   TARGET_ORDER,
   writeInstall,
 } from '../../src/install/index.ts'
@@ -28,16 +29,35 @@ function fake(name: TargetName, ok: boolean): Target {
   } as Target
 }
 
-function fakes(ok: Record<TargetName, boolean>): Record<TargetName, Target> {
+function fakes(ok: Record<Exclude<TargetName, 'launchd'>, boolean>): Record<TargetName, Target> {
   return {
     systemd: fake('systemd', ok.systemd),
     compose: fake('compose', ok.compose),
     quadlet: fake('quadlet', ok.quadlet),
+    launchd: fake('launchd', false),
   }
 }
 
 test('order is quadlet, compose, systemd', () => {
   expect(TARGET_ORDER).toEqual(['quadlet', 'compose', 'systemd'])
+})
+
+test('darwin order starts with launchd', () => {
+  expect(resolveTargetOrder('darwin')).toEqual(['launchd', 'quadlet', 'compose', 'systemd'])
+})
+
+test('linux order never lists launchd', () => {
+  expect(resolveTargetOrder('linux')).toEqual(['quadlet', 'compose', 'systemd'])
+})
+
+test('darwin default is launchd when it is available', async () => {
+  const targets = {
+    ...fakes({ systemd: false, compose: true, quadlet: false }),
+    launchd: fake('launchd', true),
+  }
+  const d = await detectTargets(targets, resolveTargetOrder('darwin'))
+  expect(d.map((x) => x.name)).toEqual(['launchd', 'quadlet', 'compose', 'systemd'])
+  expect(findDefaultTarget(d)).toBe('launchd')
 })
 
 test('default is quadlet when all ok', async () => {

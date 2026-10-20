@@ -54,6 +54,7 @@ function targets(over: Partial<Record<TargetName, Target>> = {}) {
     quadlet: fake('quadlet'),
     compose: fake('compose'),
     systemd: fake('systemd'),
+    launchd: fake('launchd'),
     ...over,
   }
 }

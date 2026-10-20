@@ -32,7 +32,7 @@ import { MESSAGE_FORMATS } from './format/index.ts'
 import type { MessageFormat } from './format/index.ts'
 import { readHookInput, runHook } from './hook/index.ts'
 import type { HookDeps } from './hook/index.ts'
-import { createTargets, resolveInstallPaths, TARGET_ORDER } from './install/index.ts'
+import { createTargets, resolveInstallPaths, resolveTargetOrder } from './install/index.ts'
 import { resolveMcpPort, runMcp } from './mcp/index.ts'
 import type { CliLocation, InstallPaths, Target, TargetName } from './install/index.ts'
 import { DEFAULT_PROVIDER, PROVIDERS, requireProvider } from './provider/index.ts'
@@ -186,13 +186,16 @@ function runInitCommand(args: InitArgs): Promise<number> {
 }
 
 function createRealTargets(paths: InstallPaths): Readonly<Record<TargetName, Target>> {
+  const userInfo = os.userInfo()
   return createTargets(
     {
       exec: realExec,
       paths,
       env: process.env,
-      user: os.userInfo().username,
+      user: userInfo.username,
       providers: PROVIDERS,
+      platform: process.platform,
+      uid: userInfo.uid,
     },
     resolveCliLocation(),
   )
@@ -317,7 +320,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   program
     .command('init')
     .description('set up the bot token and install the service')
-    .addArgument(new Argument('[target]').choices(TARGET_ORDER))
+    .addArgument(new Argument('[target]').choices(resolveTargetOrder(process.platform)))
     .option('--port <n>', "API port (default 8787, or the existing install's)", parsePort)
     .addOption(
       new Option('--provider <name>', 'chat app to use').choices(

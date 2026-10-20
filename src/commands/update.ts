@@ -4,6 +4,7 @@ import { NO_AUTH, parseToken, readTokenFile } from '../auth/index.ts'
 import type { ApiAuth } from '../auth/index.ts'
 import {
   findExistingInstall,
+  findPlistExecWords,
   findUnitExecWords,
   resolveRecordProvider,
   writeInstall,
@@ -54,17 +55,22 @@ function resolveFallbackRoot(deps: UpdateDeps): string {
   return join(deps.paths.userNpmPrefix, 'lib', 'node_modules')
 }
 
-/** The node and CLI script the systemd unit runs; throws when the unit doesn't name both. */
-function readUnitNpmWords(deps: UpdateDeps): readonly [string, string] {
-  let unit: string
+/** The node and CLI script the service file runs; throws when it doesn't name both. */
+function readServiceNpmWords(
+  deps: UpdateDeps,
+  target: 'systemd' | 'launchd',
+): readonly [string, string] {
+  const file = target === 'systemd' ? deps.paths.systemdUnit : deps.paths.launchdPlist
+  let text: string
   try {
-    unit = readFileSync(deps.paths.systemdUnit, 'utf8')
+    text = readFileSync(file, 'utf8')
   } catch (error) {
-    throw new Error(`couldn't read ${deps.paths.systemdUnit}: ${describeError(error)}`)
+    throw new Error(`couldn't read ${file}: ${describeError(error)}`)
   }
-  const [nodePath, cliPath] = findUnitExecWords(unit) ?? []
+  const words = target === 'systemd' ? findUnitExecWords(text) : findPlistExecWords(text)
+  const [nodePath, cliPath] = words ?? []
   if (nodePath === undefined || cliPath === undefined) {
-    throw new Error(`couldn't find the node and CLI paths in ${deps.paths.systemdUnit}`)
+    throw new Error(`couldn't find the node and CLI paths in ${file}`)
   }
   return [nodePath, cliPath]
 }
@@ -98,14 +104,15 @@ async function resolveSubject(
   deps: UpdateDeps,
   existing: ExistingInstall | undefined,
 ): Promise<Subject> {
-  if (existing?.record.target !== 'systemd') {
+  const target = existing?.record.target
+  if (existing === undefined || (target !== 'systemd' && target !== 'launchd')) {
     return resolveRunningSubject(deps)
   }
   const { record } = existing
   if (record.cliKind === 'binary') {
     return { kind: 'binary', path: record.cliPath ?? deps.paths.binaryCopy, isRunning: false }
   }
-  const [nodePath, unitCliPath] = readUnitNpmWords(deps)
+  const [nodePath, unitCliPath] = readServiceNpmWords(deps, target)
   return { kind: 'npm', nodePath, cliPath: record.cliPath ?? unitCliPath, isRunning: false }
 }
 
@@ -195,6 +202,7 @@ async function replaceSubjectBinary(
   await replaceBinary({
     release,
     assetName,
+    platform: deps.platform,
     destination: path,
     exec: deps.exec,
     ...(deps.signal ? { signal: deps.signal } : {}),

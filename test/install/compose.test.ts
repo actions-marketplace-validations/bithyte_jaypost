@@ -35,7 +35,15 @@ function make() {
   const env = { HOME: tmp }
   const paths = resolveInstallPaths(env)
   return {
-    t: createComposeTarget({ exec: fakeExec, paths, env, user: 'me', providers: PROVIDERS }),
+    t: createComposeTarget({
+      exec: fakeExec,
+      paths,
+      env,
+      user: 'me',
+      providers: PROVIDERS,
+      platform: 'linux',
+      uid: 501,
+    }),
     paths,
   }
 }
@@ -78,6 +86,8 @@ test('unavailable when docker missing entirely (throws)', async () => {
     env,
     user: 'me',
     providers: PROVIDERS,
+    platform: 'linux',
+    uid: 501,
   })
   expect(await t.available()).toEqual({ ok: false, reason: 'docker not installed' })
 })
@@ -217,6 +227,8 @@ test('clearOwner throws when the provider has no owner setting', async () => {
     env: { HOME: tmp },
     user: 'me',
     providers: [createFakeProvider()],
+    platform: 'linux',
+    uid: 501,
   })
   await expect(t.clearOwner({ ...rec, provider: 'fake' })).rejects.toThrow(
     'provider "fake" has no owner setting',

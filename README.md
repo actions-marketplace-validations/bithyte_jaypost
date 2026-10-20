@@ -45,7 +45,7 @@ flowchart LR
 
 A small service runs in the background on localhost. Callers POST a question with button options; the bot sends it to you and the HTTP request stays open until you tap a button or (with `allowText`) reply with text, or the timeout fires, then returns your answer. Agents reach the same API through `telegram-ask mcp`, a stdio MCP server. Notifications work the same way but don't wait for an answer.
 
-It's single owner: one Telegram user, proven by a pairing code. The service can run as a Podman Quadlet, a Docker Compose project or a plain systemd user service.
+It's single owner: one Telegram user, proven by a pairing code. The service can run as a Podman Quadlet, a Docker Compose project, a plain systemd user service or, on macOS, a launchd agent.
 
 ## Agents (MCP)
 
@@ -376,14 +376,14 @@ The API is described in OpenAPI 3.1: [`docs/openapi.yaml`](docs/openapi.yaml) (p
 
 Create a bot with @BotFather first and have the token ready. `init`:
 
-1. Detects which targets work here (Podman Quadlet, Docker Compose, systemd) and asks where the bot should run. The first usable one in that order is the default. Or pass it: `init quadlet`, `init compose`, `init systemd`. `--provider NAME` picks the chat app; only `telegram` exists for now, and it's the default.
+1. Detects which targets work here (Podman Quadlet, Docker Compose, systemd, launchd on macOS) and asks where the bot should run. The first usable one in that order is the default (launchd is first on macOS). Or pass it: `init quadlet`, `init compose`, `init systemd`, `init launchd`. `--provider NAME` picks the chat app; only `telegram` exists for now, and it's the default.
 2. Asks for the bot token (input hidden) and checks it with Telegram. Port is 8787; use `--port N` to change it. It refuses a port that's already in use.
 3. Makes an API token and saves it to `~/.config/telegram-ask/token` (mode 0600). It asks first if you're upgrading an install that has none; `--token` and `--no-token` skip the question. It reuses a valid saved token.
 4. Installs and starts the service, then waits for pairing.
 
 If it finds an existing install it offers to replace it, reusing the saved bot token and owner (no re-pairing). If there's no install but a bot token was kept by `uninstall`, it reuses that (and the owner) too. If `init` fails partway, run it again; the old install record and saved bot token are kept until the new install succeeds.
 
-Node 24+ is needed for `npx` and the systemd target unless you use the standalone binary; the container targets bring their own Node.
+Node 24+ is needed for `npx` and the systemd and launchd targets unless you use the standalone binary; the container targets bring their own Node.
 
 ### Standalone binary
 
@@ -393,7 +393,15 @@ Each GitHub Release has a single-file binary for Linux and macOS, so you can ski
 curl -L https://github.com/cozminu/telegram-ask/releases/latest/download/telegram-ask-linux-x64.gz | gunzip > telegram-ask && chmod +x telegram-ask && ./telegram-ask init systemd
 ```
 
-`init` copies the binary to `~/.local/bin/telegram-ask` and runs the service from there. The macOS binaries exist too, but there's no macOS service target yet. `SHA256SUMS` on the release lists the checksums.
+On macOS (Apple silicon):
+
+```
+curl -L https://github.com/cozminu/telegram-ask/releases/latest/download/telegram-ask-darwin-arm64.gz | gunzip > telegram-ask && chmod +x telegram-ask && ./telegram-ask init launchd
+```
+
+If you downloaded the binary with a browser instead of curl, macOS may block it; run `xattr -d com.apple.quarantine telegram-ask` first.
+
+`init` copies the binary to `~/.local/bin/telegram-ask` and runs the service from there. `SHA256SUMS` on the release lists the checksums.
 
 The API token file `~/.config/telegram-ask/token` is written for every target; the service's own copy goes in the target's `.env` or in `config.json` as listed below. All targets keep their files under `~/.config/telegram-ask/` (or `$XDG_CONFIG_HOME/telegram-ask/`). `install.json` there records which target is installed, its port and version. It's what `status`, `reset-owner` and `uninstall` read.
 
@@ -437,6 +445,19 @@ No container. `init` installs the package globally with npm (`npm i -g`), or int
 Logs: `journalctl --user -u telegram-ask -f`. Linger is handled as for Quadlet.
 
 With the [standalone binary](#standalone-binary) there's no npm package; the unit runs `~/.local/bin/telegram-ask start`, and `uninstall` with a purge deletes that copy.
+
+### launchd (macOS)
+
+A per-user LaunchAgent, no container. With the [standalone binary](#standalone-binary), `init` copies it to `~/.local/bin/telegram-ask` and the agent runs that; otherwise it installs the package with npm as the systemd target does and runs `node` with the CLI. Written:
+
+- `~/.config/telegram-ask/config.json` (bot token, port, owner, `apiToken`) and `state.json`, as for systemd
+- `~/Library/LaunchAgents/io.github.cozminu.telegram-ask.plist` with absolute paths to the command and the config file (`TELEGRAM_ASK_CONFIG` is always set in the plist, and `install.json` records the same path)
+
+The agent runs only while you're logged in to the Mac, and launchd restarts it if it exits with a failure. `init` needs a desktop session, so it won't offer launchd over SSH with nobody logged in.
+
+Logs: `tail -f ~/Library/Logs/telegram-ask/telegram-ask.log`. They aren't rotated.
+
+`init` clears the quarantine attribute on the copied binary, so Gatekeeper shouldn't stop it.
 
 ### Config
 
@@ -491,7 +512,7 @@ Where the log lives:
 
 | Install                     | File                                                                      |
 | --------------------------- | ------------------------------------------------------------------------- |
-| systemd                     | `audit.jsonl` next to the config file, normally `~/.config/telegram-ask/` |
+| systemd, launchd            | `audit.jsonl` next to the config file, normally `~/.config/telegram-ask/` |
 | Quadlet                     | `/data/audit.jsonl` in the `telegram-ask-data` volume                     |
 | Compose                     | `/data/audit.jsonl` in the compose project's `data` volume                |
 | no install, `start` by hand | next to `$TELEGRAM_ASK_CONFIG` or the default config path                 |
@@ -522,14 +543,14 @@ A duration is `30m`, `2h`, `1d` or a combination in that order (`1h30m`, `1d12h`
 
 Both settings are saved in `config.json` as `quietHours` (`"23:00-08:00"`) and `mutedUntil` (an ISO timestamp), so they survive a restart. You can also edit them there; a hand edit applies on restart, and an invalid `quietHours` stops startup. When a mute passes, it just stops applying.
 
-Windows use the service's own time zone, and replies that set or show a time name it. The systemd target uses the host's. `init` writes `TZ` into the Compose and Quadlet `.env` so the container matches the host. Container installs from before this release use UTC until you re-run `init`.
+Windows use the service's own time zone, and replies that set or show a time name it. The systemd and launchd targets use the host's. `init` writes `TZ` into the Compose and Quadlet `.env` so the container matches the host. Container installs from before this release use UTC until you re-run `init`.
 
 A notification sent while quiet is deleted 8 hours after the quiet period ends, not 8 hours after it was sent, so you get a chance to see it. If that would be more than 47 hours out (Telegram won't let a bot delete older messages), it isn't deleted automatically and stays until you dismiss it.
 
 ## Commands
 
 ```
-telegram-ask init [systemd|compose|quadlet] [--port N] [--provider NAME] [--token|--no-token]
+telegram-ask init [launchd|systemd|compose|quadlet] [--port N] [--provider NAME] [--token|--no-token]
 telegram-ask status
 telegram-ask log [--since WHEN] [--project NAME] [-n N | --limit N] [--json]
 telegram-ask test
@@ -549,7 +570,7 @@ telegram-ask send notify TEXT [--project NAME] [--format plain|markdown] [--port
 - `log`: prints the questions the service asked and how they ended. See [Question log](#question-log).
 - `test`: sends "This is a test" with Approve/Decline buttons (Decline on timeout) and prints the response.
 - `reset-owner`: clears the paired owner. See [Pairing](#pairing).
-- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token, paired owner and question log. Answer no to keep them: `config.json` (systemd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. For systemd, `state.json` and the question log stay. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files (for systemd that includes `state.json` and `audit.jsonl`). For systemd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
+- `uninstall`: stops and removes the service, then asks whether to also delete the saved credentials, API token, paired owner and question log. Answer no to keep them: `config.json` (systemd, launchd) or the target's `.env` and volume stay on disk, and a later `init` finds them and reuses the bot token and owner without asking. For systemd and launchd, `state.json` and the question log stay. The API token file `~/.config/telegram-ask/token` is kept too, and the next `init` reuses it. Yes also removes the target's image, volume and files (for systemd and launchd that includes `state.json` and `audit.jsonl`). The launchd log file in `~/Library/Logs/telegram-ask/` is kept even then. For systemd and launchd the npm package stays; `uninstall` prints the command to remove it, `npm rm -g telegram-ask`, or `npm rm -g --prefix ~/.local/share/telegram-ask/npm telegram-ask` if `init` installed it into that prefix.
 - `update`: moves the install to the latest version, then hands off to the new CLI to finish. A binary install swaps its copy of the binary for the latest release; an npm install runs `npm i -g`; Quadlet and Compose installs rebuild the image and restart the service.
 - `start`: runs the service in the foreground. The installed services use this.
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
