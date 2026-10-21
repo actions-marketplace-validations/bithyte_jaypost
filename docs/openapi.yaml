@@ -244,7 +244,7 @@ components:
           type: string
           minLength: 1
           maxLength: 255
-          description: File name shown in Telegram. Its extension decides how Telegram opens it. Not trimmed; no `/`, `\` or control characters, not `.` or `..`.
+          description: File name shown in the chat app. Its extension decides how the app opens it. Not trimmed; no `/`, `\` or control characters, not `.` or `..`.
         text:
           type: string
           description: File contents as UTF-8 text. Exactly one of `text` and `data`.
@@ -345,6 +345,12 @@ components:
               type: string
             maxAttachmentBytes:
               type: number
+            maxTextLength:
+              type: number
+              description: Most characters a request text may have.
+            maxOptionCount:
+              type: number
+              description: Most options a request may have; absent means no provider limit
           required:
             - paired
           additionalProperties: {}
@@ -365,6 +371,12 @@ components:
               type: string
             maxAttachmentBytes:
               type: number
+            maxTextLength:
+              type: number
+              description: Most characters a request text may have.
+            maxOptionCount:
+              type: number
+              description: Most options a request may have; absent means no provider limit
           required:
             - paired
             - code

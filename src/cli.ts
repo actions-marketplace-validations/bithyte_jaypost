@@ -173,6 +173,7 @@ function runOpenApiCommand(file: string | undefined, flagPort: number | undefine
     port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
     maxTextLength: provider.maxTextLength,
     maxAttachmentBytes: resolveMaxAttachmentBytes(provider),
+    ...(provider.maxOptionCount === undefined ? {} : { maxOptionCount: provider.maxOptionCount }),
   })
   if (file === undefined) {
     process.stdout.write(yaml)
@@ -498,7 +499,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     .option('--attach <file>', 'attach a file; "-" reads stdin')
     .option(
       '--attach-name <name>',
-      'file name shown in Telegram (default: the file\'s basename, "attachment.txt" for stdin)',
+      'file name shown in the chat app (default: the file\'s basename, "attachment.txt" for stdin)',
     )
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
     .action(
@@ -561,7 +562,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     .option('--attach <file>', 'attach a file; "-" reads stdin')
     .option(
       '--attach-name <name>',
-      'file name shown in Telegram (default: the file\'s basename, "attachment.txt" for stdin)',
+      'file name shown in the chat app (default: the file\'s basename, "attachment.txt" for stdin)',
     )
     .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
     .action(

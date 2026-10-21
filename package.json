@@ -1,10 +1,11 @@
 {
   "name": "jaypost",
   "version": "0.5.0",
-  "description": "Local HTTP API that asks you a question on Telegram with inline buttons and returns your answer",
+  "description": "Local HTTP API that asks you a question on Telegram or Discord with buttons and returns your answer",
   "keywords": [
     "approval",
     "bot",
+    "discord",
     "human-in-the-loop",
     "telegram"
   ],
@@ -49,6 +50,9 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
+    "@discordjs/core": "^2.6.0",
+    "@discordjs/rest": "^2.6.3",
+    "@discordjs/ws": "^2.0.4",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "commander": "^15.0.0",
     "fastify": "^5.12.7",
