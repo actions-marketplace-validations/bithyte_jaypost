@@ -104,9 +104,23 @@ jobs:
           cache: true
           registry-url: https://registry.npmjs.org
 
-      - uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+      - id: publish
+        uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
+
+      # In a pnpm workspace changesets tags jaypost@X.Y.Z, but release-assets and `jaypost update`
+      # in already installed binaries expect vX.Y.Z
+      - name: Move the release to the vX.Y.Z tag
+        if: steps.publish.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/jaypost@$version" --jq .object.sha)
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$version" -f sha="$sha" > /dev/null
+          gh release edit "jaypost@$version" --tag "v$version" --title "v$version"
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/jaypost@$version"
 
   # Binaries are built per OS so darwin ones can be code-signed (tsdown can't sign on Linux)
   binaries:
