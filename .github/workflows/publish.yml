@@ -80,6 +80,9 @@ jobs:
 
       - run: npm run check
 
+      # test/site imports site/src, whose tsconfig extends astro's, so astro must be installed
+      - run: npm --prefix site ci
+
       - run: npm test
 
       # npm pack runs prepack, which builds dist
