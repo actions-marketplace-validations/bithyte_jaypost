@@ -14,6 +14,8 @@ export const PREVIEW_LENGTH = 500
 export const MAX_HEADER_LENGTH = 200
 /** Longer "Always allow adds" lines are dropped, and Always allow with them. */
 export const MAX_SUGGESTION_LINE_LENGTH = 1000
+/** Cap on the SessionStart /status call, so a hung service can't stall session startup. */
+export const SETUP_STATUS_TIMEOUT_MS = 2000
 /** Project name when no flag, `CLAUDE_PROJECT_DIR` or `cwd` gives one. */
 export const DEFAULT_PROJECT = 'claude'
 export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion'
@@ -23,3 +25,7 @@ export const MCP_TOOL_PREFIX = 'mcp__'
 export const MCP_NAME_SEPARATOR = '__'
 export const MULTI_EDIT_SEPARATOR = '\n---\n'
 export const ELLIPSIS = '…'
+/** A hand-written `jaypost hook` command, bare, a path or `npx -y jaypost@x`; not the plugin wrapper. */
+export const MANUAL_HOOK_PATTERN = /(^|[\s/])jaypost(@\S+)? hook(\s|$)/
+/** A hand-written `jaypost mcp` server command line (command and args joined by spaces). */
+export const MANUAL_MCP_PATTERN = /(^|[\s/])jaypost(@\S+)? mcp(\s|$)/
