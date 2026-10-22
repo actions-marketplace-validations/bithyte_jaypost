@@ -12,6 +12,11 @@ export class PendingRequests {
     return this.#entries.size
   }
 
+  /** Whether `id` is open: registered and not settled yet. */
+  has(id: string): boolean {
+    return this.#entries.has(id)
+  }
+
   /**
    * Registers `request` and resolves with how it settled. The timeout settles it with the request's
    * timeout option.
@@ -54,6 +59,11 @@ export class PendingRequests {
   /** Settles as cancelled; false when the id is unknown or already settled. */
   cancel(id: string): boolean {
     return this.#settle(id, CANCELLED_SETTLEMENT)
+  }
+
+  /** Settles as closed by a vote decided without it; false when the id is unknown or settled. */
+  close(id: string, answer: string): boolean {
+    return this.#settle(id, { kind: 'closed', answer })
   }
 
   /** Open requests, oldest first. */

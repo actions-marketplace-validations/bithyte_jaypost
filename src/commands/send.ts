@@ -1,3 +1,4 @@
+import type { VoteResult, VoteRule } from '../approval/index.ts'
 import { Caller } from '../client/index.ts'
 import type { Message, Question } from '../client/index.ts'
 import type { SendDeps, SendNotifyArgs, SendRequestArgs } from './types.ts'
@@ -57,4 +58,26 @@ export function toMessage(args: SendNotifyArgs): Message {
 /** The answer line `send request` prints: the bare answer, or `{ answer, timedOut }` with `json`. */
 export function formatAnswer(answer: string, timedOut: boolean, json: boolean | undefined): string {
   return json === true ? JSON.stringify({ answer, timedOut }) : answer
+}
+
+/**
+ * The line a decided vote prints: the bare answer, or with `json` the answer, whether the rounds
+ * ran out, the decision, the rule and each voter's answer (`null` when none) with the round count.
+ */
+export function formatVoteResult(
+  result: Extract<VoteResult, { kind: 'decided' }>,
+  rule: VoteRule,
+  json: boolean | undefined,
+): string {
+  if (json !== true) {
+    return result.answer
+  }
+  return JSON.stringify({
+    answer: result.answer,
+    timedOut: result.timedOut,
+    approved: result.approved,
+    require: rule,
+    votes: Object.fromEntries(result.votes.map((vote) => [vote.voter, vote.answer ?? null])),
+    rounds: result.roundCount,
+  })
 }

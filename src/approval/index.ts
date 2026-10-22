@@ -9,6 +9,7 @@ export {
   MAX_WAIT_SECONDS,
   OWNER_COMMANDS,
   RESULT_TTL_MS,
+  VOTE_RULES,
 } from './constants.ts'
 export {
   formatFinalText,
@@ -18,6 +19,7 @@ export {
   formatRejectedReply,
   formatResultLine,
   formatSummary,
+  formatVoteProgress,
 } from './formatter.ts'
 export {
   checkProjectText,
@@ -32,12 +34,15 @@ export {
 } from './parser.ts'
 export { PendingRequests } from './pending.ts'
 export { ApprovalService, SendError } from './service.ts'
+export { decideVote } from './vote.ts'
+export { askWithRetries, runVote, VoterSendError } from './voting.ts'
 export type {
   ApprovalRequest,
   ApprovalServiceOptions,
   Attachment,
   AuditSink,
   HistoryEntry,
+  MessageButtons,
   MessageEnding,
   MessageReference,
   Messenger,
@@ -50,7 +55,14 @@ export type {
   RequestState,
   RequestStore,
   SentRequest,
+  SentQuestion,
   Settlement,
   StartedRequest,
+  Vote,
+  VoteCounts,
+  VoteDecision,
+  VoteResult,
+  VoteRule,
+  VoterAnswer,
   WaitParseResult,
 } from './types.ts'

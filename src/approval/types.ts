@@ -24,6 +24,13 @@ export type ApprovalRequest = {
   readonly timeoutSeconds: number
   /** The decoded file to send with the question; `undefined` when the caller sent none. */
   readonly attachment: Attachment | undefined
+  /** User id to send to; omitted means the owner. Never set by `parseApprovalRequest`. */
+  readonly recipient?: string
+  /**
+   * On timeout the message is finalized as `reasked` instead of `timedOut`; the result is still
+   * `timedOut: true`. Never set by `parseApprovalRequest`.
+   */
+  readonly reaskOnTimeout?: boolean
 }
 
 /**
@@ -52,11 +59,14 @@ export type Settlement =
   | { readonly kind: 'rejected'; readonly answer: string }
   | { readonly kind: 'replied'; readonly answer: string }
   | { readonly kind: 'cancelled' }
+  /** A vote was decided without this voter; `answer` is the vote's answer. */
+  | { readonly kind: 'closed'; readonly answer: string }
 
 /**
- * How a request message ends; `expired` is only used by startup recovery, never by `PendingRequests`.
+ * How a request message ends; `expired` is only used by startup recovery, never by `PendingRequests`,
+ * and `reasked` replaces `timedOut` for a request that is asked again.
  */
-export type MessageEnding = Settlement | { readonly kind: 'expired' }
+export type MessageEnding = Settlement | { readonly kind: 'expired' } | { readonly kind: 'reasked' }
 
 /**
  * State of a background question as `ApprovalService.get` reports it; `done` covers a tap, the
@@ -66,6 +76,17 @@ export type RequestState =
   | { readonly kind: 'pending'; readonly expiresAt: Date }
   | { readonly kind: 'done'; readonly outcome: Outcome }
   | { readonly kind: 'cancelled' }
+
+/** What `ApprovalService.send` resolves to once the message is sent; `result` settles later. */
+export type SentQuestion = {
+  readonly id: string
+  readonly reference: MessageReference
+  /** The message as sent, before any final line. */
+  readonly message: FormattedText
+  readonly result: Promise<RequestResult>
+  /** The text the message was finalized with; undefined until `result` settles. */
+  readonly finalText: () => FormattedText | undefined
+}
 
 /** What `ApprovalService.start` resolves to; `expiresAt` is when the timeout fires. */
 export type StartedRequest = {
@@ -89,6 +110,12 @@ export type ParseResult =
  */
 export type MessageReference = unknown
 
+/** The buttons an edited message keeps: the request `id` they answer and its `options`. */
+export type MessageButtons = {
+  readonly id: string
+  readonly options: readonly string[]
+}
+
 /** Chat transport the service uses, so the approval logic stays independent of any provider. */
 export type Messenger = {
   /** The returned reference must be JSON-serializable (it's saved to the state file). */
@@ -100,12 +127,23 @@ export type Messenger = {
     allowText: boolean,
     /** The file to send with the message; `undefined` when there is none. */
     attachment: Attachment | undefined,
+    /** The user id to send to; `undefined` means the owner. */
+    recipient: string | undefined,
   ) => Promise<MessageReference>
   /** Request ended: show the final text and stop accepting answers. Absent means skipped. */
   readonly finalize?: (
     reference: MessageReference,
     message: FormattedText,
     ending: MessageEnding,
+  ) => Promise<void>
+  /**
+   * Replaces the text of a sent message, keeping its buttons when `buttons` is given and leaving it
+   * without any otherwise. Absent means skipped; a throw is logged by the service.
+   */
+  readonly update?: (
+    reference: MessageReference,
+    message: FormattedText,
+    buttons: MessageButtons | undefined,
   ) => Promise<void>
 }
 
@@ -178,4 +216,68 @@ export type OwnerCommand = {
 export type OwnerCommandOptions = {
   readonly now: () => Date
   readonly maxTextLength: number
+}
+
+/** How a vote is decided: `all` voters must approve, or `majority` of all listed voters. */
+export type VoteRule = 'all' | 'majority'
+
+/** Tally of a vote; voters who haven't answered are in neither count. */
+export type VoteCounts = {
+  readonly voterCount: number
+  readonly approveCount: number
+  readonly rejectCount: number
+}
+
+export type VoteDecision = 'approved' | 'rejected' | 'undecided'
+
+/**
+ * A vote over a two-way question: `request.options` is `[approve, reject]` and
+ * `request.timeoutOption` is the reject answer. `voters` is non-empty and duplicate-free.
+ */
+export type Vote = {
+  readonly request: ApprovalRequest
+  readonly voters: readonly string[]
+  readonly rule: VoteRule
+  /** Rounds after the first; only voters who haven't voted are asked again. */
+  readonly retryCount: number
+}
+
+/** One voter's answer; `undefined` when they never voted. */
+export type VoterAnswer = {
+  readonly voter: string
+  readonly answer: string | undefined
+}
+
+/**
+ * What `runVote` resolves to; `cancelled` when its signal aborted. `votes` is in `voters` order and
+ * `timedOut` means the rounds ran out, which always rejects.
+ */
+export type VoteResult =
+  | {
+      readonly kind: 'decided'
+      readonly approved: boolean
+      readonly answer: string
+      readonly votes: readonly VoterAnswer[]
+      readonly roundCount: number
+      readonly timedOut: boolean
+    }
+  | { readonly kind: 'cancelled' }
+
+/** How one round of a vote ended; `timedOut` means every open message timed out undecided. */
+export type RoundEnd =
+  | { readonly kind: 'decided'; readonly approved: boolean }
+  | { readonly kind: 'timedOut' }
+  | { readonly kind: 'cancelled' }
+
+/** A vote message sent to `voter`. */
+export type VoterQuestion = SentQuestion & { readonly voter: string }
+
+/**
+ * What `runVote` keeps across rounds: each voter's answer, each voter's latest message, and the
+ * progress updates sent so far.
+ */
+export type VoteState = {
+  readonly answers: Map<string, string>
+  readonly latest: Map<string, VoterQuestion>
+  readonly updates: Promise<void>[]
 }

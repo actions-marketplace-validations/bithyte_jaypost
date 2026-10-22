@@ -1,6 +1,6 @@
 import { GrammyError, InputFile } from 'grammy'
 import type { Bot } from 'grammy'
-import type { MessageEntity } from 'grammy/types'
+import type { InlineKeyboardMarkup, MessageEntity } from 'grammy/types'
 import type { Attachment, MessageReference, Messenger, OwnerCommand } from '../approval/index.ts'
 import {
   DISMISS_LABEL,
@@ -109,17 +109,29 @@ async function sendFormatted<Result>(
   return send({})
 }
 
+// One button per row; each callback carries the request id and the option index.
+function toInlineKeyboard(id: string, options: readonly string[]): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: options.map((label, index) => [
+      { text: label, callback_data: formatChoicePayload(id, index) },
+    ]),
+  }
+}
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
 // The conversation keeps ids as strings; grammY wants the numeric chat id.
 function requireOwnerChatId(conversation: OwnerConversation): number {
-  const ownerId = conversation.ownerId
-  if (ownerId === undefined) {
+  return requireChatId(conversation.ownerId)
+}
+
+function requireChatId(userId: string | undefined): number {
+  if (userId === undefined) {
     throw new Error('bot is not paired yet')
   }
-  return Number(ownerId)
+  return Number(userId)
 }
 
 /**
@@ -163,8 +175,15 @@ export function createTelegramMessenger(
     }
   }
   return {
-    async sendRequest(id, message, options, allowText, attachment): Promise<MessageReference> {
-      const ownerId = requireOwnerChatId(conversation)
+    async sendRequest(
+      id,
+      message,
+      options,
+      allowText,
+      attachment,
+      recipient,
+    ): Promise<MessageReference> {
+      const ownerId = requireChatId(recipient ?? conversation.ownerId)
       const hasButtons = options.length > 0
       const shown = withTextHint(message, hasButtons, allowText)
       const documentMessageId =
@@ -173,20 +192,14 @@ export function createTelegramMessenger(
         sendFormatted(shown, log, (extra) =>
           bot.api.sendMessage(ownerId, shown.text, {
             ...extra,
-            ...(hasButtons && {
-              reply_markup: {
-                inline_keyboard: options.map((label, index) => [
-                  { text: label, callback_data: formatChoicePayload(id, index) },
-                ]),
-              },
-            }),
+            ...(hasButtons && { reply_markup: toInlineKeyboard(id, options) }),
             ...(documentMessageId !== undefined && {
               reply_parameters: { message_id: documentMessageId },
             }),
           }),
         ),
       )
-      conversation.track(formatMessageKey(sent.chat.id, sent.message_id), id, allowText)
+      conversation.track(formatMessageKey(sent.chat.id, sent.message_id), id, allowText, recipient)
       return {
         chatId: sent.chat.id,
         messageId: sent.message_id,
@@ -202,6 +215,18 @@ export function createTelegramMessenger(
           ...extra,
           ...(hasButtons !== false && {
             reply_markup: { inline_keyboard: [] },
+          }),
+        }),
+      )
+    },
+    async update(reference, message, buttons) {
+      const { chatId, messageId } = reference as TelegramMessageReference
+      // An edit without reply_markup drops the keyboard, so an open question gets it back.
+      await sendFormatted(message, log, (extra) =>
+        bot.api.editMessageText(chatId, messageId, message.text, {
+          ...extra,
+          ...(buttons !== undefined && {
+            reply_markup: toInlineKeyboard(buttons.id, buttons.options),
           }),
         }),
       )
@@ -246,10 +271,10 @@ export function createTelegramMessenger(
 }
 
 /**
- * Lets the conversation decide what a button tap means; only the owner's taps in a private chat
- * count. A Dismiss tap deletes the tapped message (so it works without in-memory state, e.g. after
- * a restart) and the bot's document it replies to; a failed delete is logged. Always answers the
- * callback, once, so the button stops spinning.
+ * Lets the conversation decide what a button tap means; only taps in a private chat count, from
+ * the owner or from the voter a question was sent to. A Dismiss tap deletes the tapped message (so
+ * it works without in-memory state, e.g. after a restart) and the bot's document it replies to; a
+ * failed delete is logged. Always answers the callback, once, so the button stops spinning.
  */
 export function registerTapHandler(
   bot: Bot,

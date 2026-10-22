@@ -209,6 +209,8 @@ git diff | jaypost send request 'Ship it?' -o Yes -d Stop --attach - --attach-na
 
 `send request` prints the answer on stdout (the `-d` default on timeout) and exits 0. `--json` prints `{"answer":"...","timedOut":false}` instead, if you need to tell a timeout from a tap. `-o` repeats once per button; `-d` adds the default as the last button unless an `-o` already names it. `--allow-text` also lets you answer by replying with text; then `-o` is optional and `-d` can be any short answer, not added as a button. `send notify` prints nothing and exits 0 once sent. `--format markdown` on either one reads the text as [markdown](#formatting). Errors go to stderr with exit 1, and bad arguments exit 2. Ctrl-C cancels a pending question, which edits the Telegram message to a "cancelled" line. `--attach FILE` sends a file along with the message (10 MiB at most; the service's limit applies); `--attach -` reads stdin, named `attachment.txt` unless `--attach-name NAME` says otherwise. `--attach-name` without `--attach` exits 2. The port is picked the same way as for [`mcp`](#agents-mcp).
 
+In [direct mode](#ci-github-actions), `-u ID` sends the question to an approver instead of the owner (repeat it for each one), `--require all|majority` decides the vote, and `--retry N` (0 to 100) asks again after a timeout; see [Several approvers](#several-approvers) for the exit codes and `--json` output. In service mode those three exit 2.
+
 ### From Node
 
 `npm i jaypost` and use the `Client`, which wraps the same two endpoints:
@@ -444,6 +446,8 @@ JAYPOST_BOT_TOKEN=...
 JAYPOST_OWNER_ID=...
 ```
 
+After the owner pairs and the env vars print, `setup-ci` asks `Pair an approver?`. Say yes and it shows a fresh code for that person to send to the bot; repeat for each approver. When you're done it prints their ids as `-u ID` flags to pass to `send request` (see [Several approvers](#several-approvers)). `jaypost setup-ci --approvers-only` skips the owner and the env vars, to add approvers later. On Discord, an approver must be in a server the bot is in before they DM the code.
+
 ### GitHub Action
 
 `uses: bithyte/jaypost@v0` asks or notifies the owner from a workflow, with no Node needed on the runner. Run `jaypost setup-ci` once to get the values for the three secrets (see above).
@@ -524,6 +528,24 @@ In direct mode `send request` exits with:
 With `--allow-text`, a typed reply counts as the `-d` answer only when it equals the `-d` value exactly, case included.
 
 So `-d No` works as a gate: the step fails unless someone approves. In service mode `send request` still exits 0 for any answer, including the default.
+
+### Several approvers
+
+In direct mode, `-u ID` sends the question to a paired user instead of the owner. Repeat it for each approver, and each one gets their own message. `--require` sets how the votes decide:
+
+- `all` (the default with `-u`): approved when every approver answers the `-o` button, rejected on the first `-d`.
+- `majority`: approved when more than half of the listed approvers answer `-o`, rejected once that can't happen. A tie rejects.
+
+```yaml
+- run: npx jaypost send request 'Publish v123?' -o Yes -d No -u 111 -u 222 -u 333 --require majority --retry 10
+  env: # same four
+```
+
+`--retry N` asks again after a timeout, up to N more times (100 at most), and only the approvers who haven't answered. Votes already cast stand. Each round waits `--timeout` seconds. A vote that runs out of rounds is rejected, since a missing vote counts as `-d`. `--retry` alone re-asks a plain question, with no vote. `--require` without `-u` is a vote of one, the owner.
+
+A vote exits 0 when approved, 3 when rejected, 1 on an error or a cancelled run, and 2 on bad arguments. It needs exactly one `-o`, a different `-d`, and no `--allow-text`. If a message can't be sent to one approver, the ones already sent are cancelled and the command exits 1. With `--json` it prints `{"answer","timedOut","approved","require","votes","rounds"}`, where `votes` maps each approver id to their answer, or `null` if they didn't answer.
+
+`-u`, `--require` and `--retry` exit 2 in service mode.
 
 Other differences from service mode:
 
@@ -737,9 +759,9 @@ jaypost update
 jaypost start
 jaypost mcp [--port N]
 jaypost hook [--port N] [--project NAME] [--timeout S]
-jaypost setup-ci [--provider NAME]
+jaypost setup-ci [--provider NAME] [--approvers-only]
 jaypost openapi [FILE] [--port N]
-jaypost send request TEXT [-o OPTION...] [--allow-text] -d DEFAULT [--timeout S] [--project NAME] [--format plain|markdown] [--attach FILE|-] [--attach-name NAME] [--json] [--port N]
+jaypost send request TEXT [-o OPTION...] [--allow-text] -d DEFAULT [--timeout S] [-u ID...] [--require all|majority] [--retry N] [--project NAME] [--format plain|markdown] [--attach FILE|-] [--attach-name NAME] [--json] [--port N]
 jaypost send notify TEXT [--project NAME] [--format plain|markdown] [--attach FILE|-] [--attach-name NAME] [--port N]
 ```
 
@@ -754,7 +776,7 @@ jaypost send notify TEXT [--project NAME] [--format plain|markdown] [--attach FI
 - `mcp`: runs an MCP server on stdin/stdout so agents can ask and notify you. See [Agents (MCP)](#agents-mcp).
 - `hook`: a Claude Code hook that sends permission prompts to your chat app. See [Claude Code hook](#claude-code-hook).
 - `openapi`: prints the API's OpenAPI spec, or writes it to `FILE`. See [OpenAPI spec](#openapi-spec).
-- `setup-ci`: pairs an owner and prints the env vars for CI. See [CI (GitHub Actions)](#ci-github-actions).
+- `setup-ci`: pairs an owner (and optionally approvers) and prints the env vars for CI. See [CI (GitHub Actions)](#ci-github-actions).
 - `send request` / `send notify`: the HTTP API from a shell. See [From the shell](#from-the-shell).
 
 ### One instance per token

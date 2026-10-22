@@ -1,5 +1,6 @@
 import type {
   Attachment,
+  MessageButtons,
   MessageEnding,
   MessageReference,
   OwnerCommand,
@@ -72,12 +73,19 @@ export type ProviderRuntime = {
     options: readonly string[],
     allowText: boolean,
     attachment: Attachment | undefined,
+    recipient: string | undefined,
   ) => Promise<MessageReference>
   /** Request ended; called once per ended request, `expired` included. Absent means skipped. */
   readonly finalize?: (
     reference: MessageReference,
     message: FormattedText,
     ending: MessageEnding,
+  ) => Promise<void>
+  /** Replaces a sent message's text, keeping its buttons when `buttons` is given. Optional. */
+  readonly update?: (
+    reference: MessageReference,
+    message: FormattedText,
+    buttons: MessageButtons | undefined,
   ) => Promise<void>
   /** The returned reference must be JSON-serializable (it's saved to the state file). */
   readonly sendNotification?: (
@@ -89,6 +97,11 @@ export type ProviderRuntime = {
   readonly deleteMessage?: (reference: MessageReference) => Promise<void>
   /** Present iff the provider pairs; `code` is raw (no dash). */
   readonly pairingInstructions?: (code: string) => string
+  /**
+   * How an approver (not the owner) pairs, when that differs; `setup-ci` falls back to
+   * `pairingInstructions`.
+   */
+  readonly approverPairingInstructions?: (code: string) => string
   /** Extra /status fields kept for old CLIs (Telegram: `bot`). */
   readonly statusFields?: () => Readonly<Record<string, string>>
   readonly start: (handlers: RuntimeHandlers) => void

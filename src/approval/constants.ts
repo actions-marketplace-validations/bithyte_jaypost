@@ -3,7 +3,10 @@ import type {
   OwnerCommand,
   RequestResult,
   RequestState,
+  RoundEnd,
   Settlement,
+  VoteResult,
+  VoteRule,
 } from './types.ts'
 
 /** Timeout when the client sends none, in seconds. */
@@ -36,8 +39,16 @@ export const ASCII_WHITESPACE_PATTERN = /[\t\n\f\r ]+/g
 export const CANCELLED_SETTLEMENT = { kind: 'cancelled' } as const satisfies Settlement
 /** Ending for a request message whose service restarted before it was answered. */
 export const EXPIRED_ENDING = { kind: 'expired' } as const satisfies MessageEnding
+/** Ending for a request message whose question was asked again after a timeout. */
+export const REASKED_ENDING = { kind: 'reasked' } as const satisfies MessageEnding
 /** Shared result for `ApprovalService.request` when its signal aborted. */
 export const CANCELLED_RESULT = { kind: 'cancelled' } as const satisfies RequestResult
+/** Shared result for `runVote` when its signal aborted. */
+export const CANCELLED_VOTE = { kind: 'cancelled' } as const satisfies VoteResult
+/** A vote round that ended with a message cancelled. */
+export const CANCELLED_ROUND = { kind: 'cancelled' } as const satisfies RoundEnd
+/** A vote round whose open messages all timed out undecided. */
+export const TIMED_OUT_ROUND = { kind: 'timedOut' } as const satisfies RoundEnd
 /** Shared state for a background question that was cancelled. */
 export const CANCELLED_STATE = { kind: 'cancelled' } as const satisfies RequestState
 /** How many settled requests the service remembers; the oldest drop first. */
@@ -54,3 +65,5 @@ export const OWNER_COMMANDS: readonly OwnerCommand[] = [
   { name: 'cancel', description: 'Reject all open requests with their timeout answers' },
   { name: 'history', description: 'Show recent answers' },
 ]
+/** The vote rules the CLI accepts for `--require`. */
+export const VOTE_RULES: readonly VoteRule[] = ['all', 'majority']
