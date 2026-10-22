@@ -17,8 +17,11 @@ test('init does not offer it', () => {
   expect(PROVIDERS.map((provider) => provider.name)).not.toContain('terminal')
 })
 
-test('the service loads it from PROVIDER=terminal with no config file', () => {
-  const config = loadConfig({ PROVIDER: 'terminal', JAYPOST_CONFIG: '/nonexistent/config.json' })
+test('the service loads it from JAYPOST_PROVIDER=terminal with no config file', () => {
+  const config = loadConfig({
+    JAYPOST_PROVIDER: 'terminal',
+    JAYPOST_CONFIG: '/nonexistent/config.json',
+  })
   expect(config.provider).toBe(terminalProvider)
   expect(config.settings).toEqual({})
 })

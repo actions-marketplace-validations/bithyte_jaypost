@@ -54,6 +54,17 @@ test('init --help lists --token and --no-token', async () => {
   expect(help).toContain('--no-token')
 })
 
+test('setup-ci --help lists --provider', async () => {
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  expect(await main(['setup-ci', '--help'])).toBe(0)
+  expect(write.mock.calls.map((call) => String(call[0])).join('')).toContain('--provider <name>')
+})
+
+test('setup-ci --provider nope exits 2', async () => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  expect(await main(['setup-ci', '--provider', 'nope'])).toBe(2)
+})
+
 test('mcp rejects a bad port with 2', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   expect(await main(['mcp', '--port', 'abc'])).toBe(2)
@@ -158,6 +169,27 @@ test('send exits 1 with the message on an invalid JAYPOST_TOKEN', async () => {
   expect(error).toHaveBeenCalledWith("jaypost: JAYPOST_TOKEN isn't a valid jaypost token")
 })
 
+test('send rejects an unknown JAYPOST_MODE with 2', async () => {
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  vi.stubEnv('JAYPOST_MODE', 'bogus')
+  expect(await main(['send', 'request', 'x', '-o', 'a', '-d', 'a'])).toBe(2)
+  expect(await main(['send', 'notify', 'x'])).toBe(2)
+  expect(stderr.mock.calls.map((call) => String(call[0])).join('')).toContain(
+    'JAYPOST_MODE must be "direct" or "service", got "bogus"',
+  )
+})
+
+test('direct send without a bot token exits 1 naming the env var', async () => {
+  vi.stubEnv('JAYPOST_MODE', 'direct')
+  vi.stubEnv('JAYPOST_PROVIDER', '')
+  vi.stubEnv('JAYPOST_BOT_TOKEN', '')
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(await main(['send', 'request', 'x', '-o', 'a', '-d', 'a'])).toBe(1)
+  expect(await main(['send', 'notify', 'x'])).toBe(1)
+  const output = error.mock.calls.map((call) => String(call[0])).join('\n')
+  expect(output).toContain('missing bot token; set JAYPOST_BOT_TOKEN')
+})
+
 test('openapi writes the spec with the given port to a file', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'jaypost-openapi-'))
   try {
@@ -170,8 +202,8 @@ test('openapi writes the spec with the given port to a file', async () => {
 })
 
 test('openapi for the discord provider carries its option limit', async () => {
-  vi.stubEnv('PROVIDER', 'discord')
-  vi.stubEnv('BOT_TOKEN', 'x')
+  vi.stubEnv('JAYPOST_PROVIDER', 'discord')
+  vi.stubEnv('JAYPOST_BOT_TOKEN', 'x')
   const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
   expect(await main(['openapi', '--port', '9999'])).toBe(0)
   expect(String(write.mock.calls[0]?.[0])).toContain('25')

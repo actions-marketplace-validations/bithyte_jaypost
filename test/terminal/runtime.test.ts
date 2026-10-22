@@ -203,7 +203,12 @@ test("finalize for a previous run's question leaves a new one with the same numb
 test('a notification prints its text', async () => {
   const { runtime, output, clear } = setup()
   clear()
-  await runtime.sendNotification?.('n1', plain('Deployed'), { silent: false }, undefined)
+  await runtime.sendNotification?.(
+    'n1',
+    plain('Deployed'),
+    { silent: false, dismissible: true },
+    undefined,
+  )
   expect(output()).toBe('\nnotification: Deployed\n')
 })
 

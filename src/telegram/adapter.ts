@@ -126,8 +126,8 @@ function requireOwnerChatId(conversation: OwnerConversation): number {
  * Sends requests as inline-keyboard messages to the owner; the final edit removes the buttons.
  * A request without options has no keyboard, and `allowText` appends a hint on how to reply.
  * A sent request is tracked by the conversation only after Telegram accepted it, and forgotten
- * again by `finalize`, even when the final edit fails. Notifications get a single Dismiss button.
- * Sending throws when nobody is paired.
+ * again by `finalize`, even when the final edit fails. Notifications get a single Dismiss button
+ * when `options.dismissible` is set. Sending throws when nobody is paired.
  */
 export function createTelegramMessenger(
   bot: Bot,
@@ -215,9 +215,13 @@ export function createTelegramMessenger(
           bot.api.sendMessage(ownerId, message.text, {
             ...extra,
             disable_notification: options.silent,
-            reply_markup: {
-              inline_keyboard: [[{ text: DISMISS_LABEL, callback_data: formatDismissPayload(id) }]],
-            },
+            ...(options.dismissible && {
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: DISMISS_LABEL, callback_data: formatDismissPayload(id) }],
+                ],
+              },
+            }),
             ...(documentMessageId !== undefined && {
               reply_parameters: { message_id: documentMessageId },
             }),

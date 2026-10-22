@@ -1,8 +1,8 @@
 // `pnpm dev`: runs the service from source, restarting on every save. It keeps clear of a real
 // install: it listens on 8788 and keeps each chat app's config, state and question log in
 // .dev/<provider>/. It asks which chat app to use first; Terminal needs nothing, Telegram and
-// Discord ask for your bot's token once. PROVIDER, BOT_TOKEN or JAYPOST_CONFIG (in the env or
-// .env) skip the questions.
+// Discord ask for your bot's token once. JAYPOST_PROVIDER, JAYPOST_BOT_TOKEN or JAYPOST_CONFIG (in the
+// env or .env) skip the questions.
 import { spawn } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -13,7 +13,12 @@ import {
   resolveProviderSettings,
   selectProvider,
 } from '../src/commands/index.ts'
-import { readConfigFile, updateConfigFile } from '../src/config/index.ts'
+import {
+  PORT_ENV_VAR,
+  PROVIDER_ENV_VAR,
+  readConfigFile,
+  updateConfigFile,
+} from '../src/config/index.ts'
 import {
   collectSettings,
   DEFAULT_PROVIDER,
@@ -29,7 +34,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const devDirectory = join(root, '.dev')
 const lastChoiceFile = join(devDirectory, 'dev.json')
 
-/** Env value, with an empty string (like `BOT_TOKEN=` in .env) counting as unset. */
+/** Env value, with an empty string (like `JAYPOST_BOT_TOKEN=` in .env) counting as unset. */
 function findEnv(key: string): string | undefined {
   const value = process.env[key]
   return value === '' ? undefined : value
@@ -94,7 +99,9 @@ async function runSetUp(): Promise<string | number> {
     return await setUp(controller.signal)
   } catch (error) {
     if (error instanceof PromptAborted && !controller.signal.aborted && !process.stdin.isTTY) {
-      console.error('dev: no saved bot token works; run `pnpm dev` in a terminal or set BOT_TOKEN')
+      console.error(
+        'dev: no saved bot token works; run `pnpm dev` in a terminal or set JAYPOST_BOT_TOKEN',
+      )
       return 1
     }
     if (error instanceof PromptAborted || controller.signal.aborted) {
@@ -111,22 +118,22 @@ async function runSetUp(): Promise<string | number> {
 
 /** The service's env, or an exit code when setup stopped. */
 async function resolveServiceEnv(): Promise<NodeJS.ProcessEnv | number> {
-  const base = { ...process.env, PORT: port }
+  const base = { ...process.env, [PORT_ENV_VAR]: port }
   // Used as is: it may be a real install's config, so dev never writes to it.
   if (findEnv('JAYPOST_CONFIG') !== undefined) {
     return base
   }
-  if (findEnv('PROVIDER') !== undefined || findEnv('BOT_TOKEN') !== undefined) {
+  if (findEnv(PROVIDER_ENV_VAR) !== undefined || findEnv('JAYPOST_BOT_TOKEN') !== undefined) {
     return {
       ...base,
-      JAYPOST_CONFIG: resolveConfigFile(findEnv('PROVIDER') ?? DEFAULT_PROVIDER),
+      JAYPOST_CONFIG: resolveConfigFile(findEnv(PROVIDER_ENV_VAR) ?? DEFAULT_PROVIDER),
     }
   }
   const chosen = await runSetUp()
   if (typeof chosen === 'number') {
     return chosen
   }
-  return { ...base, JAYPOST_CONFIG: resolveConfigFile(chosen), PROVIDER: chosen }
+  return { ...base, JAYPOST_CONFIG: resolveConfigFile(chosen), [PROVIDER_ENV_VAR]: chosen }
 }
 
 try {
@@ -136,7 +143,7 @@ try {
     throw error
   }
 }
-const port = findEnv('PORT') ?? DEV_PORT
+const port = findEnv(PORT_ENV_VAR) ?? DEV_PORT
 const serviceEnv = await resolveServiceEnv()
 if (typeof serviceEnv === 'number') {
   process.exit(serviceEnv)

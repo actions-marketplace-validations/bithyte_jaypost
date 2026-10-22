@@ -121,7 +121,7 @@ test('sending before pairing throws', async () => {
     'bot is not paired yet',
   )
   await expect(
-    messenger.sendNotification('n1', plain('x'), { silent: false }, undefined),
+    messenger.sendNotification('n1', plain('x'), { silent: false, dismissible: true }, undefined),
   ).rejects.toThrow('bot is not paired yet')
   expect(fake.created).toEqual([])
 })
@@ -199,7 +199,7 @@ test('sendNotification has one Dismiss button and honours silent', async () => {
   const reference = await messenger.sendNotification(
     'n1',
     plain('done'),
-    { silent: true },
+    { silent: true, dismissible: true },
     undefined,
   )
   expect(fake.created[0]?.message).toEqual({
@@ -212,12 +212,29 @@ test('sendNotification has one Dismiss button and honours silent', async () => {
   expectNotOpen(conversation, 'm1')
 })
 
+test('sendNotification without dismissible sends no buttons', async () => {
+  const { fake, messenger } = setup()
+  const reference = await messenger.sendNotification(
+    'n1',
+    plain('done'),
+    { silent: false, dismissible: false },
+    undefined,
+  )
+  expect(fake.created[0]?.message).toEqual({
+    content: 'done',
+    rows: [],
+    silent: false,
+    file: undefined,
+  })
+  expect(reference).toEqual({ channelId: 'dm1', messageId: 'm1', hasButtons: false })
+})
+
 test('deleteMessage deletes by the saved reference', async () => {
   const { fake, messenger } = setup()
   const reference = await messenger.sendNotification(
     'n1',
     plain('done'),
-    { silent: false },
+    { silent: false, dismissible: true },
     undefined,
   )
   await messenger.deleteMessage(reference)

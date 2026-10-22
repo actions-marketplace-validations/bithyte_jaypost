@@ -29,7 +29,8 @@ export function toButtonRows(id: string, options: readonly string[]): readonly B
  * Sends requests as direct messages with button rows to the owner; the final edit removes the
  * buttons. A request without options has no buttons, and `allowText` appends a hint on how to
  * reply. A sent request is tracked by the conversation only after Discord accepted it, and removed
- * again by `finalize`, even when the final edit fails. Notifications get a single Dismiss button.
+ * again by `finalize`, even when the final edit fails. Notifications get a single Dismiss button
+ * when `options.dismissible` is set.
  * Sending throws when nobody is paired. The owner's DM channel is opened once per owner id.
  */
 export function createDiscordMessenger(
@@ -98,14 +99,16 @@ export function createDiscordMessenger(
       const channelId = await resolveChannel()
       const sent = await client.createMessage(channelId, {
         content: render(message),
-        rows: [[{ label: DISMISS_LABEL, customId: formatDismissPayload(id) }]],
+        rows: options.dismissible
+          ? [[{ label: DISMISS_LABEL, customId: formatDismissPayload(id) }]]
+          : [],
         silent: options.silent,
         file: attachment,
       })
       return {
         channelId: sent.channelId,
         messageId: sent.id,
-        hasButtons: true,
+        hasButtons: options.dismissible,
       } satisfies DiscordMessageReference
     },
     async deleteMessage(reference): Promise<void> {

@@ -14,6 +14,7 @@ import type {
   Done,
   Failure,
   Message,
+  NotifyBody,
   Pending,
   Question,
   QuestionState,
@@ -155,20 +156,10 @@ export class Caller {
     if (attachment.kind === 'failed') {
       return attachment
     }
-    const result = await postApi(
-      this.#port,
-      '/notify',
-      {
-        text: message.text,
-        ...(message.project === undefined ? {} : { project: message.project }),
-        ...(message.format === undefined ? {} : { format: message.format }),
-        ...(attachment.body === undefined ? {} : { attachment: attachment.body }),
-      },
-      {
-        ...this.#apiOptions(session, call.signal),
-        timeoutMs: toSendTimeoutMs(attachment.body !== undefined),
-      },
-    )
+    const result = await postApi(this.#port, '/notify', toNotifyBody(message, attachment.body), {
+      ...this.#apiOptions(session, call.signal),
+      timeoutMs: toSendTimeoutMs(attachment.body !== undefined),
+    })
     return result.kind === 'failed' ? result : { kind: 'sent' }
   }
 
@@ -245,7 +236,8 @@ export class Caller {
   }
 }
 
-function toAskBody(question: Question, attachment: AttachmentBody | undefined): AskBody {
+/** The `/ask` wire body for `question`, with the attachment already read. */
+export function toAskBody(question: Question, attachment: AttachmentBody | undefined): AskBody {
   return {
     text: question.text,
     ...(question.options === undefined ? {} : { options: question.options }),
@@ -254,6 +246,16 @@ function toAskBody(question: Question, attachment: AttachmentBody | undefined): 
     ...(question.timeout === undefined ? {} : { timeout: question.timeout }),
     ...(question.project === undefined ? {} : { project: question.project }),
     ...(question.format === undefined ? {} : { format: question.format }),
+    ...(attachment === undefined ? {} : { attachment }),
+  }
+}
+
+/** The `/notify` wire body for `message`, with the attachment already read. */
+export function toNotifyBody(message: Message, attachment: AttachmentBody | undefined): NotifyBody {
+  return {
+    text: message.text,
+    ...(message.project === undefined ? {} : { project: message.project }),
+    ...(message.format === undefined ? {} : { format: message.format }),
     ...(attachment === undefined ? {} : { attachment }),
   }
 }

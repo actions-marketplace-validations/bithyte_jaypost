@@ -10,8 +10,7 @@ import type { ApiAuth } from '../auth/index.ts'
 import { describeUnauthorized } from '../client/index.ts'
 import { DEFAULT_PORT } from '../config/index.ts'
 import {
-  detectTargets, 
-  
+  detectTargets,
   findDefaultTarget,
   findExistingInstall,
   findLeftoverSecrets,
@@ -24,7 +23,7 @@ import { findOwnerSetting, findProvider, listSecretValues } from '../provider/in
 import type { Provider } from '../provider/index.ts'
 import { TARGET_LABELS } from './constants.ts'
 import { PromptAborted } from './prompts.ts'
-import { resolveProviderSettings, selectProvider } from './provider-setup.ts'
+import { redact, resolveProviderSettings, selectProvider } from './provider-setup.ts'
 import type { InitArgs, InitDeps } from './types.ts'
 
 /** Secret values of `secrets` when its provider is registered; [] otherwise. */
@@ -85,16 +84,6 @@ async function chooseAuth(args: InitArgs, deps: InitDeps, isReplacing: boolean):
     return { kind: 'token', token: generateToken() }
   }
   return NO_AUTH
-}
-
-function redact(message: string, secrets: readonly string[]): string {
-  let redacted = message
-  for (const secret of secrets) {
-    if (secret !== '') {
-      redacted = redacted.replaceAll(secret, '***')
-    }
-  }
-  return redacted
 }
 
 /**

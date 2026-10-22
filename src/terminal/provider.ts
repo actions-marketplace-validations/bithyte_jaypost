@@ -5,7 +5,7 @@ import { createTerminalRuntime } from './runtime.ts'
 
 /**
  * Asks in the service's own terminal, for local development (`pnpm dev`). Not offered by `init`;
- * only `PROVIDER=terminal` picks it.
+ * only `JAYPOST_PROVIDER=terminal` picks it.
  */
 export const terminalProvider: Provider = {
   name: 'terminal',

@@ -1,5 +1,5 @@
 import type { TargetName } from '../install/index.ts'
-import type { StatusFetch } from './types.ts'
+import type { OwnerPairing, StatusFetch } from './types.ts'
 
 /** Display names for the install target prompt. */
 export const TARGET_LABELS: Readonly<Record<TargetName, string>> = {
@@ -19,3 +19,18 @@ export const STATUS_TIMEOUT_MS = 2000
 export const UNAUTHORIZED_STATUS = { kind: 'unauthorized' } as const satisfies StatusFetch
 /** No usable /status answer: not up yet, a network error or an unexpected body. */
 export const UNREACHABLE_STATUS = { kind: 'unreachable' } as const satisfies StatusFetch
+
+/** Direct `send request` exit code when the answer is the `-d` value or the timeout fired. */
+export const DECLINED_EXIT_CODE = 3
+/** Shown for a failed provider send; the cause can hold provider internals, so it's left out. */
+export const DIRECT_SEND_FAILED_MESSAGE = 'failed to send message'
+/** Shown when a direct question is cancelled by a signal. */
+export const DIRECT_CANCELLED_MESSAGE = 'cancelled'
+
+/** Someone sent too many wrong pairing codes while `setup-ci` waited. */
+export const BLOCKED_PAIRING = { kind: 'blocked' } as const satisfies OwnerPairing
+/** `setup-ci` was interrupted while waiting for the owner. */
+export const INTERRUPTED_PAIRING = { kind: 'interrupted' } as const satisfies OwnerPairing
+/** Printed above the env lines `setup-ci` ends with. */
+export const SETUP_CI_SECRETS_HINT =
+  "Add these as GitHub secrets and pass them to jaypost through the step's `env:`, never on the command line:"

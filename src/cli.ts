@@ -14,12 +14,15 @@ import {
   defaultFetchStatus,
   runFinishUpdate,
   runAudit,
+  runDirectSendNotify,
+  runDirectSendRequest,
   runInit,
   runLog,
   runOwner,
   runResetOwner,
   runSendNotify,
   runSendRequest,
+  runSetupCi,
   runStatus,
   runTest,
   runUninstall,
@@ -27,9 +30,11 @@ import {
   waitForPairing,
   writeAll,
 } from './commands/index.ts'
-import type { InitArgs, LogArgs, SendDeps } from './commands/index.ts'
-import { DEFAULT_PORT, loadConfig, VERSION } from './config/index.ts'
+import type { DirectSendDeps, InitArgs, LogArgs, SendDeps, SetupCiArgs } from './commands/index.ts'
+import { DEFAULT_PORT, loadConfig, MODE_ENV_VAR, PORT_ENV_VAR, VERSION } from './config/index.ts'
 import { runService } from './daemon/index.ts'
+import { resolveSendMode } from './direct/index.ts'
+import type { SendMode } from './direct/index.ts'
 import { MESSAGE_FORMATS } from './format/index.ts'
 import type { MessageFormat } from './format/index.ts'
 import { readHookInput, runHook } from './hook/index.ts'
@@ -54,7 +59,7 @@ function resolvePort(): number {
   try {
     return loadConfig().port
   } catch {
-    const port = Number(process.env.PORT)
+    const port = Number(process.env[PORT_ENV_VAR])
     return Number.isInteger(port) && port > 0 ? port : DEFAULT_PORT
   }
 }
@@ -147,6 +152,28 @@ function createSendDeps(flagPort: number | undefined, signal: AbortSignal): Send
   }
 }
 
+function createDirectSendDeps(signal: AbortSignal): DirectSendDeps {
+  return {
+    env: process.env,
+    providers: PROVIDERS,
+    signal,
+    print: (text) => console.log(text),
+    printError: (text) => console.error(text),
+  }
+}
+
+/** The send mode from `JAYPOST_MODE`; an unknown value is a usage error (exit 2). */
+function requireSendMode(command: Command): Exclude<SendMode, { readonly kind: 'invalid' }> {
+  const mode = resolveSendMode(process.env)
+  if (mode.kind === 'invalid') {
+    command.error(
+      `error: ${MODE_ENV_VAR} must be "direct" or "service", got ${JSON.stringify(mode.value)}`,
+      { exitCode: 2 },
+    )
+  }
+  return mode
+}
+
 function createHookDeps(flagPort: number | undefined, signal: AbortSignal): HookDeps {
   return {
     port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
@@ -212,6 +239,17 @@ function runInitCommand(args: InitArgs): Promise<number> {
       signal: controller.signal,
       version: VERSION,
       ...(timeZone === undefined ? {} : { timeZone }),
+    }),
+  )
+}
+
+function runSetupCiCommand(args: SetupCiArgs): Promise<number> {
+  return runWithSignals((controller) =>
+    runSetupCi(args, {
+      prompt: createClackPrompts(controller.signal),
+      providers: PROVIDERS,
+      print: (text) => console.log(text),
+      signal: controller.signal,
     }),
   )
 }
@@ -382,6 +420,19 @@ export async function main(argv: readonly string[]): Promise<number> {
       },
     )
   program
+    .command('setup-ci')
+    .description('pair an owner for CI and print the env vars for direct mode')
+    .addOption(
+      new Option('--provider <name>', 'chat app to use').choices(
+        PROVIDERS.map((provider) => provider.name),
+      ),
+    )
+    .action(async (options: { readonly provider?: string }) => {
+      code = await runSetupCiCommand(
+        options.provider === undefined ? {} : { provider: options.provider },
+      )
+    })
+  program
     .command('start')
     .description('run the service in the foreground')
     .action(() => runService())
@@ -451,7 +502,11 @@ export async function main(argv: readonly string[]): Promise<number> {
   program
     .command('mcp')
     .description('run an MCP server on stdin/stdout for agents')
-    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .option(
+      '--port <n>',
+      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      parsePort,
+    )
     .action(async (options: { readonly port?: number }) => {
       // Not resolvePort(): that reads config.json, which an agent's container may not have.
       const tokenFile = resolveTokenFile(process.env)
@@ -464,7 +519,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     .command('openapi')
     .description('print the OpenAPI spec of the HTTP API, or write it to a file')
     .argument('[file]', 'file to write; prints to stdout without one')
-    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .option(
+      '--port <n>',
+      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      parsePort,
+    )
     .action((file: string | undefined, options: { readonly port?: number }) => {
       code = runOpenApiCommand(file, options.port)
     })
@@ -502,7 +561,11 @@ export async function main(argv: readonly string[]): Promise<number> {
       '--attach-name <name>',
       'file name shown in the chat app (default: the file\'s basename, "attachment.txt" for stdin)',
     )
-    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .option(
+      '--port <n>',
+      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      parsePort,
+    )
     .action(
       async (
         text: string,
@@ -519,6 +582,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           readonly port?: number
         },
       ) => {
+        const mode = requireSendMode(request)
         if (options.attachName !== undefined && options.attach === undefined) {
           request.error("error: option '--attach-name <name>' needs '--attach <file>'", {
             exitCode: 2,
@@ -530,24 +594,29 @@ export async function main(argv: readonly string[]): Promise<number> {
             exitCode: 2,
           })
         }
-        code = await runWithSignals((controller) =>
-          runSendRequest(
-            {
-              text,
-              ...(options.option === undefined
-                ? {}
-                : { options: toButtons(options.option, options.default, options.allowText) }),
-              ...(options.allowText === undefined ? {} : { allowText: options.allowText }),
-              timeoutOption: options.default,
-              ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-              ...(options.project === undefined ? {} : { project: options.project }),
-              ...(options.format === undefined ? {} : { format: options.format }),
-              ...(options.json === undefined ? {} : { json: options.json }),
-              ...(attachment === undefined ? {} : { attachment }),
-            },
-            createSendDeps(options.port, controller.signal),
-          ),
-        )
+        const args = {
+          text,
+          ...(options.option === undefined
+            ? {}
+            : { options: toButtons(options.option, options.default, options.allowText) }),
+          ...(options.allowText === undefined ? {} : { allowText: options.allowText }),
+          timeoutOption: options.default,
+          ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.format === undefined ? {} : { format: options.format }),
+          ...(options.json === undefined ? {} : { json: options.json }),
+          ...(attachment === undefined ? {} : { attachment }),
+        }
+        // A cancelled CI run sends SIGTERM; the question is still edited to the cancelled line.
+        code =
+          mode.kind === 'direct'
+            ? await runWithSignals(
+                (controller) => runDirectSendRequest(args, createDirectSendDeps(controller.signal)),
+                ['SIGINT', 'SIGTERM'],
+              )
+            : await runWithSignals((controller) =>
+                runSendRequest(args, createSendDeps(options.port, controller.signal)),
+              )
       },
     )
   const notify = send
@@ -565,7 +634,11 @@ export async function main(argv: readonly string[]): Promise<number> {
       '--attach-name <name>',
       'file name shown in the chat app (default: the file\'s basename, "attachment.txt" for stdin)',
     )
-    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .option(
+      '--port <n>',
+      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      parsePort,
+    )
     .action(
       async (
         text: string,
@@ -577,23 +650,28 @@ export async function main(argv: readonly string[]): Promise<number> {
           readonly port?: number
         },
       ) => {
+        const mode = requireSendMode(notify)
         if (options.attachName !== undefined && options.attach === undefined) {
           notify.error("error: option '--attach-name <name>' needs '--attach <file>'", {
             exitCode: 2,
           })
         }
         const attachment = toAttachmentSource(options.attach, options.attachName)
-        code = await runWithSignals((controller) =>
-          runSendNotify(
-            {
-              text,
-              ...(options.project === undefined ? {} : { project: options.project }),
-              ...(options.format === undefined ? {} : { format: options.format }),
-              ...(attachment === undefined ? {} : { attachment }),
-            },
-            createSendDeps(options.port, controller.signal),
-          ),
-        )
+        const args = {
+          text,
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.format === undefined ? {} : { format: options.format }),
+          ...(attachment === undefined ? {} : { attachment }),
+        }
+        code =
+          mode.kind === 'direct'
+            ? await runWithSignals(
+                (controller) => runDirectSendNotify(args, createDirectSendDeps(controller.signal)),
+                ['SIGINT', 'SIGTERM'],
+              )
+            : await runWithSignals((controller) =>
+                runSendNotify(args, createSendDeps(options.port, controller.signal)),
+              )
       },
     )
   program
@@ -601,7 +679,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     .description(
       'answer Claude Code permission prompts and forward notifications (reads a hook event on stdin)',
     )
-    .option('--port <n>', 'API port (default: PORT, then the install, then 8787)', parsePort)
+    .option(
+      '--port <n>',
+      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      parsePort,
+    )
     .option('--project <name>', 'shown as [name] (default: the Claude Code project folder)')
     .option(
       '--timeout <seconds>',

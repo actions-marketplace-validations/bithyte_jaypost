@@ -14,9 +14,13 @@ export type NotifyParseResult =
   | { readonly ok: true; readonly value: NotifyRequest }
   | { readonly ok: false; readonly error: string }
 
-/** How a notification is delivered; `silent` suppresses the sound and vibration. */
+/**
+ * How a notification is delivered; `silent` suppresses the sound and vibration, `dismissible`
+ * adds a Dismiss button (off when no process stays alive to handle the tap).
+ */
 export type SendNotificationOptions = {
   readonly silent: boolean
+  readonly dismissible: boolean
 }
 
 /**
@@ -24,7 +28,10 @@ export type SendNotificationOptions = {
  * no expiry.
  */
 export type Notifier = {
-  /** Send `message` to the owner with a dismiss control carrying `id`, if the messenger can delete. */
+  /**
+   * Send `message` to the owner; with `options.dismissible` it carries a dismiss control for `id`,
+   * if the messenger can delete.
+   */
   readonly sendNotification: (
     id: string,
     message: FormattedText,

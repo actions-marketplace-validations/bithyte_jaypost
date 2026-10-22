@@ -110,6 +110,14 @@ export type AskBody = {
   readonly attachment?: AttachmentBody
 }
 
+/** The body of a /notify call. */
+export type NotifyBody = {
+  readonly text: string
+  readonly project?: string
+  readonly format?: MessageFormat
+  readonly attachment?: AttachmentBody
+}
+
 /** `now` returns milliseconds; default `performance.now`. */
 export type AskOptions = Omit<ApiOptions, 'timeoutMs'> & {
   readonly now?: () => number

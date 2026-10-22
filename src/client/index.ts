@@ -1,4 +1,5 @@
-export { Caller } from './caller.ts'
+export { readAttachment } from './attachment.ts'
+export { Caller, toAskBody, toNotifyBody } from './caller.ts'
 export { Client, JaypostError } from './client.ts'
 export {
   ATTACHMENT_NOT_SUPPORTED_MESSAGE,
@@ -13,6 +14,7 @@ export { describeUnauthorized } from './http.ts'
 export type {
   Answer,
   AskRequest,
+  AttachmentBody,
   AttachmentInput,
   AttachmentSource,
   CallerOptions,

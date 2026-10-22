@@ -72,6 +72,17 @@ export async function resolveProviderSettings(
   }
 }
 
+/** `message` with every non-empty value of `secrets` replaced by `***`. */
+export function redact(message: string, secrets: readonly string[]): string {
+  let redacted = message
+  for (const secret of secrets) {
+    if (secret !== '') {
+      redacted = redacted.replaceAll(secret, '***')
+    }
+  }
+  return redacted
+}
+
 async function findDisplayName(
   provider: Provider,
   settings: SettingValues,
