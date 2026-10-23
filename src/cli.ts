@@ -21,6 +21,7 @@ import {
   runInit,
   runLog,
   runOwner,
+  runPairApprover,
   runPing,
   runResetOwner,
   runSendNotify,
@@ -40,13 +41,21 @@ import type {
   DirectSendDeps,
   InitArgs,
   LogArgs,
+  PairApproverArgs,
   SendDeps,
   SendRequestArgs,
   SetupCiArgs,
 } from './commands/index.ts'
-import { DEFAULT_PORT, loadConfig, MODE_ENV_VAR, PORT_ENV_VAR, VERSION } from './config/index.ts'
+import {
+  APPROVERS_ENV_VAR,
+  DEFAULT_PORT,
+  loadConfig,
+  MODE_ENV_VAR,
+  PORT_ENV_VAR,
+  VERSION,
+} from './config/index.ts'
 import { runService } from './daemon/index.ts'
-import { resolveSendMode } from './direct/index.ts'
+import { resolveApprovers, resolveSendMode } from './direct/index.ts'
 import type { SendMode } from './direct/index.ts'
 import { MESSAGE_FORMATS } from './format/index.ts'
 import type { MessageFormat } from './format/index.ts'
@@ -321,6 +330,24 @@ function runSetupCiCommand(args: SetupCiArgs): Promise<number> {
   )
 }
 
+function runPairApproverCommand(args: PairApproverArgs): Promise<number> {
+  return runWithSignals(
+    (controller) => {
+      const progress = createStderrProgress('plain')
+      return runPairApprover(args, {
+        prompt: createClackPrompts(controller.signal),
+        providers: PROVIDERS,
+        print: (text) => console.log(text),
+        progress,
+        log: progress.note,
+        signal: controller.signal,
+      })
+    },
+    SETUP_SIGNALS,
+    SETUP_RERAISED,
+  )
+}
+
 function createRealTargets(paths: InstallPaths): Readonly<Record<TargetName, Target>> {
   const userInfo = os.userInfo()
   return createTargets(
@@ -525,18 +552,30 @@ export async function main(argv: readonly string[]): Promise<number> {
     )
   program
     .command('setup-ci')
-    .description('pair an owner and approvers for CI and print the env vars for direct mode')
+    .description('pair an owner for CI and print the env vars for direct mode')
     .addOption(
       new Option('--provider <name>', 'chat app to use').choices(
         PROVIDERS.map((provider) => provider.name),
       ),
     )
-    .option('--approvers-only', 'skip the owner and only pair approvers for request -u')
-    .action(async (options: { readonly provider?: string; readonly approversOnly?: boolean }) => {
-      code = await runSetupCiCommand({
-        ...(options.provider === undefined ? {} : { provider: options.provider }),
-        ...(options.approversOnly === true ? { approversOnly: true } : {}),
-      })
+    .action(async (options: { readonly provider?: string }) => {
+      code = await runSetupCiCommand(
+        options.provider === undefined ? {} : { provider: options.provider },
+      )
+    })
+  const pair = program.command('pair').description('pair someone with the bot for CI')
+  pair
+    .command('approver')
+    .description('pair approvers for direct mode votes and print their ids')
+    .addOption(
+      new Option('--provider <name>', 'chat app to use').choices(
+        PROVIDERS.map((provider) => provider.name),
+      ),
+    )
+    .action(async (options: { readonly provider?: string }) => {
+      code = await runPairApproverCommand(
+        options.provider === undefined ? {} : { provider: options.provider },
+      )
     })
   program
     .command('start')
@@ -671,7 +710,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     )
     .option(
       '-u, --user <id>',
-      'send to this paired user instead of the owner; repeat per approver (direct mode)',
+      'send to this paired user instead of the owner; repeat per approver; overrides JAYPOST_APPROVERS (direct mode)',
       collect,
     )
     .addOption(
@@ -721,11 +760,22 @@ export async function main(argv: readonly string[]): Promise<number> {
         },
       ) => {
         const mode = requireSendMode(request)
-        const isVote = options.user !== undefined || options.require !== undefined
-        if (mode.kind !== 'direct' && (isVote || options.retry !== undefined)) {
-          request.error('error: -u, --require and --retry need JAYPOST_MODE=direct', {
-            exitCode: 2,
-          })
+        const approvers = resolveApprovers(options.user, process.env)
+        const isVote = approvers.kind === 'listed' || options.require !== undefined
+        if (
+          mode.kind !== 'direct' &&
+          (isVote || options.retry !== undefined || process.env[APPROVERS_ENV_VAR] !== undefined)
+        ) {
+          request.error(
+            `error: -u, --require, --retry and ${APPROVERS_ENV_VAR} need JAYPOST_MODE=direct`,
+            { exitCode: 2 },
+          )
+        }
+        if (approvers.kind === 'empty') {
+          request.error(
+            `error: ${APPROVERS_ENV_VAR} is set but has no ids; a missing GitHub secret is empty too`,
+            { exitCode: 2 },
+          )
         }
         if (
           isVote &&
@@ -763,7 +813,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           ...(options.format === undefined ? {} : { format: options.format }),
           ...(options.json === undefined ? {} : { json: options.json }),
           ...(attachment === undefined ? {} : { attachment }),
-          ...(options.user === undefined ? {} : { voters: options.user }),
+          ...(approvers.kind === 'listed' ? { voters: approvers.voters } : {}),
           ...(options.require === undefined ? {} : { rule: options.require }),
           ...(options.retry === undefined ? {} : { retryCount: options.retry }),
         }

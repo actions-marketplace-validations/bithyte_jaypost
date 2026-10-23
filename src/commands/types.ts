@@ -4,7 +4,7 @@ import type { VoteRule } from '../approval/index.ts'
 import type { MessageFormat } from '../format/index.ts'
 import type { CliLocation, InstallPaths, Target, TargetName } from '../install/index.ts'
 import type { Progress } from '../progress/index.ts'
-import type { Provider, SettingValues } from '../provider/index.ts'
+import type { Provider, ProviderRuntime, SettingValues } from '../provider/index.ts'
 import type { StatusInfo } from '../server/index.ts'
 import type { Exec } from '../system/index.ts'
 
@@ -269,8 +269,6 @@ export type DirectSendDeps = {
 /** Parsed `setup-ci` flags; absent fields mean the user didn't pass them. */
 export type SetupCiArgs = {
   readonly provider?: string
-  /** Skip pairing the owner and the env block; only pair approvers. */
-  readonly approversOnly?: boolean
 }
 
 /** Everything `runSetupCi` touches outside itself; no paths or targets, so it writes no files. */
@@ -278,7 +276,7 @@ export type SetupCiDeps = {
   readonly prompt: Prompts
   /** Registered providers; setup-ci asks which one to use when there are several. */
   readonly providers: readonly Provider[]
-  /** Stdout: only the env var block and the approvers line, which scripts read. */
+  /** Stdout: only the env var block and the approver ids, which scripts read. */
   readonly print: (text: string) => void
   /** Stderr checklist and notes (everything else setup-ci says). */
   readonly progress: Progress
@@ -289,9 +287,36 @@ export type SetupCiDeps = {
   readonly generateCode?: () => string
 }
 
+/** Parsed `pair approver` flags; absent fields mean the user didn't pass them. */
+export type PairApproverArgs = {
+  readonly provider?: string
+}
+
+/** Everything `runPairApprover` touches outside itself; the same needs as `setup-ci`. */
+export type PairApproverDeps = SetupCiDeps
+
 /** How `setup-ci`'s wait for one pairing code (owner or approver) ended. */
 export type OwnerPairing =
   | { readonly kind: 'paired'; readonly senderId: string }
   | { readonly kind: 'blocked' }
   | { readonly kind: 'fatal'; readonly message: string }
   | { readonly kind: 'interrupted' }
+
+/**
+ * Shows a fresh pairing code with `instructions(code)` as a step titled `titles.waiting` and waits
+ * for how that pairing ends; a pairing ends the step as `titles.paired`.
+ */
+export type PairingWaiter = (
+  instructions: (code: string) => string,
+  titles: { readonly waiting: string; readonly paired: string },
+) => Promise<OwnerPairing>
+
+/** A provider with checked credentials and a runtime the caller must stop, or failed (already reported). */
+export type OpenedRuntime =
+  | {
+      readonly kind: 'opened'
+      readonly provider: Provider
+      readonly settings: SettingValues
+      readonly runtime: ProviderRuntime
+    }
+  | { readonly kind: 'failed' }

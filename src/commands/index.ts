@@ -3,6 +3,7 @@ export { runAudit } from './audit.ts'
 export { runInit } from './init.ts'
 export { runLog } from './log.ts'
 export { runOwner } from './owner.ts'
+export { runPairApprover } from './pair-approver.ts'
 export { defaultFetchStatus, waitForPairing } from './pairing-wait.ts'
 export { runPing } from './ping.ts'
 export { createClackPrompts, PromptAborted } from './prompts.ts'
@@ -23,6 +24,8 @@ export type {
   LogArgs,
   LogDeps,
   FetchStatus,
+  PairApproverArgs,
+  PairApproverDeps,
   PingDeps,
   Prompts,
   ProviderSettingsOptions,
