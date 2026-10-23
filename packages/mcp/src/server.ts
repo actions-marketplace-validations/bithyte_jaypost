@@ -18,18 +18,26 @@ import { Caller, DEFAULT_ATTACHMENT_NAME } from '@jaypost/client'
 import type { AttachmentSource, Question, QuestionState } from '@jaypost/client'
 import {
   CANCELLED_QUESTION_TEXT,
+  NO_OPEN_QUESTIONS_TEXT,
   PROGRESS_INTERVAL_MS,
   PROGRESS_MESSAGE,
   STILL_WAITING_TEXT,
 } from './constants.ts'
 import { OpenQuestions } from './questions.ts'
-import type { AskArguments, AttachmentArgument, McpOptions, McpServerOptions } from './types.ts'
+import type {
+  AskArguments,
+  AttachmentArgument,
+  McpOptions,
+  McpServerOptions,
+  OpenQuestion,
+} from './types.ts'
 
 const INSTRUCTIONS = [
   "jaypost reaches the user on their phone (Telegram or Discord). Use it when they're away from",
   'the terminal: they asked to be pinged or asked on their phone, or the session runs unattended.',
   'Need a decision before you go on: ask_user.',
   'Need a decision later and have other work first: ask_user_async, then wait_for_answer.',
+  'No longer need a background answer: cancel_question. Lost a request_id: list_questions.',
   'Finished, blocked, or something they should know with no answer needed: notify_user.',
   'Make timeout_option the safe choice, the one that changes nothing.',
   'Use the project or repo directory name as project_name, the same in every call.',
@@ -56,7 +64,8 @@ const ASK_ASYNC_DESCRIPTION = [
   'call is not possible; otherwise use ask_user.',
   'On timeout the answer is timeout_option, so make that the safe choice.',
   `Default timeout ${DEFAULT_TIMEOUT_SECONDS} s, max ${MAX_TIMEOUT_SECONDS} s (24 h).`,
-  'Questions still open when this session ends are cancelled.',
+  'Call cancel_question if you no longer need the answer;',
+  'questions still open when this session ends are cancelled.',
   'For commands and diffs, set format to "markdown" and put them in a fenced code block.',
   ATTACH_SENTENCE,
 ].join(' ')
@@ -66,6 +75,19 @@ const WAIT_DESCRIPTION = [
   'Without wait_seconds it waits until the user answers or the question times out;',
   'wait_seconds 0 checks once. Results stay readable for 24 h after the question settles.',
   'Cancelling this call stops waiting but leaves the question open.',
+].join(' ')
+
+const CANCEL_DESCRIPTION = [
+  'Withdraw a question asked with ask_user_async that you no longer need,',
+  "so it stops waiting on the user's phone. Returns the final state:",
+  'cancelled, or the answer if the user already answered.',
+].join(' ')
+
+const LIST_DESCRIPTION = [
+  'List the questions this session asked with ask_user_async whose answer',
+  "you haven't collected with wait_for_answer or cancelled with cancel_question,",
+  'for example after losing track of a request_id. Some may already be answered;',
+  'call wait_for_answer to read them.',
 ].join(' ')
 
 const NOTIFY_DESCRIPTION = [
@@ -119,6 +141,14 @@ function attachmentNameSchema() {
     )
 }
 
+const requestIdSchema = z.string().min(1).describe('The request_id from ask_user_async')
+
+const stateOutputSchema = {
+  state: z.enum(['pending', 'done', 'cancelled']),
+  answer: z.string().optional(),
+  timed_out: z.boolean().optional(),
+}
+
 const askInputSchema = {
   project_name: projectNameSchema,
   text: textSchema,
@@ -147,8 +177,9 @@ const askInputSchema = {
 }
 
 /**
- * MCP server with ask_user, ask_user_async, wait_for_answer and notify_user; aborting `signal`
- * cancels every call. Background questions it asks go into `options.openQuestions`.
+ * MCP server with ask_user, ask_user_async, wait_for_answer, cancel_question, list_questions
+ * and notify_user; aborting `signal` cancels every call. Background questions it asks go into
+ * `options.openQuestions`.
  */
 export function createMcpServer(
   caller: Caller,
@@ -201,7 +232,7 @@ export function createMcpServer(
         return toErrorResult(result.message)
       }
       const { id, expiresAt } = result
-      openQuestions.add(id)
+      openQuestions.add({ id, project: args.project_name, text: args.text, expiresAt })
       return {
         content: [
           {
@@ -218,7 +249,7 @@ export function createMcpServer(
     {
       description: WAIT_DESCRIPTION,
       inputSchema: {
-        request_id: z.string().min(1).describe('The request_id from ask_user_async'),
+        request_id: requestIdSchema,
         wait_seconds: z
           .number()
           .min(0)
@@ -227,11 +258,7 @@ export function createMcpServer(
             `Seconds to wait at most; omit to wait until the question settles, 0 checks once; max ${MAX_TIMEOUT_SECONDS} (24 h), longer values are capped`,
           ),
       },
-      outputSchema: {
-        state: z.enum(['pending', 'done', 'cancelled']),
-        answer: z.string().optional(),
-        timed_out: z.boolean().optional(),
-      },
+      outputSchema: stateOutputSchema,
     },
     async (args, extra): Promise<CallToolResult> => {
       const waitSeconds =
@@ -255,6 +282,57 @@ export function createMcpServer(
         openQuestions.settle(args.request_id)
       }
       return toWaitResult(result)
+    },
+  )
+  server.registerTool(
+    'cancel_question',
+    {
+      description: CANCEL_DESCRIPTION,
+      inputSchema: { request_id: requestIdSchema },
+      outputSchema: stateOutputSchema,
+    },
+    async (args, extra): Promise<CallToolResult> => {
+      const result = await caller.cancel(args.request_id, {
+        signal: AbortSignal.any([extra.signal, signal]),
+      })
+      if (result.kind === 'failed') {
+        if (result.reason === 'unknownRequest') {
+          openQuestions.settle(args.request_id)
+        }
+        return toErrorResult(result.message)
+      }
+      openQuestions.settle(args.request_id)
+      return toWaitResult(result)
+    },
+  )
+  server.registerTool(
+    'list_questions',
+    {
+      description: LIST_DESCRIPTION,
+      outputSchema: {
+        questions: z.array(
+          z.object({
+            request_id: z.string(),
+            project_name: z.string(),
+            text: z.string(),
+            expires_at: z.string(),
+          }),
+        ),
+      },
+    },
+    async (): Promise<CallToolResult> => {
+      const questions = openQuestions.list()
+      return {
+        content: [{ type: 'text', text: formatOpenQuestions(questions) }],
+        structuredContent: {
+          questions: questions.map(({ id, project, text, expiresAt }) => ({
+            request_id: id,
+            project_name: project,
+            text,
+            expires_at: expiresAt,
+          })),
+        },
+      }
     },
   )
   server.registerTool(
@@ -382,6 +460,18 @@ function toQuestion(args: AskArguments): Question {
     ...(args.timeout_seconds === undefined ? {} : { timeout: args.timeout_seconds }),
     ...(args.attachment === undefined ? {} : { attachment: toAttachmentSource(args.attachment) }),
   }
+}
+
+function formatOpenQuestions(questions: readonly OpenQuestion[]): string {
+  if (questions.length === 0) {
+    return NO_OPEN_QUESTIONS_TEXT
+  }
+  return questions
+    .map(
+      ({ id, project, text, expiresAt }) =>
+        `${id} [${project}] ${JSON.stringify(text)} (expires ${expiresAt})`,
+    )
+    .join('\n')
 }
 
 function formatAnswer(answer: string, timedOut: boolean): string {
