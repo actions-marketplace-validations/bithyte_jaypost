@@ -2,8 +2,16 @@ import { parseToken, resolveClientToken, resolveTokenFile } from '../auth/index.
 import type { ClientToken } from '../auth/index.ts'
 import { DEFAULT_PORT } from '../config/constants.ts'
 import { Caller } from './caller.ts'
-import { HOST } from './constants.ts'
-import type { Answer, AskRequest, ClientOptions, Notification } from './types.ts'
+import { findEnvEndpoint, parseEndpointUrl, toLocalEndpoint } from './endpoint.ts'
+import type { VoteReport } from '../approval/index.ts'
+import type {
+  Answer,
+  AskRequest,
+  ClientOptions,
+  Notification,
+  ServiceEndpoint,
+  VoteRequest,
+} from './types.ts'
 
 /** Thrown by `Client` when the service is unreachable, rejects the input or can't send. */
 export class JaypostError extends Error {
@@ -11,8 +19,9 @@ export class JaypostError extends Error {
 }
 
 /**
- * Asks questions and sends notifications through a running jaypost service. Calls throw
- * `JaypostError` when the token lookup finds an unusable token.
+ * Asks questions and sends notifications through a running jaypost service, local or remote.
+ * Calls throw `JaypostError` when the token lookup finds an unusable token or `JAYPOST_URL` is
+ * unusable.
  */
 export class Client {
   #caller: Caller
@@ -29,8 +38,7 @@ export class Client {
       this.#token = token
     }
     this.#caller = new Caller({
-      port: options.port ?? DEFAULT_PORT,
-      host: options.host ?? HOST,
+      endpoint: toClientEndpoint(options),
       readToken: () => this.#readToken(),
     })
   }
@@ -51,7 +59,31 @@ export class Client {
     if (result.kind === 'failed') {
       throw new JaypostError(result.message)
     }
-    return { answer: result.answer, timedOut: result.timedOut }
+    const { kind: _kind, ...answer } = result
+    return answer
+  }
+
+  /**
+   * Asks every voter the two-way question and resolves once the vote is decided, either way;
+   * `approved` says which. Throws like `request`.
+   */
+  async vote(request: VoteRequest): Promise<VoteReport> {
+    const signal = request.signal ?? new AbortController().signal
+    const { signal: _signal, voters, require, ...question } = request
+    const ballot = {
+      ...(voters === undefined ? {} : { voters }),
+      ...(require === undefined ? {} : { rule: require }),
+    }
+    const result = await this.#caller.vote(
+      { ...question, ...this.#withProject(request.project) },
+      ballot,
+      { signal },
+    )
+    throwIfAborted(signal)
+    if (result.kind === 'failed') {
+      throw new JaypostError(result.message)
+    }
+    return result.report
   }
 
   /** Resolves once Telegram accepts the message. Throws like `request`. */
@@ -79,6 +111,24 @@ export class Client {
     }
     return resolveClientToken(process.env, resolveTokenFile(process.env))
   }
+}
+
+/** `url`, else `host` and `port`, else `JAYPOST_URL`, else the local default. */
+function toClientEndpoint(options: ClientOptions): ServiceEndpoint {
+  if (options.url !== undefined) {
+    if (options.host !== undefined || options.port !== undefined) {
+      throw new RangeError("url can't be combined with host or port")
+    }
+    const url = parseEndpointUrl(options.url)
+    if (url === undefined) {
+      throw new RangeError("url isn't an http or https URL without credentials, query or fragment")
+    }
+    return { kind: 'url', url }
+  }
+  if (options.host !== undefined || options.port !== undefined) {
+    return toLocalEndpoint(options.port ?? DEFAULT_PORT, options.host)
+  }
+  return findEnvEndpoint(process.env) ?? toLocalEndpoint(DEFAULT_PORT)
 }
 
 // An abort wins over whatever failure it caused.

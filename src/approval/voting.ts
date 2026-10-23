@@ -7,11 +7,14 @@ import { decideVote } from './vote.ts'
 import type {
   ApprovalRequest,
   AskProgress,
-  RequestResult,
+  RetryResult,
   RoundEnd,
   Vote,
   VoteCounts,
+  VoteReport,
   VoteResult,
+  VoteRule,
+  VoteService,
   VoteState,
   VoterAnswer,
   VoterQuestion,
@@ -37,27 +40,30 @@ export class VoterSendError extends SendError {
  * round's message is out.
  */
 export async function askWithRetries(
-  service: ApprovalService,
+  service: Pick<ApprovalService, 'send'>,
   request: ApprovalRequest,
   retryCount: number,
   signal: AbortSignal,
   onProgress?: (event: AskProgress) => void,
-): Promise<RequestResult> {
-  for (let round = 0; ; round += 1) {
+): Promise<RetryResult> {
+  for (let round = 1; ; round += 1) {
     if (signal.aborted) {
       return CANCELLED_RESULT
     }
-    const isLast = round >= retryCount
+    const isLast = round > retryCount
     const sent = await service.send({ ...request, reaskOnTimeout: !isLast }, signal)
     onProgress?.({
       kind: 'sent',
-      round: round + 1,
+      round,
       roundCount: retryCount + 1,
       timeoutSeconds: request.timeoutSeconds,
     })
     const result = await sent.result
-    if (isLast || result.kind === 'cancelled' || !result.outcome.timedOut) {
+    if (result.kind === 'cancelled') {
       return result
+    }
+    if (isLast || !result.outcome.timedOut) {
+      return { ...result, roundCount: round }
     }
   }
 }
@@ -73,7 +79,7 @@ export async function askWithRetries(
  * `onProgress` gets `sent` once every send of a round is out and `voted` after each recorded vote.
  */
 export async function runVote(
-  service: ApprovalService,
+  service: VoteService,
   vote: Vote,
   signal: AbortSignal,
   onProgress?: (event: AskProgress) => void,
@@ -88,7 +94,7 @@ export async function runVote(
 }
 
 async function runRounds(
-  service: ApprovalService,
+  service: VoteService,
   vote: Vote,
   state: VoteState,
   signal: AbortSignal,
@@ -123,7 +129,7 @@ type RoundPosition = { readonly round: number; readonly roundCount: number }
 
 /** Sends one round to `asked` and records their votes in `state` as they arrive. */
 async function runRound(
-  service: ApprovalService,
+  service: VoteService,
   vote: Vote,
   asked: readonly string[],
   position: RoundPosition,
@@ -181,7 +187,7 @@ async function runRound(
  * that arrive after the decision (the closed messages) are never counted.
  */
 async function collectRound(
-  service: ApprovalService,
+  service: VoteService,
   vote: Vote,
   questions: readonly VoterQuestion[],
   state: VoteState,
@@ -238,7 +244,7 @@ async function collectRound(
  * an answered one its final text. Messages that timed out or were cancelled are left alone.
  */
 function updateProgress(
-  service: ApprovalService,
+  service: VoteService,
   vote: Vote,
   state: VoteState,
   waiting: ReadonlyMap<string, unknown>,
@@ -293,5 +299,20 @@ function toVoteResult(
     votes: toVoterAnswers(vote, answers),
     roundCount,
     timedOut,
+  }
+}
+
+/** The JSON report of a decided vote under `rule`. */
+export function toVoteReport(
+  result: Extract<VoteResult, { readonly kind: 'decided' }>,
+  rule: VoteRule,
+): VoteReport {
+  return {
+    answer: result.answer,
+    timedOut: result.timedOut,
+    approved: result.approved,
+    require: rule,
+    votes: Object.fromEntries(result.votes.map((vote) => [vote.voter, vote.answer ?? null])),
+    rounds: result.roundCount,
   }
 }

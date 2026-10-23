@@ -1,6 +1,6 @@
 # CI (GitHub Actions)
 
-In CI there's no service to run. Set `JAYPOST_MODE=direct` and `jaypost send` talks to the chat app itself, using the provider, bot token and owner from env vars. `JAYPOST_MODE=service` is the default and uses the HTTP service as described above.
+In CI there's usually no service to run. Set `JAYPOST_MODE=direct` and `jaypost send` talks to the chat app itself, using the provider, bot token and owner from env vars. `JAYPOST_MODE=service` is the default and uses the HTTP service as described above.
 
 Run `jaypost setup-ci` once on your machine (`--provider NAME` picks the chat app). It prints a pairing code, waits for you to send it to the bot, then prints the env vars to store as GitHub secrets. It writes no files.
 
@@ -12,6 +12,17 @@ JAYPOST_OWNER_ID=...
 ```
 
 `setup-ci` pairs only the owner. To add approvers, run `jaypost pair approver` (`--provider NAME` as above). It gives one pairing code per person and asks `Pair another?` after each, then prints the ids paired in that run as a comma list. Add them to your own list and to the approvers secret; GitHub can't show a secret's value back, so `pair approver` can't print the full list for you. On Discord, an approver must be in a server the bot is in before they DM the code.
+
+## Through a service by URL
+
+If the runner can reach a jaypost service, it can use that one instead of direct mode, and the service keeps the only connection to the bot. Leave `JAYPOST_MODE` unset and point `send` at the service with its API token:
+
+```
+JAYPOST_URL=https://jaypost.example.com
+JAYPOST_TOKEN=...
+```
+
+`-u`, `--require` and `--retry` go through the service the same way (see [Several approvers](#several-approvers)). A plain `request` exits 0 for any answer in service mode, so gate on its output or use a vote, which exits 3 when rejected. Use https for anything that leaves the machine, since the token goes with every call.
 
 ## GitHub Action
 
@@ -115,7 +126,7 @@ So `-d No` works as a gate: the step fails unless someone approves. In service m
 
 ## Several approvers
 
-In direct mode, `-u ID` sends the question to a paired user instead of the owner. Repeat it for each approver, and each one gets their own message. `--require` sets how the votes decide:
+`-u ID` sends the question to a paired user instead of the owner. Repeat it for each approver, and each one gets their own message. `--require` sets how the votes decide:
 
 - `all` (the default with `-u`): approved when every approver answers the `-o` button, rejected on the first `-d`.
 - `majority`: approved when more than half of the listed approvers answer `-o`, rejected once that can't happen. A tie rejects.
@@ -140,9 +151,9 @@ Instead of `-u` flags, `JAYPOST_APPROVERS` can hold the ids, comma or space sepa
 
 Setting it means the same as passing those ids with `-u`: the question is a vote and `--require` defaults to `all`. If any `-u` is given, `-u` wins and the variable is ignored, not merged. A variable that is set but empty exits 2, because a misspelled or missing secret expands to an empty string and would otherwise send a plain question to the owner. `notify` ignores it.
 
-On GitHub Actions the voter ids, from `-u` or `JAYPOST_APPROVERS`, are masked in the logs (shown as `***`). GitHub masks the secret as a whole but not the single ids inside a list.
+On GitHub Actions the voter ids, from `-u` or `JAYPOST_APPROVERS`, are masked in the logs (shown as `***`) in direct mode. GitHub masks the secret as a whole but not the single ids inside a list.
 
-`-u`, `--require`, `--retry` and `JAYPOST_APPROVERS` exit 2 in service mode. In the Action, `approvers` and `require` go together.
+All of this works in service mode too, through the service's [`POST /vote`](http-api.md#votes) and `retry`, with the same exit codes and output. A service older than this release can't do it, and `request` says so instead of asking once. In the Action, `approvers` and `require` go together.
 
 Other differences from service mode:
 

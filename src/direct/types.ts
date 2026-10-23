@@ -1,7 +1,7 @@
 import type {
   ApprovalRequest,
   AskProgress,
-  RequestResult,
+  RetryResult,
   Vote,
   VoteResult,
 } from '../approval/index.ts'
@@ -31,7 +31,7 @@ export type DirectSession = {
     signal: AbortSignal,
     retryCount?: number,
     onProgress?: (event: AskProgress) => void,
-  ) => Promise<RequestResult>
+  ) => Promise<RetryResult>
   /**
    * Runs a vote with the same rejections as `request`, except a failed send rejects with
    * `VoterSendError`. `retryCount` is part of the vote.

@@ -13,12 +13,12 @@ import { ApprovalService } from '../../src/approval/index.ts'
 import type { MessageEnding, MessageReference, Messenger } from '../../src/approval/index.ts'
 import { NO_AUTH, NO_CLIENT_TOKEN } from '../../src/auth/index.ts'
 import type { ApiAuth, ClientToken } from '../../src/auth/index.ts'
-import { TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
+import { TOKEN_REJECTED_MESSAGE, toLocalEndpoint } from '../../src/client/index.ts'
 import { readHookInput, runHook } from '../../src/hook/index.ts'
 import type { HookDeps } from '../../src/hook/index.ts'
 import { NotificationService } from '../../src/notify/index.ts'
 import type { Notifier } from '../../src/notify/index.ts'
-import { createApiServer } from '../../src/server/index.ts'
+import { createApiServer, createSingleBotRouter } from '../../src/server/index.ts'
 
 const ROOT = new URL('../..', import.meta.url).pathname
 const TOKEN = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG'
@@ -74,12 +74,17 @@ async function startApi(
   const messenger = new RecordingMessenger()
   const notifier = new RecordingNotifier()
   const service = new ApprovalService(messenger)
-  const server = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
-    maxTextLength: options.maxTextLength ?? 3900,
-    providerName: 'test',
-    auth: options.auth ?? NO_AUTH,
-    notifications: new NotificationService(notifier),
-  })
+  const server = createApiServer(
+    createSingleBotRouter({
+      service,
+      status: () => ({ paired: true, bot: 'b' }),
+      maxTextLength: options.maxTextLength ?? 3900,
+      providerName: 'test',
+      resolveVoters: () => ({ kind: 'noOwner' }),
+      auth: options.auth ?? NO_AUTH,
+      notifications: new NotificationService(notifier),
+    }),
+  )
   servers.push(server)
   await server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = server.server.address() as AddressInfo
@@ -98,7 +103,7 @@ function createDeps(
   const out: string[] = []
   const errors: string[] = []
   const deps: HookDeps = {
-    port,
+    endpoint: toLocalEndpoint(port),
     token: options.token ?? NO_CLIENT_TOKEN,
     signal: options.signal ?? new AbortController().signal,
     readInput: async () => input,
@@ -705,6 +710,21 @@ test('session start with an unusable token reports it without calling the servic
   expect(out).toEqual([JSON.stringify({ systemMessage: tokenLine('bad token here') })])
   expect(errors).toEqual([])
   expect(messenger.sent).toEqual([])
+})
+
+test('session start with an unreachable remote url says to check it', async () => {
+  const { deps, out } = createDeps(0, SESSION_START_EVENT, { env: await createEmptyHome() })
+  const remote: HookDeps = {
+    ...deps,
+    endpoint: { kind: 'url', url: new URL('http://0.0.0.0:9/relay') },
+  }
+  expect(await runHook({}, remote)).toBe(0)
+  expect(out).toEqual([
+    JSON.stringify({
+      systemMessage:
+        "jaypost isn't reachable on http://0.0.0.0:9/relay, so permission prompts stay in the terminal. Check JAYPOST_URL and that the service there is running.",
+    }),
+  ])
 })
 
 test('session start aborted prints nothing', async () => {

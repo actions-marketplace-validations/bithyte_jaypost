@@ -25,9 +25,10 @@ import {
   TIMEOUT_TOO_OLD_MESSAGE,
   TOKEN_REJECTED_MESSAGE,
   TOKEN_REQUIRED_MESSAGE,
+  toLocalEndpoint,
 } from '../../src/client/index.ts'
 import type { NotifyRequest } from '../../src/notify/index.ts'
-import { createApiServer } from '../../src/server/index.ts'
+import { createApiServer, createSingleBotRouter } from '../../src/server/index.ts'
 
 const TOKEN = 'A'.repeat(43)
 const CALL = { signal: new AbortController().signal }
@@ -110,34 +111,53 @@ async function startApi(options: { maxAttachmentBytes?: number; notifications?: 
   const unexpected = (): never => {
     throw new Error('unexpected call')
   }
+  const request = async (request: ApprovalRequest): Promise<RequestResult> => {
+    requests.push(request)
+    return { kind: 'completed', outcome: { answer: 'Approve', timedOut: false } }
+  }
   const service = {
-    request: async (request: ApprovalRequest): Promise<RequestResult> => {
-      requests.push(request)
-      return { kind: 'completed', outcome: { answer: 'Approve', timedOut: false } }
-    },
+    request,
     start: unexpected,
     get: unexpected,
     waitFor: unexpected,
     cancel: unexpected,
+    send: async (sent: ApprovalRequest) => ({
+      id: 'q',
+      reference: { chatId: 1, messageId: 1 },
+      message: sent.message,
+      result: Promise.resolve(await request(sent)),
+      finalText: () => undefined,
+    }),
+    close: unexpected,
+    update: unexpected,
   }
-  const app = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
-    maxTextLength: 3900,
-    providerName: 'test',
-    auth: NO_AUTH,
-    maxAttachmentBytes: options.maxAttachmentBytes ?? 1000,
-    notifications: {
-      notify: async (notification) => {
-        notifications.push(notification)
+  const app = createApiServer(
+    createSingleBotRouter({
+      service,
+      status: () => ({ paired: true, bot: 'b' }),
+      maxTextLength: 3900,
+      providerName: 'test',
+      resolveVoters: () => ({ kind: 'noOwner' }),
+      auth: NO_AUTH,
+      maxAttachmentBytes: options.maxAttachmentBytes ?? 1000,
+      notifications: {
+        notify: async (notification) => {
+          notifications.push(notification)
+        },
       },
-    },
-  })
+    }),
+  )
   await app.listen({ port: 0, host: '127.0.0.1' })
   servers.push(app.server)
   return { port: (app.server.address() as AddressInfo).port, requests, notifications }
 }
 
 function caller(port: number, token: ClientToken = NO_CLIENT_TOKEN, now?: () => number): Caller {
-  return new Caller({ port, readToken: () => token, ...(now === undefined ? {} : { now }) })
+  return new Caller({
+    endpoint: toLocalEndpoint(port),
+    readToken: () => token,
+    ...(now === undefined ? {} : { now }),
+  })
 }
 
 function clock(values: readonly number[]): () => number {
@@ -217,7 +237,7 @@ test('readToken runs once per operation', async () => {
     body: TIMED_OUT,
   })
   const readToken = vi.fn((): ClientToken => NO_CLIENT_TOKEN)
-  const result = await new Caller({ port, readToken }).ask(
+  const result = await new Caller({ endpoint: toLocalEndpoint(port), readToken }).ask(
     { ...ASK, attachment: { name: 'a', text: 'x' } },
     CALL,
   )
@@ -559,12 +579,17 @@ class RecordingMessenger implements Messenger {
 async function startBackgroundApi() {
   const messenger = new RecordingMessenger()
   const service = new ApprovalService(messenger)
-  const app = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
-    maxTextLength: 3900,
-    providerName: 'test',
-    auth: NO_AUTH,
-    maxAttachmentBytes: 1000,
-  })
+  const app = createApiServer(
+    createSingleBotRouter({
+      service,
+      status: () => ({ paired: true, bot: 'b' }),
+      maxTextLength: 3900,
+      providerName: 'test',
+      resolveVoters: () => ({ kind: 'noOwner' }),
+      auth: NO_AUTH,
+      maxAttachmentBytes: 1000,
+    }),
+  )
   await app.listen({ port: 0, host: '127.0.0.1' })
   servers.push(app.server)
   return { port: (app.server.address() as AddressInfo).port, service, messenger }
@@ -646,6 +671,15 @@ test('askInBackground on an old service is tooOld', async () => {
   expect(await caller(port).askInBackground(ASK, CALL)).toEqual(
     failed('tooOld', BACKGROUND_TOO_OLD_MESSAGE),
   )
+})
+
+test('askInBackground leaves retry out of the body', async () => {
+  const { port } = await startBackgroundApi()
+  expect(await caller(port).askInBackground({ ...ASK, retry: 2 }, CALL)).toEqual({
+    kind: 'pending',
+    id: expect.any(String),
+    expiresAt: expect.any(String),
+  })
 })
 
 test('an unreadable state body is unreadable', async () => {

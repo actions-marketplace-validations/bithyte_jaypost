@@ -5,7 +5,9 @@ export {
   MAX_ATTACHMENT_BYTES,
   MAX_OPTION_LENGTH,
   MAX_PROJECT_LENGTH,
+  MAX_RETRY_COUNT,
   MAX_TIMEOUT_SECONDS,
+  MAX_VOTER_COUNT,
   MAX_WAIT_SECONDS,
   OWNER_COMMANDS,
   RESULT_TTL_MS,
@@ -28,14 +30,18 @@ export {
   createAttachmentSchema,
   createFormatSchema,
   createProjectSchema,
+  createRetrySchema,
   createTextSchema,
+  createVoteFieldsSchema,
   parseApprovalRequest,
+  parseRetryCount,
+  parseVoteRequest,
   parseWaitSeconds,
 } from './parser.ts'
 export { PendingRequests } from './pending.ts'
 export { ApprovalService, SendError } from './service.ts'
 export { decideVote } from './vote.ts'
-export { askWithRetries, runVote, VoterSendError } from './voting.ts'
+export { askWithRetries, runVote, toVoteReport, VoterSendError } from './voting.ts'
 export type {
   ApprovalRequest,
   AskProgress,
@@ -55,6 +61,8 @@ export type {
   RequestResult,
   RequestState,
   RequestStore,
+  RetryParseResult,
+  RetryResult,
   SentRequest,
   SentQuestion,
   Settlement,
@@ -62,8 +70,12 @@ export type {
   Vote,
   VoteCounts,
   VoteDecision,
+  VoteParseResult,
+  VoteReport,
+  VoteRequest,
   VoteResult,
   VoteRule,
+  VoteService,
   VoterAnswer,
   WaitParseResult,
 } from './types.ts'

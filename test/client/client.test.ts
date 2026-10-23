@@ -6,11 +6,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vite-plus/test'
 import { writeTokenFile } from '../../src/auth/index.ts'
-import { createApiServer } from '../../src/server/index.ts'
+import { createApiServer, createSingleBotRouter } from '../../src/server/index.ts'
 import type { ApprovalRequest, RequestResult } from '../../src/approval/index.ts'
 import type { NotifyRequest } from '../../src/notify/index.ts'
 import { NO_AUTH } from '../../src/auth/index.ts'
-import { ATTACHMENT_TOO_OLD_MESSAGE, TOKEN_REJECTED_MESSAGE } from '../../src/client/index.ts'
+import {
+  ATTACHMENT_TOO_OLD_MESSAGE,
+  INVALID_URL_MESSAGE,
+  TOKEN_REJECTED_MESSAGE,
+  VOTE_TOO_OLD_MESSAGE,
+} from '../../src/client/index.ts'
 import { Client, JaypostError } from '../../src/index.ts'
 
 const TOKEN = 'A'.repeat(43)
@@ -23,6 +28,7 @@ beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), 'jaypost-client-'))
   vi.stubEnv('XDG_CONFIG_HOME', directory)
   vi.stubEnv('JAYPOST_TOKEN', '')
+  vi.stubEnv('JAYPOST_URL', '')
 })
 
 const servers: Server[] = []
@@ -87,6 +93,58 @@ test('request returns a timeout as data', async () => {
   })
 })
 
+test('request with retry returns the rounds asked', async () => {
+  const { port, seen } = await startStub(200, '{"answer":"Approve","timedOut":false,"rounds":2}')
+  const client = new Client({ port })
+  expect(await client.request({ ...ASK, retry: 3 })).toEqual({
+    answer: 'Approve',
+    timedOut: false,
+    rounds: 2,
+  })
+  expect(seen.body).toEqual({ ...ASK, retry: 3 })
+})
+
+test('a long timeout with many retries still waits for the answer', async () => {
+  const { port } = await startStub(200, '{"answer":"Approve","timedOut":false,"rounds":1}')
+  const client = new Client({ port })
+  expect(await client.request({ ...ASK, timeout: 86_400, retry: 100 })).toEqual({
+    answer: 'Approve',
+    timedOut: false,
+    rounds: 1,
+  })
+})
+
+test('vote posts to /vote and returns the report', async () => {
+  const report = {
+    answer: 'Decline',
+    timedOut: false,
+    approved: false,
+    require: 'majority',
+    votes: { '111': 'Decline', '222': null },
+    rounds: 1,
+  }
+  const { port, seen } = await startStub(200, JSON.stringify(report))
+  const client = new Client({ port, project: 'app' })
+  const vote = {
+    text: 'Deploy?',
+    options: ['Approve', 'Decline'] as const,
+    timeoutOption: 'Decline',
+    voters: ['111', '222'],
+    require: 'majority' as const,
+    retry: 1,
+  }
+  expect(await client.vote(vote)).toEqual(report)
+  expect(seen).toEqual({ url: '/vote', body: { ...vote, project: 'app' } })
+})
+
+test('vote against a service without /vote throws the upgrade message', async () => {
+  const { port } = await startStub(404, '{"error":"not found"}')
+  const client = new Client({ port })
+  await expect(
+    client.vote({ text: 'Deploy?', options: ['Approve', 'Decline'], timeoutOption: 'Decline' }),
+  ).rejects.toThrow(new JaypostError(VOTE_TOO_OLD_MESSAGE))
+})
+
 test('client project is sent unless the call sets its own', async () => {
   const { port, seen } = await startStub(200, '{"answer":"Approve","timedOut":false}')
   const client = new Client({ port, project: 'api' })
@@ -127,6 +185,70 @@ test('unreachable host throws and names it', async () => {
   expect(error).toHaveProperty(
     'message',
     'jaypost service not reachable on 127.0.0.2:9 (run jaypost status)',
+  )
+})
+
+test('url sends every call under its path', async () => {
+  const { port, seen } = await startStub(200, '{"answer":"Approve","timedOut":false}')
+  const client = new Client({ url: `http://127.0.0.1:${port}/relay/`, token: TOKEN })
+  await client.request(ASK)
+  expect(seen).toEqual({ url: '/relay/request', body: ASK, authorization: `Bearer ${TOKEN}` })
+})
+
+test('JAYPOST_URL is used without url, host or port', async () => {
+  const { port, seen } = await startStub(200, '{"ok":true}')
+  vi.stubEnv('JAYPOST_URL', `http://127.0.0.1:${port}/team`)
+  await new Client().notify({ text: 'hi' })
+  expect(seen.url).toBe('/team/notify')
+})
+
+test('port wins over JAYPOST_URL', async () => {
+  const { port, seen } = await startStub(200, '{"ok":true}')
+  vi.stubEnv('JAYPOST_URL', 'http://127.0.0.2:9/team')
+  await new Client({ port }).notify({ text: 'hi' })
+  expect(seen.url).toBe('/notify')
+})
+
+test('unreachable url throws and names it', async () => {
+  const client = new Client({ url: 'http://127.0.0.2:9/relay' })
+  await expect(client.notify({ text: 'hi' })).rejects.toThrow(
+    new JaypostError(
+      'jaypost service not reachable on http://127.0.0.2:9/relay (run jaypost status)',
+    ),
+  )
+})
+
+test('unreachable remote url says to check it rather than the local install', async () => {
+  const client = new Client({ url: 'http://0.0.0.0:9/relay' })
+  await expect(client.notify({ text: 'hi' })).rejects.toThrow(
+    new JaypostError(
+      'jaypost service not reachable on http://0.0.0.0:9/relay (check the URL and that the service there is running)',
+    ),
+  )
+})
+
+test('url with a double slash path keeps calls on its host', async () => {
+  const { port, seen } = await startStub(200, '{"ok":true}')
+  await new Client({ url: `http://127.0.0.1:${port}//team/` }).notify({ text: 'hi' })
+  expect(seen.url).toBe('//team/notify')
+})
+
+test('bad JAYPOST_URL throws on the call without repeating it', async () => {
+  vi.stubEnv('JAYPOST_URL', 'ftp://user:secret@example.com')
+  const client = new Client()
+  await expect(client.notify({ text: 'hi' })).rejects.toThrow(new JaypostError(INVALID_URL_MESSAGE))
+})
+
+test.each(['example.com', 'ftp://example.com', 'https://user:pass@example.com', 'https://x/?a=1'])(
+  'url %s throws a RangeError',
+  (url) => {
+    expect(() => new Client({ url })).toThrow(RangeError)
+  },
+)
+
+test('url with host or port throws a RangeError', () => {
+  expect(() => new Client({ url: 'https://example.com', port: 1 })).toThrow(
+    new RangeError("url can't be combined with host or port"),
   )
 })
 
@@ -225,18 +347,26 @@ async function startRealServer(): Promise<{
     get: unexpected,
     waitFor: unexpected,
     cancel: unexpected,
+    send: unexpected,
+    close: unexpected,
+    update: unexpected,
   }
-  const app = createApiServer(service, () => ({ paired: true, bot: 'b' }), {
-    maxTextLength: 3900,
-    providerName: 'test',
-    auth: NO_AUTH,
-    maxAttachmentBytes: 1000,
-    notifications: {
-      notify: async (notification) => {
-        notifications.push(notification)
+  const app = createApiServer(
+    createSingleBotRouter({
+      service,
+      status: () => ({ paired: true, bot: 'b' }),
+      maxTextLength: 3900,
+      providerName: 'test',
+      resolveVoters: () => ({ kind: 'noOwner' }),
+      auth: NO_AUTH,
+      maxAttachmentBytes: 1000,
+      notifications: {
+        notify: async (notification) => {
+          notifications.push(notification)
+        },
       },
-    },
-  })
+    }),
+  )
   await app.listen({ port: 0, host: '127.0.0.1' })
   servers.push(app.server)
   return {

@@ -1,6 +1,6 @@
 import { format } from 'node:util'
 import type { ApprovalRequest, AskProgress, VoteResult } from '../approval/index.ts'
-import { parseApprovalRequest, SendError, VoterSendError } from '../approval/index.ts'
+import { parseApprovalRequest, SendError, toVoteReport, VoterSendError } from '../approval/index.ts'
 import {
   ATTACHMENT_NOT_SUPPORTED_MESSAGE,
   readAttachment,
@@ -13,7 +13,7 @@ import type { DirectConfig, DirectSession } from '../direct/index.ts'
 import { parseNotifyRequest } from '../notify/index.ts'
 import { formatDuration } from '../progress/index.ts'
 import type { ProgressStep } from '../progress/index.ts'
-import { findOwnerSetting, resolveMaxAttachmentBytes } from '../provider/index.ts'
+import { resolveMaxAttachmentBytes, resolveVoters } from '../provider/index.ts'
 import { formatWaitTitle } from './answer-wait.ts'
 import {
   DECLINED_EXIT_CODE,
@@ -101,24 +101,22 @@ async function runDirectVote(
   config: DirectConfig,
   deps: DirectSendDeps,
 ): Promise<number> {
-  const parse = findOwnerSetting(config.provider)?.parse
   const rawVoters = args.voters ?? []
   // On stderr because the Action's run.sh and `$(...)` capture stdout only; the runner processes
   // workflow commands on both streams.
   for (const line of formatMaskCommands(rawVoters, deps.env)) {
     deps.printError(line)
   }
-  const normalized: string[] = []
-  for (const voter of args.voters ?? [ownerVoter(config)]) {
-    const value = parse === undefined ? voter : parse(voter)
-    if (value === undefined) {
-      deps.printError(`jaypost: invalid user id ${JSON.stringify(voter)}`)
-      return 1
-    }
-    // The form a tap's sender id takes, so `0111` and ` 111` are the same voter as `111`.
-    normalized.push(String(value))
+  // loadDirectConfig requires the owner, so `noOwner` can't happen.
+  const resolved = resolveVoters(config.provider, config.settings, args.voters)
+  if (resolved.kind === 'noOwner') {
+    throw new Error('direct config has no owner')
   }
-  const voters = [...new Set(normalized)]
+  if (resolved.kind === 'invalid') {
+    deps.printError(`jaypost: invalid user id ${JSON.stringify(resolved.voter)}`)
+    return 1
+  }
+  const { voters } = resolved
   // Only the voters given are masked; the owner id is already a whole secret.
   const rawIds = new Set(rawVoters.map((voter) => voter.trim()))
   const extraIds = args.voters === undefined ? [] : voters.filter((voter) => !rawIds.has(voter))
@@ -145,7 +143,7 @@ async function runDirectVote(
     return 1
   }
   wait?.step().succeed(describeVoteEnd(result.value))
-  deps.print(formatVoteResult(result.value, rule, args.json))
+  deps.print(formatVoteResult(toVoteReport(result.value, rule), args.json))
   return result.value.approved ? 0 : DECLINED_EXIT_CODE
 }
 
@@ -226,16 +224,6 @@ function describeVoteEnd(result: Extract<VoteResult, { readonly kind: 'decided' 
   }
   const votedCount = result.votes.filter((vote) => vote.answer !== undefined).length
   return `Approved, ${votedCount} of ${result.votes.length} voted`
-}
-
-/** The owner's id as a string; `loadDirectConfig` guarantees the setting is present. */
-function ownerVoter(config: DirectConfig): string {
-  const key = findOwnerSetting(config.provider)?.configKey
-  const value = key === undefined ? undefined : config.settings[key]
-  if (value === undefined) {
-    throw new Error('direct config has no owner')
-  }
-  return String(value)
 }
 
 /**

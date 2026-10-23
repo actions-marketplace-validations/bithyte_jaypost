@@ -6,7 +6,7 @@ import { resolve } from 'node:path'
 import { isSea } from 'node:sea'
 import { fileURLToPath } from 'node:url'
 import { parseSince } from './audit/index.ts'
-import { VOTE_RULES } from './approval/index.ts'
+import { MAX_RETRY_COUNT, VOTE_RULES } from './approval/index.ts'
 import type { VoteRule } from './approval/index.ts'
 import { resolveClientToken, resolveTokenFile } from './auth/index.ts'
 import { DEFAULT_ATTACHMENT_NAME } from './client/index.ts'
@@ -36,7 +36,6 @@ import {
 } from './commands/index.ts'
 import { createProgress, formatOnRail, resolveProgressMode } from './progress/index.ts'
 import type { Progress } from './progress/index.ts'
-import { MAX_RETRY_COUNT } from './commands/constants.ts'
 import type {
   DirectSendDeps,
   InitArgs,
@@ -67,7 +66,7 @@ import {
   resolveInstallPaths,
   resolveTargetOrder,
 } from './install/index.ts'
-import { resolveMcpPort, runMcp } from './mcp/index.ts'
+import { resolveMcpEndpoint, resolveMcpPort, runMcp } from './mcp/index.ts'
 import type { CliLocation, InstallPaths, Target, TargetName } from './install/index.ts'
 import {
   DEFAULT_PROVIDER,
@@ -207,7 +206,7 @@ function createSendDeps(
   progress: Progress,
 ): SendDeps {
   return {
-    port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
+    endpoint: resolveMcpEndpoint(flagPort, process.env, resolveInstallPaths().installFile),
     token: resolveClientToken(process.env, resolveTokenFile(process.env)),
     signal,
     print: createAnswerPrint(progress),
@@ -242,7 +241,7 @@ function requireSendMode(command: Command): Exclude<SendMode, { readonly kind: '
 
 function createHookDeps(flagPort: number | undefined, signal: AbortSignal): HookDeps {
   return {
-    port: resolveMcpPort(flagPort, process.env, resolveInstallPaths().installFile),
+    endpoint: resolveMcpEndpoint(flagPort, process.env, resolveInstallPaths().installFile),
     token: resolveClientToken(process.env, resolveTokenFile(process.env)),
     signal,
     readInput: () => readHookInput(process.stdin, signal),
@@ -666,14 +665,14 @@ export async function main(argv: readonly string[]): Promise<number> {
     .description('run an MCP server on stdin/stdout for agents')
     .option(
       '--port <n>',
-      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      'API port on this machine, overrides JAYPOST_URL (default: JAYPOST_PORT, then the install, then 8787)',
       parsePort,
     )
     .action(async (options: { readonly port?: number }) => {
       // Not resolvePort(): that reads config.json, which an agent's container may not have.
       const tokenFile = resolveTokenFile(process.env)
       code = await runMcp({
-        port: resolveMcpPort(options.port, process.env, resolveInstallPaths().installFile),
+        endpoint: resolveMcpEndpoint(options.port, process.env, resolveInstallPaths().installFile),
         readToken: () => resolveClientToken(process.env, tokenFile),
       })
     })
@@ -683,7 +682,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     .argument('[file]', 'file to write; prints to stdout without one')
     .option(
       '--port <n>',
-      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      'API port on this machine, overrides JAYPOST_URL (default: JAYPOST_PORT, then the install, then 8787)',
       parsePort,
     )
     .action((file: string | undefined, options: { readonly port?: number }) => {
@@ -710,16 +709,15 @@ export async function main(argv: readonly string[]): Promise<number> {
     )
     .option(
       '-u, --user <id>',
-      'send to this paired user instead of the owner; repeat per approver; overrides JAYPOST_APPROVERS (direct mode)',
+      'send to this paired user instead of the owner; repeat per approver; overrides JAYPOST_APPROVERS',
       collect,
     )
     .addOption(
-      new Option(
-        '--require <rule>',
-        'votes needed to approve: all or majority (direct mode)',
-      ).choices(VOTE_RULES),
+      new Option('--require <rule>', 'votes needed to approve: all or majority').choices(
+        VOTE_RULES,
+      ),
     )
-    .option('--retry <count>', 're-ask up to N times after a timeout (direct mode)', parseRetry)
+    .option('--retry <count>', 're-ask up to N times after a timeout', parseRetry)
     .option('--project <name>', 'shown as [name] above the question')
     .addOption(
       new Option('--format <format>', 'how to read TEXT: plain (default) or markdown').choices(
@@ -737,7 +735,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     )
     .option(
       '--port <n>',
-      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      'API port on this machine, overrides JAYPOST_URL (default: JAYPOST_PORT, then the install, then 8787)',
       parsePort,
     )
     .action(
@@ -762,15 +760,6 @@ export async function main(argv: readonly string[]): Promise<number> {
         const mode = requireSendMode(request)
         const approvers = resolveApprovers(options.user, process.env)
         const isVote = approvers.kind === 'listed' || options.require !== undefined
-        if (
-          mode.kind !== 'direct' &&
-          (isVote || options.retry !== undefined || process.env[APPROVERS_ENV_VAR] !== undefined)
-        ) {
-          request.error(
-            `error: -u, --require, --retry and ${APPROVERS_ENV_VAR} need JAYPOST_MODE=direct`,
-            { exitCode: 2 },
-          )
-        }
         if (approvers.kind === 'empty') {
           request.error(
             `error: ${APPROVERS_ENV_VAR} is set but has no ids; a missing GitHub secret is empty too`,
@@ -840,7 +829,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     )
     .option(
       '--port <n>',
-      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      'API port on this machine, overrides JAYPOST_URL (default: JAYPOST_PORT, then the install, then 8787)',
       parsePort,
     )
     .action(
@@ -892,7 +881,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     )
     .option(
       '--port <n>',
-      'API port (default: JAYPOST_PORT, then the install, then 8787)',
+      'API port on this machine, overrides JAYPOST_URL (default: JAYPOST_PORT, then the install, then 8787)',
       parsePort,
     )
     .option('--project <name>', 'shown as [name] (default: the Claude Code project folder)')

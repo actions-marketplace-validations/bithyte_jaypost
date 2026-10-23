@@ -1,8 +1,15 @@
+import type { VoteReport, VoteRule } from '../approval/index.ts'
 import type { ClientToken } from '../auth/index.ts'
 import type { MessageFormat } from '../format/index.ts'
 
 /** Where `Client` finds the service, and the project name its messages carry by default. */
 export type ClientOptions = {
+  /**
+   * The service's base URL, http or https, such as a remote relay; a path is kept as a prefix.
+   * Throws a `RangeError` at construction when it isn't one, or comes with `host` or `port`.
+   * Without `url`, `host` or `port`, `JAYPOST_URL` is used when set.
+   */
+  readonly url?: string
   /** Default `127.0.0.1`. */
   readonly host?: string
   /** Default 8787. */
@@ -61,12 +68,32 @@ export type AskRequest = {
   readonly format?: MessageFormat
   /** One file sent with the question. Needs a service that supports attachments. */
   readonly attachment?: AttachmentInput
+  /** Asks again after a timeout up to this many times, 0 to 100. Needs a service with retries. */
+  readonly retry?: number
   /** Aborting it cancels the question; the chat message is edited to a "cancelled" line. */
   readonly signal?: AbortSignal
 }
 
-/** The tapped option or typed reply, or `timeoutOption` with `timedOut` set. */
-export type Answer = { readonly answer: string; readonly timedOut: boolean }
+/**
+ * The tapped option or typed reply, or `timeoutOption` with `timedOut` set; `rounds` is how many
+ * times it was asked, present when the request had `retry`.
+ */
+export type Answer = {
+  readonly answer: string
+  readonly timedOut: boolean
+  readonly rounds?: number
+}
+
+/**
+ * A yes/no question for several people, one message each: `options` are `[approve, reject]` and
+ * `timeoutOption` the reject answer. `voters` (provider user ids) default to the owner and
+ * `require` to `all`; `retry` re-asks only voters who haven't voted. Needs a service with votes.
+ */
+export type VoteRequest = Omit<AskRequest, 'options' | 'allowText'> & {
+  readonly options: readonly [string, string]
+  readonly voters?: readonly string[]
+  readonly require?: VoteRule
+}
 
 /** A message that doesn't need an answer. */
 export type Notification = {
@@ -83,7 +110,13 @@ export type Notification = {
 export type ApiMethod = 'GET' | 'POST' | 'DELETE'
 
 /** Service endpoints the clients call. */
-export type ApiPath = '/request' | '/notify' | '/request/async' | '/status' | `/request/${string}`
+export type ApiPath =
+  | '/request'
+  | '/notify'
+  | '/request/async'
+  | '/vote'
+  | '/status'
+  | `/request/${string}`
 
 /** Outcome of a call to the local service; `message` is ready to show the caller. */
 export type ApiResult = { readonly kind: 'ok'; readonly body: unknown } | Failure
@@ -92,8 +125,6 @@ export type ApiOptions = {
   /** Aborting it makes the call fail with "cancelled". */
   readonly signal: AbortSignal
   readonly timeoutMs: number
-  /** Default `127.0.0.1`. */
-  readonly host?: string
   /** Sent as `authorization: Bearer <token>` when set. */
   readonly token?: string
 }
@@ -108,6 +139,13 @@ export type AskBody = {
   readonly project?: string
   readonly format?: MessageFormat
   readonly attachment?: AttachmentBody
+  readonly retry?: number
+}
+
+/** The body of a /vote call: a two-way question and who votes on it. */
+export type VoteBody = AskBody & {
+  readonly voters?: readonly string[]
+  readonly require?: VoteRule
 }
 
 /** The body of a /notify call. */
@@ -126,6 +164,9 @@ export type AskOptions = Omit<ApiOptions, 'timeoutMs'> & {
 /** Outcome of `requestApi`; `message` is ready to show the caller. */
 export type AskResult = { readonly kind: 'ok'; readonly outcome: Answer } | Failure
 
+/** Outcome of `voteApi` and `Caller.vote`; `message` is ready to show the caller. */
+export type VoteOutcome = { readonly kind: 'voted'; readonly report: VoteReport } | Failure
+
 /** The body of GET /request/<id>. */
 export type StateBody =
   | {
@@ -141,10 +182,16 @@ export type StateBody =
     }
   | { readonly id: string; readonly state: 'cancelled' }
 
+/**
+ * Where a service lives: a base URL (the local daemon or a remote relay), or a configured URL that
+ * can't be used, which fails every call with reason `invalidUrl`.
+ */
+export type ServiceEndpoint =
+  | { readonly kind: 'url'; readonly url: URL }
+  | { readonly kind: 'invalid'; readonly message: string }
+
 export type CallerOptions = {
-  readonly port: number
-  /** Default `127.0.0.1`. */
-  readonly host?: string
+  readonly endpoint: ServiceEndpoint
   /** Called once per operation, before any I/O; `unusable` fails that operation only. */
   readonly readToken: () => ClientToken
   /** Milliseconds; default `performance.now`. Drives the wait deadline and the too-old check. */
@@ -159,12 +206,22 @@ export type Question = Omit<AskRequest, 'attachment' | 'signal'> & {
   readonly attachment?: AttachmentSource
 }
 
+/**
+ * Who votes on a two-way question and how: `voters` default to the owner and `rule` to `all`.
+ * Ids are the provider's user ids.
+ */
+export type Ballot = {
+  readonly voters?: readonly string[]
+  readonly rule?: VoteRule
+}
+
 export type Message = Omit<Notification, 'attachment' | 'signal'> & {
   readonly attachment?: AttachmentSource
 }
 
-/** `rejected` is a 400 with the daemon's own text; `attachment` is a local read or size failure. */
+/** `invalidUrl` is a bad `JAYPOST_URL`; `rejected` is a 400 with the daemon's own text; `attachment` is a local read or size failure. */
 export type FailureReason =
+  | 'invalidUrl'
   | 'unusableToken'
   | 'unreachable'
   | 'cancelled'
@@ -189,7 +246,7 @@ export type Failure = {
 
 export type Pending = { readonly kind: 'pending'; readonly id: string; readonly expiresAt: string }
 
-export type Done = { readonly kind: 'done'; readonly answer: string; readonly timedOut: boolean }
+export type Done = { readonly kind: 'done' } & Answer
 
 export type QuestionState =
   | Pending

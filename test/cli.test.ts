@@ -428,25 +428,28 @@ test('send --attach-name without --attach exits 2', async () => {
 
 const REQUEST_ARGS = ['request', 'Deploy?', '-o', 'Yes', '-d', 'No']
 
-test('vote and retry flags need direct mode', async () => {
+test('vote and retry flags reach the service without direct mode', async () => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.stubEnv('JAYPOST_MODE', '')
+  // An invalid token makes send exit 1 before any network call; a usage error would be 2.
+  vi.stubEnv('JAYPOST_TOKEN', 'short-secret')
   for (const flags of [
     ['-u', '1'],
     ['--require', 'all'],
     ['--retry', '2'],
   ]) {
-    expect(await main([...REQUEST_ARGS, ...flags])).toBe(2)
+    expect(await main([...REQUEST_ARGS, ...flags, '--port', '1'])).toBe(1)
   }
 })
 
-test('JAYPOST_APPROVERS needs direct mode, even empty', async () => {
-  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+test('an empty JAYPOST_APPROVERS exits 2 in service mode too', async () => {
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   vi.stubEnv('JAYPOST_MODE', '')
-  for (const value of ['1', '']) {
-    vi.stubEnv('JAYPOST_APPROVERS', value)
-    expect(await main(REQUEST_ARGS)).toBe(2)
-  }
+  vi.stubEnv('JAYPOST_APPROVERS', '')
+  expect(await main(REQUEST_ARGS)).toBe(2)
+  const output = stderr.mock.calls.map((call) => String(call[0])).join('')
+  expect(output).toContain('JAYPOST_APPROVERS is set but has no ids')
 })
 
 test('an empty JAYPOST_APPROVERS exits 2 in direct mode', async () => {

@@ -1,6 +1,6 @@
 # Commands
 
-Commands that talk to the service pick its port from `--port`, then `JAYPOST_PORT`, then the install's `install.json`, then 8787.
+Commands that talk to the service pick its port from `--port`, then `JAYPOST_PORT`, then the install's `install.json`, then 8787. `send`, `hook` and `mcp` call `JAYPOST_URL` instead when it's set and `--port` isn't: a base URL, `http` or `https`, whose path (if any) goes in front of every API path, such as `https://jaypost.example.com/team`. Credentials go in `JAYPOST_TOKEN`, not the URL.
 
 ## Setup
 
@@ -66,7 +66,7 @@ For systemd and launchd the npm package stays; `uninstall` prints the command to
 jaypost request TEXT [-o OPTION...] [--allow-text] -d DEFAULT [--timeout S] [-u ID...] [--require all|majority] [--retry N] [--project NAME] [--format plain|markdown] [--attach FILE|-] [--attach-name NAME] [--json] [--port N]
 ```
 
-Asks a question from the shell and prints the answer. `-o` adds a button, `-d` is the answer on timeout (added as the last button), `--allow-text` also accepts a typed reply. `-u`, `--require` and `--retry` only work in [direct mode](ci.md). See [From the shell](scripts.md#from-the-shell). `jaypost send request` still works as the old name.
+Asks a question from the shell and prints the answer. `-o` adds a button, `-d` is the answer on timeout (added as the last button), `--allow-text` also accepts a typed reply. `-u`, `--require` and `--retry` run a vote or re-ask after a timeout; see [Several approvers](ci.md#several-approvers). See [From the shell](scripts.md#from-the-shell). `jaypost send request` still works as the old name.
 
 ### `jaypost notify`
 
