@@ -25,7 +25,7 @@ Use `notify_user` when no answer is needed: the task is done, you're blocked on 
 
 - Tool permission prompts reach the phone through the plugin's hook. For a tool call that needs permission, make the call and let the prompt ask.
 - AskUserQuestion stays in the terminal. While the user is away, ask with `ask_user` instead.
-- When you stop and wait for input, the hook sends a generic "needs input" notice. A `notify_user` summary is what tells them whether to come back now.
+- When you finish a turn and nobody types for a minute, the hook sends your final message to the phone, and the user can reply with the next prompt. Make the start of that message say what got done and what's open.
 
 ## Writing the message
 
