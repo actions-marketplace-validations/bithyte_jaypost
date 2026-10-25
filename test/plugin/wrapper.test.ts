@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vite-plus/test'
-import { resolveInstallPaths, writeInstall } from '../../src/install/index.ts'
+import { resolveInstallPaths, writeInstall } from '@jaypost/install'
 
 const ROOT = new URL('../..', import.meta.url).pathname
 const WRAPPER = join(ROOT, 'claude-plugin', 'bin', 'jaypost-plugin')
@@ -133,6 +133,19 @@ test('hook swallows a failing jaypost', async () => {
   )
   expect(result.status).toBe(0)
   expect(result.stdout).toBe('')
+  expect(result.stderr).toBe('')
+})
+
+test('hook passes a stop reply through with exit 2', async () => {
+  const sandbox = await createSandbox()
+  const result = run(
+    'hook',
+    sandbox,
+    { FAKE_EXIT: '2', FAKE_STDOUT: 'The user replied: next' },
+    '{"hook_event_name":"Stop"}',
+  )
+  expect(result.status).toBe(2)
+  expect(result.stdout).toBe('The user replied: next\n')
   expect(result.stderr).toBe('')
 })
 
@@ -264,7 +277,7 @@ test('an unknown mode exits 1 naming it', async () => {
 
 test('session start against the real cli reports a stopped service', async () => {
   const sandbox = await createSandbox(
-    `#!/bin/sh\nexec "${process.execPath}" "${ROOT}src/cli.ts" "$@"\n`,
+    `#!/bin/sh\nexec "${process.execPath}" "${ROOT}apps/cli/src/cli.ts" "$@"\n`,
   )
   const configHome = join(sandbox.root, 'config')
   await mkdir(configHome)
