@@ -48,18 +48,33 @@ export type ProviderSetup = {
 }
 
 export type RuntimeHandlers = {
-  readonly answer: (id: string, optionIndex: number) => 'accepted' | 'expired'
+  /**
+   * A tapped option for request `id`. `senderId` is who tapped, when the provider knows; the daemon
+   * refuses a tap on a question sent to someone else, since callback data can be forged.
+   */
+  readonly answer: (id: string, optionIndex: number, senderId?: string) => 'accepted' | 'expired'
   /**
    * A typed answer for request `id`; 'expired' when it is unknown, settled, or doesn't allow text.
    */
   readonly reply: (id: string, text: string) => 'accepted' | 'expired'
   readonly dismiss: (id: string) => boolean
-  /** Present only while pairing. */
+  /** Present only on providers that pair; `notPairing` when there is no code to redeem. */
   readonly pair?: (senderId: string, text: string) => PairResult
-  /** Commands the owner can send; the provider shows them in its menu if it has one. */
+  /** True for anyone paired on this bot; only their messages, taps and commands count. */
+  readonly isPaired: (senderId: string) => boolean
+  /** Everyone paired on this bot, for per-chat command menus at start. */
+  readonly listPaired: () => readonly string[]
+  /** Commands a paired person can send; the provider shows them in its menu if it has one. */
   readonly commands: readonly OwnerCommand[]
-  /** Reply text for an owner command, or undefined to stay silent. Never throws. */
-  readonly command: (name: string, argument: string) => string | undefined
+  /**
+   * Reply text for a command, or undefined to stay silent. `senderId` is undefined only for
+   * providers without chat identities (terminal). Never throws.
+   */
+  readonly command: (
+    name: string,
+    argument: string,
+    senderId: string | undefined,
+  ) => string | undefined
   /** The provider can't continue; the daemon logs `message` and exits 1. */
   readonly fatal: (message: string) => void
 }

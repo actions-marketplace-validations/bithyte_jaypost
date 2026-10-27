@@ -51,15 +51,15 @@ export class NotificationService {
    * Resolves once sent and the expiry timer is started. Throws `SendError` if sending fails. A failed
    * expiry delete is only logged.
    */
-  async notify(request: NotifyRequest): Promise<void> {
+  async notify(request: NotifyRequest, recipient: string | undefined): Promise<void> {
     const id = this.#newId()
-    const quietEnd = this.#quiet?.quietUntil()
+    const quietEnd = this.#quiet?.quietUntil(recipient)
     let reference
     try {
       reference = await this.#notifier.sendNotification(
         id,
         request.message,
-        { silent: quietEnd !== undefined, dismissible: true },
+        { silent: quietEnd !== undefined, dismissible: true, recipient },
         request.attachment,
       )
     } catch (cause) {

@@ -9,6 +9,9 @@ export const TOO_OLD_MESSAGE =
   'jaypost service is too old for notifications (run jaypost init to upgrade)'
 export const NOT_SUPPORTED_MESSAGE = 'notifications not supported by this provider'
 export const NOT_PAIRED_MESSAGE = "jaypost isn't paired yet (run jaypost status)"
+/** The service's 503 error text for a key whose bot is starting or failed. */
+export const BOT_UNAVAILABLE_ERROR = 'bot unavailable'
+export const BOT_UNAVAILABLE_MESSAGE = "jaypost's bot isn't running (run jaypost status)"
 export const SEND_FAILED_MESSAGE = "couldn't send the message to the user"
 /** Extra time the HTTP call gets beyond the approval timeout, so the service answers first. */
 export const FETCH_GRACE_MS = 30_000
@@ -29,6 +32,9 @@ export const BACKGROUND_TOO_OLD_MESSAGE =
 /** Shown when a question with `retry` timed out without the service saying it re-asked. */
 export const RETRY_TOO_OLD_MESSAGE =
   'jaypost service is too old to re-ask after a timeout (run jaypost init to upgrade)'
+/** Shown when the service has no GET /log. */
+export const LOG_TOO_OLD_MESSAGE =
+  'jaypost service is too old to read its log over the API (run jaypost init to upgrade)'
 /** Shown when the service has no /vote. */
 export const VOTE_TOO_OLD_MESSAGE =
   'jaypost service is too old for votes (run jaypost init to upgrade)'
@@ -43,3 +49,16 @@ export const ATTACHMENT_TOO_OLD_MESSAGE =
   'jaypost service is too old for attachments (run jaypost init to upgrade)'
 /** Shown when the provider can't send attachments. */
 export const ATTACHMENT_NOT_SUPPORTED_MESSAGE = 'attachments not supported by this provider'
+/** Shown when an admin route answers 401: the admin key was wrong or has been rotated. */
+export const ADMIN_KEY_REJECTED_MESSAGE =
+  'jaypost service rejected the admin key; check JAYPOST_ADMIN_KEY, or the admin key file if the key was rotated'
+/** Shown when the service has no admin routes. */
+export const ADMIN_TOO_OLD_MESSAGE =
+  'jaypost service is too old for admin commands (run jaypost init to upgrade)'
+/**
+ * The `error` of jaypost's 404 for a route it doesn't have; compared ignoring case, which also
+ * covers Fastify's default `Not Found`.
+ */
+export const ROUTE_NOT_FOUND_ERROR = 'not found'
+/** Shown for a 2xx admin answer of the wrong shape whose body would hold a key; never quotes it. */
+export const UNEXPECTED_ANSWER_MESSAGE = 'jaypost service sent an unexpected answer'

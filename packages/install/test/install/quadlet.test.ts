@@ -202,6 +202,21 @@ test("clearOwner removes the owner env var of the record's provider", async () =
   )
 })
 
+test('forgetSeedOwner removes only the owner env var and runs nothing in a container', async () => {
+  const { t, paths } = make()
+  const record = await t.install({
+    ...base,
+    provider: PAIRING_FAKE,
+    settings: { fakeKey: 'k', fakeOwner: 'o' },
+  })
+  calls = []
+  await t.forgetSeedOwner(record)
+  expect(readFileSync(join(paths.quadletDirectory, '.env'), 'utf8')).toBe(
+    'JAYPOST_PROVIDER=fakepair\nFAKE_KEY=k\nJAYPOST_PORT=8787\n',
+  )
+  expect(calls).toEqual([])
+})
+
 test('clearOwner uses podman exec', async () => {
   const { t } = make()
   await t.install(withOwner)
@@ -398,4 +413,42 @@ test('upgrade throws when the restart fails', async () => {
     'systemctl restart failed (exit 1)',
   )
   expect(calls.some(([c, a]) => c === 'podman' && a[0] === 'rmi')).toBe(false)
+})
+
+const ADMIN_KEY = `jpa_${'k'.repeat(43)}`
+
+test('readAdminKey execs admin-key show in the running container', async () => {
+  const { t } = make()
+  execOut = `${ADMIN_KEY}\n`
+  calls = []
+  expect(await t.readAdminKey(rec)).toBe(ADMIN_KEY)
+  expect(calls).toEqual([['podman', ['exec', 'jaypost', 'jaypost', 'admin-key', 'show']]])
+})
+
+test('readAdminKey falls back to a one-off container when exec fails', async () => {
+  const { t } = make()
+  failArgs = (a) => (a[0] === 'exec' ? 'no such container' : undefined)
+  ownerOut = ADMIN_KEY
+  calls = []
+  expect(await t.readAdminKey(rec)).toBe(ADMIN_KEY)
+  expect(calls).toContainEqual([
+    'podman',
+    ['run', '--rm', '-v', 'jaypost-data:/data', TAG, 'jaypost', 'admin-key', 'show'],
+  ])
+})
+
+test('readAdminKey throws with stderr when both fail', async () => {
+  const { t } = make()
+  failArgs = () => 'boom'
+  await expect(t.readAdminKey(rec)).rejects.toThrow(
+    "couldn't read the admin key from the container: boom",
+  )
+})
+
+test('readAdminKey refuses output that is not an admin key, without quoting it', async () => {
+  const { t } = make()
+  execOut = 'garbage output'
+  const reading = t.readAdminKey(rec)
+  await expect(reading).rejects.toThrow("the container didn't print a valid admin key")
+  await expect(reading).rejects.not.toThrow('garbage')
 })

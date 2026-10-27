@@ -10,14 +10,17 @@ import {
 } from 'node:fs'
 import { delimiter, dirname, join, resolve, sep } from 'node:path'
 import {
+  BOTS_DIRECTORY_NAME,
   isMissingFileError,
   readConfigFile,
   removeAuditFiles,
+  resolveAdminKeyPath,
   resolveAuditPath,
+  resolveRegistryPath,
   resolveStatePath,
   updateConfigFile,
 } from '@jaypost/store'
-import { collectSettings, DEFAULT_PROVIDER, findProvider } from '@jaypost/core'
+import { collectSettings, DEFAULT_PROVIDER, findOwnerSetting, findProvider } from '@jaypost/core'
 import type { Provider } from '@jaypost/core'
 import { EXECUTABLE_MODE, PACKAGE_NAME, PATH_HINT } from './constants.ts'
 import type {
@@ -180,15 +183,39 @@ export async function resolveCliCommand(
   return { cliPath: paths.binaryCopy, words: [paths.binaryCopy] }
 }
 
-/** Writes the install's provider settings and port to the config file; the owner is only touched when one is given. */
+/**
+ * `null` for the owner key when no owner is given and the saved one doesn't parse for the
+ * provider, so the service starts pairing instead of failing on it; `{}` otherwise.
+ */
+function formatInvalidOwnerKey(
+  configFile: string,
+  options: InstallOptions,
+): Readonly<Record<string, null>> {
+  const ownerSetting = findOwnerSetting(options.provider)
+  if (ownerSetting === undefined || Object.hasOwn(options.settings, ownerSetting.configKey)) {
+    return {}
+  }
+  const raw = readConfigFile(configFile)[ownerSetting.configKey]
+  if (raw === undefined || ownerSetting.parse(raw) !== undefined) {
+    return {}
+  }
+  options.print(`Dropped the saved owner id; it isn't a valid ${options.provider.label} id.`)
+  return { [ownerSetting.configKey]: null }
+}
+
+/**
+ * Writes the install's provider settings and port to the config file; the owner is only touched
+ * when one is given or the saved one doesn't parse for the provider.
+ */
 export function writeServiceConfig(
   configFile: string,
   providers: readonly Provider[],
   options: InstallOptions,
 ): void {
-  // Only touch the owner when we have one; clearOwner is the explicit way to drop it.
+  // Only touch a valid owner when we have one; clearOwner is the explicit way to drop it.
   updateConfigFile(configFile, {
     ...formatOtherProviderKeys(providers, options.provider),
+    ...formatInvalidOwnerKey(configFile, options),
     provider: options.provider.name,
     port: options.port,
     ...options.settings,
@@ -212,8 +239,8 @@ export function printPathHint(
 }
 
 /**
- * Deletes config, state, audit files and the binary copy; for an npm install prints how to remove
- * the package.
+ * Deletes config, the registry, the admin key, every bot's directory, the pre-upgrade state and
+ * audit files and the binary copy; for an npm install prints how to remove the package.
  */
 export function purgeServiceFiles(
   record: InstallRecord,
@@ -222,6 +249,9 @@ export function purgeServiceFiles(
   print: (text: string) => void = (text) => console.log(text),
 ): void {
   rmSync(configFile, { force: true })
+  rmSync(resolveRegistryPath(configFile), { force: true })
+  rmSync(resolveAdminKeyPath(configFile), { force: true })
+  rmSync(join(dirname(configFile), BOTS_DIRECTORY_NAME), { recursive: true, force: true })
   rmSync(resolveStatePath(configFile), { force: true })
   removeAuditFiles(resolveAuditPath(configFile))
   if (record.cliKind === 'binary') {

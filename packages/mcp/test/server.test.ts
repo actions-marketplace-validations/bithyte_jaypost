@@ -144,12 +144,15 @@ async function startApi(
   const server = createApiServer(
     createSingleBotRouter({
       version: TEST_VERSION,
+      recipient: () => undefined,
       service,
       status: () => ({ paired: true, bot: 'b' }),
       maxTextLength: 3900,
       maxAttachmentBytes: options.maxAttachmentBytes ?? MAX_ATTACHMENT_BYTES,
       providerName: 'test',
       resolveVoters: () => ({ kind: 'noOwner' }),
+      describe: () => ({ provider: 'test', displayName: 'test' }),
+      rejectForKeys: () => undefined,
       auth: options.auth ?? NO_AUTH,
       ...(options.notifications === false
         ? {}
@@ -715,7 +718,7 @@ test('ask in background returns an id at once', async () => {
     arguments: ASK,
   })
   const id = messenger.sent[0]?.id ?? ''
-  const state = service.get(id)
+  const state = service.get(id, 'k1')
   const expiresAt = state?.kind === 'pending' ? state.expiresAt.toISOString() : ''
   expect(result).toEqual({
     content: [
@@ -788,7 +791,7 @@ test('a cancelled question is a normal result', async () => {
   const { port, service } = await startApi()
   const client = await connect(port)
   const id = await askInBackground(client)
-  await service.cancel(id)
+  await service.cancel(id, 'k1')
   expect(await client.callTool({ name: 'wait_for_answer', arguments: { request_id: id } })).toEqual(
     {
       content: [{ type: 'text', text: 'the question was cancelled' }],
@@ -855,7 +858,7 @@ test('cancelling wait_for_answer leaves the question open', async () => {
     content: [{ type: 'text', text: 'still waiting for the user' }],
     structuredContent: { state: 'pending' },
   })
-  expect(service.get(id)?.kind).toBe('pending')
+  expect(service.get(id, 'k1')?.kind).toBe('pending')
 })
 
 test('closing stdin cancels unsettled background questions', async () => {
@@ -871,7 +874,7 @@ test('closing stdin cancels unsettled background questions', async () => {
     'answered',
     'cancelled',
   ])
-  expect(service.get(open)).toEqual({ kind: 'cancelled' })
+  expect(service.get(open, 'k1')).toEqual({ kind: 'cancelled' })
 })
 
 test('cancel_question cancels a pending question', async () => {
@@ -884,7 +887,7 @@ test('cancel_question cancels a pending question', async () => {
       structuredContent: { state: 'cancelled' },
     },
   )
-  expect(service.get(id)).toEqual({ kind: 'cancelled' })
+  expect(service.get(id, 'k1')).toEqual({ kind: 'cancelled' })
   expect(messenger.finalized.map(({ settlement }) => settlement.kind)).toEqual(['cancelled'])
 })
 
@@ -925,7 +928,7 @@ test('list_questions shows the questions not yet collected or cancelled', async 
   const answered = await askInBackground(client, { project_name: 'web', text: 'Merge?' })
   const open = await askInBackground(client, { text: 'Release?' })
   const expiresAt = (id: string) => {
-    const state = service.get(id)
+    const state = service.get(id, 'k1')
     return state?.kind === 'pending' ? state.expiresAt.toISOString() : ''
   }
   const answeredExpiresAt = expiresAt(answered)

@@ -1,4 +1,5 @@
 export {
+  AUDIT_FILE_NAME,
   AuditLog,
   DEFAULT_LOG_LIMIT,
   formatAuditJsonLines,
@@ -11,7 +12,9 @@ export {
   resolveAuditPath,
   selectAuditEntries,
 } from './audit/index.ts'
+export type { AuditEntry, AuditFilter, AuditReadResult } from './audit/index.ts'
 export {
+  AUTHORIZATION_PATTERN,
   generateToken,
   isAuthorized,
   NO_AUTH,
@@ -31,6 +34,7 @@ export {
   APPROVERS_ENV_VAR,
   DEFAULT_PORT,
   loadConfig,
+  loadServiceConfig,
   MODE_ENV_VAR,
   PORT_ENV_VAR,
   PROVIDER_ENV_VAR,
@@ -41,9 +45,68 @@ export {
   resolveConfigPath,
   updateConfigFile,
 } from './config/index.ts'
-export type { Config } from './config/index.ts'
+export type { Config, ServiceConfig } from './config/index.ts'
 export { findEnvValue } from './config/paths.ts'
-export { resolveStatePath, StateStore } from './state/index.ts'
+export {
+  addBot,
+  ADMIN_KEY_ENV_VAR,
+  ADMIN_KEY_FILE_NAME,
+  ADMIN_KEY_PREFIX,
+  API_KEY_PREFIX,
+  applySeed,
+  BOTS_DIRECTORY_NAME,
+  claimCode,
+  claimPairing,
+  countBotRecords,
+  createEmptyRegistry,
+  createKey,
+  createPairing,
+  ensureAdminKey,
+  findKeyRoute,
+  findPairingOf,
+  generateAdminKey,
+  generateApiKey,
+  hashKey,
+  isPending,
+  isSeedLine,
+  loadSeed,
+  listKeys,
+  LOCAL_PERSON,
+  migrateLegacyBotFiles,
+  REGISTRY_FILE_NAME,
+  RegistryStore,
+  removeBot,
+  removePairing,
+  resetPairing,
+  resolveAdminKey,
+  resolveAdminKeyPath,
+  resolveBotFiles,
+  resolveRegistryPath,
+  resolveSeedAuditPath,
+  revokeKey,
+  updateKey,
+  updatePairingQuiet,
+  writeAdminKeyFile,
+} from './registry/index.ts'
+export type {
+  BotFiles,
+  BotRecord,
+  BotRecordCounts,
+  ClaimCodeResult,
+  KeyDetails,
+  KeyLookup,
+  KeyOnBot,
+  KeyRecord,
+  KeyTarget,
+  NotFound,
+  PairingRecord,
+  PendingPairing,
+  Registry,
+  SeedInput,
+  SeedLoad,
+  SeedRecord,
+} from './registry/index.ts'
+export { resolveStatePath, STATE_FILE_NAME, StateStore } from './state/index.ts'
 export {
   ensureLinger,
   isMissingFileError,

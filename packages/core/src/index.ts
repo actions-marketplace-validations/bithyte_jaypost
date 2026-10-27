@@ -32,6 +32,7 @@ export type {
   MessageReference,
   Messenger,
   OwnerCommand,
+  RequestCaller,
   RequestRecord,
   RequestResult,
   RequestState,
@@ -71,7 +72,14 @@ export type {
   NotifyRequest,
   SendNotificationOptions,
 } from './notify/index.ts'
-export { formatCode, generateCode, Pairing } from './pairing/index.ts'
+export {
+  formatCode,
+  generateCode,
+  GuessLimit,
+  isCodeShaped,
+  normalizeCode,
+  Pairing,
+} from './pairing/index.ts'
 export type { PairResult } from './pairing/index.ts'
 export {
   collectSettings,
@@ -79,6 +87,7 @@ export {
   findOwnerSetting,
   findProvider,
   hasRequiredSecrets,
+  isPairingProvider,
   listSecretValues,
   requireProvider,
   resolveMaxAttachmentBytes,
@@ -94,5 +103,5 @@ export type {
   SettingValues,
   VoterIds,
 } from './provider/index.ts'
-export { parseQuietHours, QUIET_COMMANDS, QuietService } from './quiet/index.ts'
-export type { QuietHours } from './quiet/index.ts'
+export { formatQuietHours, parseQuietHours, QUIET_COMMANDS, QuietService } from './quiet/index.ts'
+export type { QuietHours, QuietPatch } from './quiet/index.ts'

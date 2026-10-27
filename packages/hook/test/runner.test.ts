@@ -83,11 +83,14 @@ async function startApi(
   const server = createApiServer(
     createSingleBotRouter({
       version: TEST_VERSION,
+      recipient: () => undefined,
       service,
       status: () => ({ paired: true, bot: 'b' }),
       maxTextLength: options.maxTextLength ?? 3900,
       providerName: 'test',
       resolveVoters: () => ({ kind: 'noOwner' }),
+      describe: () => ({ provider: 'test', displayName: 'test' }),
+      rejectForKeys: () => undefined,
       auth: options.auth ?? NO_AUTH,
       notifications: new NotificationService(notifier),
     }),
@@ -752,6 +755,36 @@ test('session start when not paired says to pair', async () => {
   ])
 })
 
+test('session start with a failed bot says it is not running', async () => {
+  const port = await startStub({
+    paired: true,
+    state: 'failed',
+    error: 'telegram rejected the bot token',
+    maxTextLength: 3900,
+    maxAttachmentBytes: 1,
+  })
+  const { deps, out } = createDeps(port, SESSION_START_EVENT, { env: await createEmptyHome() })
+  expect(await runHook({}, deps)).toBe(0)
+  expect(out).toEqual([
+    JSON.stringify({
+      systemMessage:
+        "jaypost's bot isn't running (telegram rejected the bot token), so permission prompts stay in the terminal. Run `jaypost status` to check it.",
+    }),
+  ])
+})
+
+test('session start with a failed bot and no error still warns', async () => {
+  const port = await startStub({ paired: true, state: 'failed' })
+  const { deps, out } = createDeps(port, SESSION_START_EVENT, { env: await createEmptyHome() })
+  expect(await runHook({}, deps)).toBe(0)
+  expect(out).toEqual([
+    JSON.stringify({
+      systemMessage:
+        "jaypost's bot isn't running, so permission prompts stay in the terminal. Run `jaypost status` to check it.",
+    }),
+  ])
+})
+
 test('session start with a rejected token reports the token', async () => {
   const { port } = await startApi({ auth: { kind: 'token', token: TOKEN } })
   const { deps, out } = createDeps(port, SESSION_START_EVENT, {
@@ -1015,7 +1048,7 @@ test('without --timeout a stop waits an hour', async () => {
   const pending = runHook({}, deps)
   await waitFor(() => messenger.sent.length === 1)
   const id = messenger.sent[0]?.id ?? ''
-  const state = service.get(id)
+  const state = service.get(id, 'k1')
   expect(state?.kind).toBe('pending')
   const expiresInMs = state?.kind === 'pending' ? state.expiresAt.getTime() - Date.now() : 0
   expect(expiresInMs).toBeGreaterThan(3590_000)

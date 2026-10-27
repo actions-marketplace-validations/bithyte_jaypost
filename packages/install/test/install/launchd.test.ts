@@ -341,6 +341,24 @@ test('remove boots out and deletes the plist; purge deletes config, state and th
   expect(existsSync(paths.launchdLogFile)).toBe(true)
 })
 
+test('purge also removes the registry, admin key and bot directories', async () => {
+  const { t, paths } = makeBinary()
+  const rec = await t.install(base)
+  const directory = dirname(paths.configFile)
+  writeFileSync(join(directory, 'registry.json'), '{}')
+  writeFileSync(join(directory, 'admin-key'), 'key\n')
+  mkdirSync(join(directory, 'bots', 'b1'), { recursive: true })
+  writeFileSync(join(directory, 'bots', 'b1', 'state.json'), '{}')
+  bootoutCode = 3
+  bootoutStderr = 'Boot-out failed: 3: No such process\n'
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  await t.remove(rec, true)
+  log.mockRestore()
+  expect(
+    ['registry.json', 'admin-key', 'bots'].map((name) => existsSync(join(directory, name))),
+  ).toEqual([false, false, false])
+})
+
 test('remove keeps the plist when bootout fails', async () => {
   const { t, paths } = make()
   const rec = await t.install(base)
@@ -415,4 +433,18 @@ test('available reports a symlink at the binary copy', async () => {
 test('logsHint names the log file', () => {
   const { t } = make()
   expect(t.logsHint({} as never)).toBe('tail -f ~/Library/Logs/jaypost/jaypost.log')
+})
+
+test('readAdminKey reads the admin key file next to the recorded configFile', async () => {
+  const key = `jpa_${'k'.repeat(43)}`
+  writeFileSync(join(tmp, 'admin-key'), `${key}\n`)
+  const { t } = make({ JAYPOST_CONFIG: join(tmp, 'elsewhere', 'other.json') })
+  expect(
+    await t.readAdminKey({
+      target: 'launchd',
+      port: 1,
+      version: 'v',
+      configFile: join(tmp, 'recorded.json'),
+    }),
+  ).toBe(key)
 })

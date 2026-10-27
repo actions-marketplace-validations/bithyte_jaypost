@@ -282,6 +282,16 @@ test('readSecrets, clearOwner and purge use the recorded configFile, not the env
   expect(existsSync(paths.configFile)).toBe(false)
 })
 
+test('forgetSeedOwner removes the owner from the recorded configFile only', async () => {
+  const recorded = join(tmp, 'recorded.json')
+  writeFileSync(recorded, JSON.stringify({ botToken: 'rt', ownerId: 5, apiToken: 'x' }))
+  const { t } = make({ JAYPOST_CONFIG: join(tmp, 'other.json') })
+  calls = []
+  await t.forgetSeedOwner({ target: 'systemd', port: 1, version: 'v', configFile: recorded })
+  expect(readConfigFile(recorded)).toEqual({ botToken: 'rt', apiToken: 'x' })
+  expect(calls).toEqual([])
+})
+
 test('readAuditLog reads both files next to the recorded configFile', async () => {
   const directory = join(tmp, 'recorded-dir')
   mkdirSync(directory)
@@ -316,6 +326,78 @@ test('purge deletes audit.jsonl and audit.jsonl.1; remove without purge keeps th
   expect(existsSync(rotated)).toBe(false)
 })
 
+test('native purge removes the registry, admin key and bot directories', async () => {
+  const configFile = join(tmp, 'config.json')
+  writeFileSync(configFile, '{}')
+  const registry = join(tmp, 'registry.json')
+  const adminKey = join(tmp, 'admin-key')
+  const botAudit = join(tmp, 'bots', 'b2', 'audit.jsonl')
+  writeFileSync(registry, '{}')
+  writeFileSync(adminKey, 'key\n')
+  mkdirSync(dirname(botAudit), { recursive: true })
+  writeFileSync(botAudit, 'a\n')
+  writeFileSync(join(tmp, 'bots', 'b2', 'state.json'), '{}')
+  const { t } = make()
+  const rec = { target: 'systemd' as const, port: 1, version: 'v', configFile }
+  await t.remove(rec, false)
+  expect([existsSync(registry), existsSync(adminKey), existsSync(botAudit)]).toEqual([
+    true,
+    true,
+    true,
+  ])
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  await t.remove(rec, true)
+  expect([existsSync(registry), existsSync(adminKey), existsSync(join(tmp, 'bots'))]).toEqual([
+    false,
+    false,
+    false,
+  ])
+})
+
+test("readAuditLog reads the seed bot's files once the registry has a seed", async () => {
+  const directory = join(tmp, 'recorded-dir')
+  mkdirSync(join(directory, 'bots', 'b3'), { recursive: true })
+  writeFileSync(join(directory, 'audit.jsonl'), 'legacy\n')
+  writeFileSync(join(directory, 'bots', 'b3', 'audit.jsonl.1'), 'old\n')
+  writeFileSync(join(directory, 'bots', 'b3', 'audit.jsonl'), 'new\n')
+  writeFileSync(
+    join(directory, 'registry.json'),
+    JSON.stringify({
+      version: 1,
+      lastIds: { bot: 3, pairing: 1, key: 1 },
+      bots: [],
+      pairings: [],
+      keys: [],
+      seed: { fingerprint: 'f', botId: 'b3', pairingId: 'p1', keyId: 'k1', isOpen: false },
+    }),
+  )
+  const { t } = make()
+  const rec = {
+    target: 'systemd' as const,
+    port: 1,
+    version: 'v',
+    configFile: join(directory, 'config.json'),
+  }
+  expect(await t.readAuditLog(rec)).toBe('old\nnew\n')
+})
+
+test('readAuditLog with a corrupt registry throws without quoting it', async () => {
+  const directory = join(tmp, 'recorded-dir')
+  mkdirSync(directory)
+  const registry = join(directory, 'registry.json')
+  writeFileSync(registry, '{"bots": "secret-bot-token"')
+  const { t } = make()
+  const rec = {
+    target: 'systemd' as const,
+    port: 1,
+    version: 'v',
+    configFile: join(directory, 'config.json'),
+  }
+  await expect(t.readAuditLog(rec)).rejects.toThrow(
+    `registry file ${JSON.stringify(registry)} contains invalid JSON`,
+  )
+})
+
 test('install without ownerId keeps a stored owner', async () => {
   const { t, paths } = make()
   mkdirSync(dirname(paths.configFile), { recursive: true })
@@ -327,6 +409,24 @@ test('install without ownerId keeps a stored owner', async () => {
     port: 8787,
     ownerId: 42,
   })
+})
+
+test("install without ownerId drops a stored owner the provider can't parse", async () => {
+  const { t, paths } = make()
+  mkdirSync(dirname(paths.configFile), { recursive: true })
+  // A Discord snowflake: not a safe integer, so Telegram rejects it.
+  writeFileSync(
+    paths.configFile,
+    JSON.stringify({ botToken: 'old', ownerId: '199255809480196096' }),
+  )
+  const printed: string[] = []
+  await t.install({ ...base, print: (text) => printed.push(text) })
+  expect(readConfigFile(paths.configFile)).toEqual({
+    provider: 'telegram',
+    botToken: 't',
+    port: 8787,
+  })
+  expect(printed).toContain("Dropped the saved owner id; it isn't a valid Telegram id.")
 })
 
 test("install drops another provider's keys", async () => {
@@ -581,4 +681,40 @@ test('findUnitExecWords undoes the quoting formatSystemdUnit applies', () => {
   const words = ['/a b/$HOME/50%/"q"\\x', '/c.js']
   const unit = formatSystemdUnit({ exec: words, config: '/c.json' })
   expect(findUnitExecWords(unit)).toEqual(words)
+})
+
+test('readAdminKey reads the admin key file next to the recorded configFile', async () => {
+  const directory = join(tmp, 'recorded-dir')
+  mkdirSync(directory)
+  const key = `jpa_${'k'.repeat(43)}`
+  writeFileSync(join(directory, 'admin-key'), `${key}\n`)
+  const { t } = make({ JAYPOST_CONFIG: join(tmp, 'other.json') })
+  const rec = {
+    target: 'systemd' as const,
+    port: 1,
+    version: 'v',
+    configFile: join(directory, 'config.json'),
+  }
+  expect(await t.readAdminKey(rec)).toBe(key)
+})
+
+test('readAdminKey without the file says to start the service', async () => {
+  const { t } = make()
+  const configFile = join(tmp, 'none', 'config.json')
+  await expect(
+    t.readAdminKey({ target: 'systemd', port: 1, version: 'v', configFile }),
+  ).rejects.toThrow(
+    `no admin key in ${JSON.stringify(join(tmp, 'none', 'admin-key'))} yet; start the service once so it writes one`,
+  )
+})
+
+test('readAdminKey with an invalid file never quotes it', async () => {
+  const configFile = join(tmp, 'config.json')
+  writeFileSync(join(tmp, 'admin-key'), 'not a key at all\n')
+  const { t } = make()
+  const reading = t.readAdminKey({ target: 'systemd', port: 1, version: 'v', configFile })
+  await expect(reading).rejects.toThrow(
+    `admin key file ${JSON.stringify(join(tmp, 'admin-key'))} isn't a valid jaypost admin key`,
+  )
+  await expect(reading).rejects.not.toThrow('not a key')
 })

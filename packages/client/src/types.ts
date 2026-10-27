@@ -111,7 +111,7 @@ export type Notification = {
 }
 
 /** HTTP methods the clients use. */
-export type ApiMethod = 'GET' | 'POST' | 'DELETE'
+export type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
 /** Service endpoints the clients call. */
 export type ApiPath =
@@ -120,7 +120,16 @@ export type ApiPath =
   | '/request/async'
   | '/vote'
   | '/status'
+  | '/log'
+  | `/log?${string}`
   | `/request/${string}`
+  | `/admin/${string}`
+
+/** A status and body text as the service sent them. */
+export type RawResponse = { readonly status: number; readonly text: string }
+
+/** Outcome of `fetchApi`: the response, or a transport failure. */
+export type RawApiResult = ({ readonly kind: 'response' } & RawResponse) | Failure
 
 /** Outcome of a call to the local service; `message` is ready to show the caller. */
 export type ApiResult = { readonly kind: 'ok'; readonly body: unknown } | Failure
@@ -224,7 +233,11 @@ export type Message = Omit<Notification, 'attachment' | 'signal'> & {
   readonly attachment?: AttachmentSource
 }
 
-/** `invalidUrl` is a bad `JAYPOST_URL`; `rejected` is a 400 with the daemon's own text; `attachment` is a local read or size failure. */
+/**
+ * `invalidUrl` is a bad `JAYPOST_URL`; `rejected` is a 400 with the daemon's own text; `attachment`
+ * is a local read or size failure; `notFound` (404) and `conflict` (409) come from admin routes,
+ * with the service's own text. `botUnavailable` is a 503 for a bot that's starting or failed.
+ */
 export type FailureReason =
   | 'invalidUrl'
   | 'unusableToken'
@@ -236,10 +249,13 @@ export type FailureReason =
   | 'tooOld'
   | 'notSupported'
   | 'notPaired'
+  | 'botUnavailable'
   | 'sendFailed'
   | 'unknownRequest'
   | 'unreadable'
   | 'attachment'
+  | 'notFound'
+  | 'conflict'
   | 'unexpected'
 
 /** `message` is the copy shown today, ready for an agent or a terminal. */
@@ -258,3 +274,31 @@ export type QuestionState =
   | (Done & { readonly id: string })
   | { readonly kind: 'cancelled'; readonly id: string }
   | Failure
+
+/** Where `AdminCaller` sends its calls and the admin key it sends. */
+export type AdminCallerOptions = {
+  readonly endpoint: ServiceEndpoint
+  /** Sent as `authorization: Bearer <admin key>` on every call. */
+  readonly adminKey: string
+  /** HTTP timeout per call; default `FETCH_GRACE_MS`. */
+  readonly fetchTimeoutMs?: number
+}
+
+/** An admin route's parsed answer, or why there isn't one; `message` is ready to show. */
+export type AdminResult<T> = { readonly kind: 'ok'; readonly value: T } | Failure
+
+/** What `Caller.readLog` narrows the key's log to; absent fields don't filter. */
+export type LogFilter = {
+  /** Only questions asked at or after this time. */
+  readonly since?: Date
+  readonly project?: string
+  /** The last `limit` entries. */
+  readonly limit?: number
+}
+
+/** What `AdminCaller.readLog` narrows every bot's log to; absent fields don't filter. */
+export type AdminLogFilter = LogFilter & {
+  readonly bot?: string
+  readonly pairing?: string
+  readonly key?: string
+}
