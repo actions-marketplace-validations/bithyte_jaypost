@@ -27,6 +27,8 @@ export type NotifyParseResult =
 export type SendNotificationOptions = {
   readonly silent: boolean
   readonly dismissible: boolean
+  /** Who gets it; undefined only for providers without chat identities (terminal). */
+  readonly recipient: string | undefined
 }
 
 /**
@@ -35,8 +37,8 @@ export type SendNotificationOptions = {
  */
 export type Notifier = {
   /**
-   * Send `message` to the owner; with `options.dismissible` it carries a dismiss control for `id`,
-   * if the messenger can delete.
+   * Send `message` to `options.recipient`; with `options.dismissible` it carries a dismiss
+   * control for `id`, if the messenger can delete.
    */
   readonly sendNotification: (
     id: string,
@@ -63,8 +65,8 @@ export type NotificationStore = {
 
 /** Where quiet periods come from; `QuietService` satisfies it structurally. */
 export type QuietSource = {
-  /** When the current quiet period ends, or undefined when not quiet. */
-  readonly quietUntil: () => Date | undefined
+  /** When `recipient`'s current quiet period ends, or undefined when they're not quiet. */
+  readonly quietUntil: (recipient: string | undefined) => Date | undefined
 }
 
 /**

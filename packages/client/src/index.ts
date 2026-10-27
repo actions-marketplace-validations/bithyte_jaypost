@@ -1,3 +1,4 @@
+export { AdminCaller } from './admin.ts'
 export { readAttachment } from './attachment.ts'
 export { Caller, toAskBody, toNotifyBody } from './caller.ts'
 export { Client, JaypostError } from './client.ts'
@@ -9,6 +10,8 @@ export {
   toLocalEndpoint,
 } from './endpoint.ts'
 export {
+  ADMIN_KEY_REJECTED_MESSAGE,
+  ADMIN_TOO_OLD_MESSAGE,
   ATTACHMENT_NOT_SUPPORTED_MESSAGE,
   ATTACHMENT_TOO_OLD_MESSAGE,
   BACKGROUND_TOO_OLD_MESSAGE,
@@ -16,6 +19,7 @@ export {
   DEFAULT_ATTACHMENT_NAME,
   FETCH_GRACE_MS,
   INVALID_URL_MESSAGE,
+  LOG_TOO_OLD_MESSAGE,
   RETRY_TOO_OLD_MESSAGE,
   TIMEOUT_TOO_OLD_MESSAGE,
   TOKEN_REJECTED_MESSAGE,
@@ -24,6 +28,9 @@ export {
 } from './constants.ts'
 export { describeUnauthorized } from './http.ts'
 export type {
+  AdminCallerOptions,
+  AdminLogFilter,
+  AdminResult,
   Answer,
   AskRequest,
   AttachmentBody,
@@ -36,6 +43,7 @@ export type {
   Done,
   Failure,
   FailureReason,
+  LogFilter,
   Message,
   Notification,
   Pending,

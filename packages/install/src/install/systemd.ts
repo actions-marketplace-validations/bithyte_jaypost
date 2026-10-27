@@ -4,7 +4,7 @@ import {
   ensureLinger,
   MissingCommandError,
   readAuditFiles,
-  resolveAuditPath,
+  resolveSeedAuditPath,
   updateConfigFile,
 } from '@jaypost/store'
 import {
@@ -14,6 +14,7 @@ import {
   EXEC_START_LINE_PATTERN,
   SERVICE_NAME,
 } from './constants.ts'
+import { readAdminKeyFile } from './admin-key.ts'
 import {
   findBinaryCopyConflict,
   printPathHint,
@@ -186,12 +187,19 @@ export function createSystemdTarget(deps: TargetDeps, cli: CliLocation): Target 
       }
     },
     async clearOwner(record) {
+      await target.forgetSeedOwner(record)
+    },
+    // The service never writes config.json, so this is the whole of clearing the owner.
+    async forgetSeedOwner(record) {
       updateConfigFile(resolveConfigFile(record), {
         [requireRecordOwner(providers, record).configKey]: null,
       })
     },
     async readAuditLog(record) {
-      return readAuditFiles(resolveAuditPath(resolveConfigFile(record)))
+      return readAuditFiles(resolveSeedAuditPath(resolveConfigFile(record)))
+    },
+    async readAdminKey(record) {
+      return readAdminKeyFile(resolveConfigFile(record))
     },
     async isRunning() {
       return (await systemctl('is-active', '--quiet', SERVICE_NAME)).code === 0

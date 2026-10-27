@@ -5,9 +5,12 @@ import {
   ATTACHMENT_GRACE_MS,
   ATTACHMENT_NOT_SUPPORTED_MESSAGE,
   BACKGROUND_TOO_OLD_MESSAGE,
+  BOT_UNAVAILABLE_ERROR,
+  BOT_UNAVAILABLE_MESSAGE,
   CANCELLED_MESSAGE,
   FETCH_GRACE_MS,
   LEGACY_MAX_TIMEOUT_SECONDS,
+  LOG_TOO_OLD_MESSAGE,
   MAX_TIMER_MS,
   NOT_PAIRED_MESSAGE,
   NOT_SUPPORTED_MESSAGE,
@@ -30,6 +33,9 @@ import type {
   AskOptions,
   AskResult,
   Failure,
+  LogFilter,
+  RawApiResult,
+  RawResponse,
   StateBody,
   VoteBody,
   VoteOutcome,
@@ -57,24 +63,41 @@ export async function callApi(
   body: object | undefined,
   options: ApiOptions,
 ): Promise<ApiResult> {
+  const response = await fetchApi(endpoint, method, path, body, options)
+  if (response.kind === 'failed') {
+    return response
+  }
+  if (response.status === 200 || response.status === 202) {
+    return parseOk(response.text)
+  }
+  return toStatusFailure(response.status, path, response.text, options.token !== undefined)
+}
+
+/**
+ * Sends one call and returns the status and body text as they came; only a transport problem
+ * (unreachable, timeout, abort) is a failure. Never throws; no retries.
+ */
+export async function fetchApi(
+  endpoint: URL,
+  method: ApiMethod,
+  path: ApiPath,
+  body: object | undefined,
+  options: ApiOptions,
+): Promise<RawApiResult> {
   const timeout = AbortSignal.timeout(Math.ceil(options.timeoutMs))
   const signal = AbortSignal.any([options.signal, timeout])
-  let response: RawResponse
   try {
-    response = await send(
+    const response = await send(
       resolveApiUrl(endpoint, path),
       method,
       body === undefined ? undefined : JSON.stringify(body),
       signal,
       options.token,
     )
+    return { kind: 'response', ...response }
   } catch {
     return toTransportFailure(endpoint, options, timeout)
   }
-  if (response.status === 200 || response.status === 202) {
-    return parseOk(response.text)
-  }
-  return toStatusFailure(response.status, path, response.text, options.token !== undefined)
 }
 
 const KEEPALIVE_MS = 60_000
@@ -162,8 +185,6 @@ function isTooEarly(timeoutSeconds: number | undefined, elapsedMs: number): bool
   }
   return elapsedMs < Math.min(timeoutSeconds, MAX_TIMEOUT_SECONDS) * 1000 - FETCH_GRACE_MS
 }
-
-type RawResponse = { readonly status: number; readonly text: string }
 
 /** Rejects on connection errors, resets and aborts; an abort destroys the socket. */
 function send(
@@ -310,6 +331,9 @@ function toStatusFailure(status: number, path: ApiPath, text: string, sentToken:
   if (status === 404 && path === '/notify') {
     return { kind: 'failed', reason: 'tooOld', message: TOO_OLD_MESSAGE }
   }
+  if (status === 404 && (path === '/log' || path.startsWith('/log?'))) {
+    return { kind: 'failed', reason: 'tooOld', message: LOG_TOO_OLD_MESSAGE }
+  }
   if (status === 404 && path === '/vote') {
     return { kind: 'failed', reason: 'tooOld', message: VOTE_TOO_OLD_MESSAGE }
   }
@@ -333,6 +357,9 @@ function toStatusFailure(status: number, path: ApiPath, text: string, sentToken:
           : NOT_SUPPORTED_MESSAGE,
     }
   }
+  if (status === 503 && error === BOT_UNAVAILABLE_ERROR) {
+    return { kind: 'failed', reason: 'botUnavailable', message: BOT_UNAVAILABLE_MESSAGE }
+  }
   if (status === 503) {
     return { kind: 'failed', reason: 'notPaired', message: NOT_PAIRED_MESSAGE }
   }
@@ -351,7 +378,8 @@ function toStatusFailure(status: number, path: ApiPath, text: string, sentToken:
   }
 }
 
-function readStringField(text: string, key: string): string | undefined {
+/** The string field `key` of the JSON object in `text`, or undefined. Never throws. */
+export function readStringField(text: string, key: string): string | undefined {
   try {
     const parsed: unknown = JSON.parse(text)
     if (typeof parsed === 'object' && parsed !== null && Object.hasOwn(parsed, key)) {
@@ -362,4 +390,21 @@ function readStringField(text: string, key: string): string | undefined {
     // not JSON, caller falls back to the raw text
   }
   return undefined
+}
+
+/** `?name=value&...` of the defined fields, or '' when there are none. */
+export function toQuery(fields: Readonly<Record<string, string | undefined>>): string {
+  const entries = Object.entries(fields).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  )
+  return entries.length === 0 ? '' : `?${new URLSearchParams(entries).toString()}`
+}
+
+/** The query fields GET /log and GET /admin/log share. */
+export function toLogQueryFields(filter: LogFilter): Readonly<Record<string, string | undefined>> {
+  return {
+    ...(filter.since === undefined ? {} : { since: filter.since.toISOString() }),
+    ...(filter.project === undefined ? {} : { project: filter.project }),
+    ...(filter.limit === undefined ? {} : { limit: String(filter.limit) }),
+  }
 }

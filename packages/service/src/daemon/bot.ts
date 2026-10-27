@@ -1,11 +1,11 @@
+import { join } from 'node:path'
 import {
   ApprovalService,
-  findOwnerSetting,
-  formatCode,
-  generateCode as generateDefaultCode,
+  GuessLimit,
+  isCodeShaped,
+  isPairingProvider,
   NotificationService,
   OWNER_COMMANDS,
-  Pairing,
   QUIET_COMMANDS,
   QuietService,
   resolveMaxAttachmentBytes,
@@ -13,63 +13,63 @@ import {
   runOwnerCommand,
 } from '@jaypost/core'
 import {
+  AUDIT_FILE_NAME,
   AuditLog,
-  resolveAuditPath,
-  resolveStatePath,
+  LOCAL_PERSON,
+  STATE_FILE_NAME,
   StateStore,
-  updateConfigFile,
 } from '@jaypost/store'
-import type { Config } from '@jaypost/store'
-import type { PairResult, RuntimeHandlers, SettingValues } from '@jaypost/core'
-import type { StatusInfo } from '@jaypost/protocol'
-import type { ApiBot } from '../server/index.ts'
+import type { PairResult, RuntimeHandlers } from '@jaypost/core'
+import type { BotOptions, RunningBot } from './types.ts'
 
-/** What `startBot` needs to start one bot. */
-export type BotOptions = {
-  readonly config: Config
-  readonly configPath: string
-  /** The provider can't continue; the caller decides how to exit. */
-  readonly fatal: (message: string) => void
-  readonly log?: (line: string) => void
-  readonly generateCode?: () => string
-}
-
-/** A bot whose provider runtime is started, ready to put behind the HTTP API. */
-export type RunningBot = {
-  readonly bot: ApiBot
-  /** Starts cleanup of the previous run's messages once; resolves when done; never rejects. */
-  readonly recover: () => Promise<void>
-  /**
-   * Freezes the saved state synchronously, before its first await (so pending requests stay saved
-   * for the next start), then stops the provider runtime; never rejects.
-   */
-  readonly stop: () => Promise<void>
+/** Who questions to `person` are sent to: nobody in particular for the local person. */
+function recipientFor(person: string): string | undefined {
+  return person === LOCAL_PERSON ? undefined : person
 }
 
 /**
- * Starts one bot: its provider runtime, questions, notifications, quiet hours and pairing, with
- * state and audit files next to `configPath`. Throws an Error with the provider's reason when
- * credentials are rejected.
+ * Starts one bot for everyone paired on it: its provider runtime, questions, notifications, each
+ * person's quiet hours, and pairing with the codes `people` has pending at each attempt. State and
+ * audit files go to `options.directory`; every log line starts with `[<bot id>]`. Throws an Error
+ * with the provider's reason when credentials are rejected.
  */
 export async function startBot(options: BotOptions): Promise<RunningBot> {
-  const { config, configPath } = options
-  const log = options.log ?? console.error
-  const provider = config.provider
-  const runtime = provider.createRuntime(config.settings, log)
+  const { record, provider, people } = options
+  const baseLog = options.log ?? console.error
+  const log = (line: string): void => baseLog(`[${record.id}] ${line}`)
+  const runtime = provider.createRuntime(record.settings, log)
   const check = await runtime.checkCredentials()
   if (!check.ok) {
+    // The supervisor retries, so don't leave a client behind on each attempt.
+    await runtime.stop().catch(() => undefined)
     throw new Error(check.reason)
   }
   const displayName = check.displayName
-  const store = new StateStore(resolveStatePath(configPath), provider.name, log)
+  const pairs = isPairingProvider(provider)
+  const pairingInstructions = runtime.pairingInstructions?.bind(runtime)
+  if (pairs && pairingInstructions === undefined) {
+    await runtime.stop().catch(() => undefined)
+    throw new Error(
+      `provider ${JSON.stringify(provider.name)} has an owner setting but no pairing support`,
+    )
+  }
+  const store = new StateStore(join(options.directory, STATE_FILE_NAME), provider.name, log)
   const saved = store.load()
-  const audit = new AuditLog(resolveAuditPath(configPath), { log })
+  const audit = new AuditLog(join(options.directory, AUDIT_FILE_NAME), { log })
   const service = new ApprovalService(runtime, undefined, undefined, { store, audit })
-  const quiet = new QuietService((patch) => updateConfigFile(configPath, patch), {
-    ...(config.quietHours === undefined ? {} : { quietHours: config.quietHours }),
-    ...(config.mutedUntil === undefined ? {} : { mutedUntil: config.mutedUntil }),
-    log,
-  })
+  const quietByPerson = new Map<string, QuietService>()
+  const quietFor = (person: string): QuietService => {
+    const existing = quietByPerson.get(person)
+    if (existing !== undefined) {
+      return existing
+    }
+    const created = new QuietService((patch) => people.saveQuiet(person, patch), {
+      ...people.quietHours(person),
+      log,
+    })
+    quietByPerson.set(person, created)
+    return created
+  }
   const sendNotification = runtime.sendNotification
   const notifications =
     sendNotification === undefined
@@ -78,7 +78,10 @@ export async function startBot(options: BotOptions): Promise<RunningBot> {
           { sendNotification, deleteMessage: runtime.deleteMessage },
           undefined,
           log,
-          { store, quiet },
+          {
+            store,
+            quiet: { quietUntil: (recipient) => quietFor(recipient ?? LOCAL_PERSON).quietUntil() },
+          },
         )
   let recovery: Promise<void> | undefined
   // Deferred to the caller so a second instance that fails to bind its port has no side effects.
@@ -90,73 +93,72 @@ export async function startBot(options: BotOptions): Promise<RunningBot> {
     })().catch(() => undefined)
     return recovery
   }
-  const ownerSetting = findOwnerSetting(provider)
-  // Gains the owner once someone pairs, so /vote can default to them.
-  let settings: SettingValues = config.settings
-  let pairing: Pairing | undefined
-  let instructions: string | undefined
-  if (ownerSetting !== undefined && !Object.hasOwn(config.settings, ownerSetting.configKey)) {
-    if (runtime.pairingInstructions === undefined) {
-      throw new Error(
-        `provider ${JSON.stringify(provider.name)} has an owner setting but no pairing support`,
-      )
-    }
-    const code = (options.generateCode ?? generateDefaultCode)()
-    pairing = new Pairing(code)
-    instructions = runtime.pairingInstructions(code)
-    log(`Not paired. ${instructions}`)
-  }
-  const status = (): StatusInfo => {
-    const extraFields = runtime.statusFields?.() ?? {}
-    if (pairing === undefined || pairing.code === undefined || instructions === undefined) {
-      return { paired: true, provider: provider.name, displayName, ...extraFields }
-    }
-    return {
-      paired: false,
-      provider: provider.name,
-      displayName,
-      code: formatCode(pairing.code),
-      instructions,
-      ...extraFields,
-    }
-  }
+  const guesses = new GuessLimit()
+  const describe = () => ({
+    provider: provider.name,
+    displayName,
+    ...runtime.statusFields?.(),
+  })
   const pair = (senderId: string, text: string): PairResult => {
-    const result = pairing?.attempt(senderId, text) ?? 'notPairing'
-    if (result === 'paired' && ownerSetting !== undefined) {
-      try {
-        const owner = ownerSetting.parse(senderId)
-        if (owner === undefined) {
-          throw new Error('owner not parseable')
-        }
-        settings = { ...settings, [ownerSetting.configKey]: owner }
-        updateConfigFile(configPath, { [ownerSetting.configKey]: owner })
-      } catch {
-        log(
-          `paired with ${senderId} but couldn't save the owner to ${configPath}; it'll be lost on restart`,
-        )
-      }
+    // A paired person's chat isn't a guess, so it never counts toward their block.
+    if (people.isPaired(senderId) && !isCodeShaped(text)) {
+      return 'notPairing'
     }
-    return result
+    if (guesses.isBlocked(senderId)) {
+      return 'blocked'
+    }
+    const claim = people.claim(text, senderId)
+    switch (claim) {
+      case 'noCodes':
+        return 'notPairing'
+      case 'wrong':
+        guesses.countWrong(senderId)
+        return 'wrong'
+      case 'claimed':
+      case 'merged':
+        log(`paired ${senderId} on ${record.id}`)
+        return 'paired'
+    }
   }
   const handlers: RuntimeHandlers = {
-    answer: (id, optionIndex) => service.tap(id, optionIndex),
+    answer: (id, optionIndex, senderId) => {
+      // Callback data can be forged, so on a bot that pairs a tap only counts from its recipient.
+      const isOthers =
+        pairs &&
+        senderId !== undefined &&
+        !service.listPending(recipientFor(senderId)).some((open) => open.id === id)
+      return isOthers ? 'expired' : service.tap(id, optionIndex)
+    },
     reply: (id, text) => service.reply(id, text),
     dismiss: (id) => notifications?.dismiss(id) ?? false,
+    isPaired: (id) => people.isPaired(id),
+    listPaired: () => people.list(),
     commands: [...OWNER_COMMANDS, ...QUIET_COMMANDS],
-    command: (name, argument) =>
-      runOwnerCommand(service, name, argument, {
-        now: () => new Date(),
-        maxTextLength: provider.maxTextLength,
-      }) ?? quiet.handleCommand(name, argument),
+    command: (name, argument, senderId) => {
+      const person = !pairs || senderId === undefined ? LOCAL_PERSON : senderId
+      return (
+        runOwnerCommand(service, name, argument, recipientFor(person), {
+          now: () => new Date(),
+          maxTextLength: provider.maxTextLength,
+        }) ?? quietFor(person).handleCommand(name, argument)
+      )
+    },
     fatal: options.fatal,
-    ...(pairing === undefined ? {} : { pair }),
+    ...(pairs ? { pair } : {}),
   }
   runtime.start(handlers)
   return {
     bot: {
+      botId: record.id,
       service,
-      status,
-      resolveVoters: (voters) => resolveVoters(provider, settings, voters),
+      describe,
+      ...(pairingInstructions === undefined ? {} : { pairingInstructions }),
+      resolveVoters: (voters, person) => resolveVoters(provider, person, voters),
+      rejectForKeys: (keyIds) => {
+        for (const keyId of keyIds) {
+          service.rejectForKey(keyId)
+        }
+      },
       maxTextLength: provider.maxTextLength,
       providerName: provider.name,
       maxAttachmentBytes: resolveMaxAttachmentBytes(provider),
@@ -164,7 +166,19 @@ export async function startBot(options: BotOptions): Promise<RunningBot> {
       ...(notifications === undefined ? {} : { notifications }),
     },
     recover,
+    forgetPerson: (person) => {
+      quietByPerson.delete(person)
+    },
     stop: async () => {
+      store.freeze()
+      notifications?.stop()
+      await runtime.stop().catch(() => undefined)
+    },
+    abandon: async () => {
+      // Their final edits and audit lines still happen; only the saved records go now.
+      for (const { id } of service.rejectEveryOpen()) {
+        store.removeRequest(id)
+      }
       store.freeze()
       notifications?.stop()
       await runtime.stop().catch(() => undefined)
