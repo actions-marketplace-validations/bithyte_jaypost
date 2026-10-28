@@ -3,9 +3,7 @@ export {
   ADMIN_KEY_FILE_NAME,
   ADMIN_KEY_PREFIX,
   API_KEY_PREFIX,
-  BOTS_DIRECTORY_NAME,
   LOCAL_PERSON,
-  REGISTRY_FILE_NAME,
   REGISTRY_VERSION,
 } from './constants.ts'
 export { generateAdminKey, generateApiKey, hashKey } from './keys.ts'
@@ -32,21 +30,13 @@ export {
   isSeedLine,
   listKeys,
 } from './queries.ts'
-export { resolveAdminKeyPath, resolveBotFiles, resolveRegistryPath } from './paths.ts'
+export { resolveAdminKeyPath } from './paths.ts'
 export { registrySchema } from './schema.ts'
 export { loadSeed } from './seed.ts'
-export {
-  ensureAdminKey,
-  migrateLegacyBotFiles,
-  RegistryStore,
-  resolveAdminKey,
-  resolveSeedAuditPath,
-  writeAdminKeyFile,
-} from './store.ts'
+export { ensureAdminKey, RegistryStore, resolveAdminKey, writeAdminKeyFile } from './store.ts'
 export type {
   AddBotResult,
   BotRecordCounts,
-  BotFiles,
   BotInput,
   BotRecord,
   ClaimCodeResult,

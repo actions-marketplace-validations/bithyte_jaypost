@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
 import type { Provider } from '@jaypost/core'
-import { loadSeed, RegistryStore, resolveAdminKeyPath, resolveRegistryPath } from '@jaypost/store'
+import {
+  loadSeed,
+  openDatabase,
+  RegistryStore,
+  resolveAdminKeyPath,
+  resolveDatabasePath,
+} from '@jaypost/store'
 import type { Registry } from '@jaypost/store'
 import { createFakeProvider, createPairingFakeProvider } from '@jaypost/testing'
 import type { FakeRuntime } from '@jaypost/testing'
@@ -95,8 +101,38 @@ function requireRunning(): RunningService {
   return running
 }
 
-const readRegistry = (configPath: string): Registry =>
-  new RegistryStore(resolveRegistryPath(configPath)).load()
+const readRegistry = (configPath: string): Registry => {
+  const database = openDatabase(resolveDatabasePath(configPath))
+  try {
+    return new RegistryStore(database).load()
+  } finally {
+    database.close()
+  }
+}
+
+const REFUSED_WRITES = ['bots', 'pairings', 'keys'].flatMap((table) =>
+  ['INSERT', 'UPDATE', 'DELETE'].map((event) => ({
+    table,
+    event,
+    name: `refuse_${table}_${event.toLowerCase()}`,
+  })),
+)
+
+/** Makes every bot, pairing and key write fail until the returned function runs. */
+function refuseRegistryWrites(configPath: string): () => void {
+  const database = openDatabase(resolveDatabasePath(configPath))
+  for (const { table, event, name } of REFUSED_WRITES) {
+    database.exec(
+      `CREATE TRIGGER ${name} BEFORE ${event} ON ${table} BEGIN SELECT RAISE(ABORT, 'refused'); END`,
+    )
+  }
+  return () => {
+    for (const { name } of REFUSED_WRITES) {
+      database.exec(`DROP TRIGGER ${name}`)
+    }
+    database.close()
+  }
+}
 
 const call = (
   url: string,
@@ -691,8 +727,8 @@ test('admin log filters by bot, pairing and key', async () => {
   expect(await projects('?limit=1')).toEqual(['three'])
   expect(await projects('?since=1h')).toEqual(['one', 'two', 'three'])
   expect(await admin(started, 'GET', '/admin/log?bot=b9')).toEqual({
-    status: 404,
-    body: { error: 'unknown bot "b9"' },
+    status: 200,
+    body: { entries: [], skippedCount: 0 },
   })
   expect(await admin(started, 'GET', '/admin/log?limit=0')).toEqual({
     status: 400,
@@ -705,6 +741,36 @@ test('admin log filters by bot, pairing and key', async () => {
   const own = await call(url, 'GET', '/log', { token: TOKEN })
   expect((await own.json()).entries.map((entry: Record<string, string>) => entry.project)).toEqual([
     'one',
+  ])
+})
+
+test("admin log serves every bot's questions from the db, removed bots included", async () => {
+  const other = createFakeProvider()
+  const started = await start({ providers: [createPairingFakeProvider(), other] })
+  const { url, runtime } = started
+  await admin(started, 'POST', '/admin/bots', { provider: 'fake', settings: { fakeKey: 'two' } })
+  const onSecondBot = await admin(started, 'POST', '/admin/keys', { bot: 'b2' })
+  const second = other.runtimes.at(-1)
+  const ask = async (token: string, project: string, target: FakeRuntime | undefined) => {
+    const asked = post(url, '/request', { ...REQUEST, project }, token)
+    await vi.waitFor(() => expect(target?.sent).toHaveLength(1))
+    target?.handlers?.answer(target.sent.at(-1)?.id ?? '', 0)
+    expect((await asked).status).toBe(200)
+  }
+  await ask(TOKEN, 'one', runtime)
+  await ask(onSecondBot.body.key, 'two', second)
+  expect((await admin(started, 'DELETE', '/admin/bots/b2')).status).toBe(200)
+  const all = await admin(started, 'GET', '/admin/log')
+  expect(
+    all.body.entries.map((entry: Record<string, string>) => [entry.project, entry.bot]),
+  ).toEqual([
+    ['one', 'b1'],
+    ['two', 'b2'],
+  ])
+  const removed = await admin(started, 'GET', '/admin/log?bot=b2')
+  expect(removed.status).toBe(200)
+  expect(removed.body.entries.map((entry: Record<string, string>) => entry.project)).toEqual([
+    'two',
   ])
 })
 
@@ -733,8 +799,10 @@ test.skipIf(IS_ROOT)('a failed registry write answers 500 and changes nothing', 
   const started = await start()
   const hub = requireRunning().hub
   const registry = hub.registry
-  const before = readFileSync(resolveRegistryPath(started.configPath), 'utf8')
+  const before = readRegistry(started.configPath)
   const error = muteConsole()
+  // The db refuses registry writes; the read-only directory refuses the admin key file.
+  const allowWrites = refuseRegistryWrites(started.configPath)
   chmodSync(dirname(started.configPath), 0o500)
   try {
     for (const [method, path, body] of [
@@ -755,10 +823,11 @@ test.skipIf(IS_ROOT)('a failed registry write answers 500 and changes nothing', 
     }
   } finally {
     chmodSync(dirname(started.configPath), 0o700)
+    allowWrites()
   }
   error.mockRestore()
   expect(hub.registry).toBe(registry)
-  expect(readFileSync(resolveRegistryPath(started.configPath), 'utf8')).toBe(before)
+  expect(readRegistry(started.configPath)).toEqual(before)
   expect(await getStatus(started.url, TOKEN)).toMatchObject({ paired: true, state: 'running' })
   expect(started.runtime.handlers?.isPaired('u1')).toBe(true)
   expect((await admin(started, 'GET', '/admin/bots')).status).toBe(200)

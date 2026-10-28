@@ -1,6 +1,7 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, test, vi } from 'vite-plus/test'
 import { normalizeCode, runVote } from '@jaypost/core'
 import type {
@@ -10,7 +11,7 @@ import type {
   QuietHours,
   QuietPatch,
 } from '@jaypost/core'
-import { LOCAL_PERSON } from '@jaypost/store'
+import { formatAuditLines, LOCAL_PERSON, openDatabase } from '@jaypost/store'
 import type { BotRecord } from '@jaypost/store'
 import { createFakeProvider, createPairingFakeProvider } from '@jaypost/testing'
 import type { FakeRuntime } from '@jaypost/testing'
@@ -86,11 +87,19 @@ function createDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'jaypost-bot-'))
 }
 
+function createDatabase(): DatabaseSync {
+  return openDatabase(join(createDirectory(), 'jaypost.db'))
+}
+
+function countRequests(database: DatabaseSync): number {
+  return Number(database.prepare('SELECT count(*) AS n FROM requests').get()?.n)
+}
+
 async function start(
   options: {
     readonly people?: BotPeople
     readonly provider?: Provider & { readonly runtimes: FakeRuntime[] }
-    readonly directory?: string
+    readonly database?: DatabaseSync
     readonly log?: (line: string) => void
   } = {},
 ): Promise<{ running: RunningBot; runtime: FakeRuntime }> {
@@ -98,7 +107,7 @@ async function start(
   running = await startBot({
     record: RECORD,
     provider,
-    directory: options.directory ?? createDirectory(),
+    database: options.database ?? createDatabase(),
     people: options.people ?? createPeople(),
     fatal: vi.fn(),
     log: options.log ?? vi.fn(),
@@ -393,29 +402,27 @@ test('describe and pairingInstructions show the provider without pairing state',
   expect(running.bot.pairingInstructions?.('ABCD2345')).toBe('Say ABCD2345 to fake')
 })
 
-test('state and audit go to the bot directory and log lines name the bot', async () => {
-  const directory = createDirectory()
-  writeFileSync(join(directory, 'state.json'), '{')
+test('state and audit go to the db and log lines name the bot', async () => {
+  const database = createDatabase()
+  database
+    .prepare(
+      "INSERT INTO requests (bot_id, id, provider, record) VALUES ('b2', 'x', 'fakepair', '{')",
+    )
+    .run()
   const log = vi.fn()
   const { running, runtime } = await start({
     provider: createNotifyingProvider().provider,
-    directory,
+    database,
     log,
     people: createPeople({ persons: ['u1'] }),
   })
-  expect(log).toHaveBeenCalledWith(
-    `[b2] ignoring state file ${JSON.stringify(join(directory, 'state.json'))}: invalid JSON`,
-  )
+  expect(log).toHaveBeenCalledWith('[b2] ignoring a saved request: invalid or missing fields')
   const asked = running.bot.service.request({ ...REQUEST, recipient: 'u1' })
   await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
-  await vi.waitFor(() =>
-    expect(JSON.parse(readFileSync(join(directory, 'state.json'), 'utf8')).requests).toHaveLength(
-      1,
-    ),
-  )
+  await vi.waitFor(() => expect(countRequests(database)).toBe(1))
   runtime.handlers?.answer(runtime.sent[0]?.id ?? '', 0)
   await asked
-  const events = readFileSync(join(directory, 'audit.jsonl'), 'utf8')
+  const events = formatAuditLines(database, 'b2')
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line).event)
@@ -432,7 +439,7 @@ test('rejected credentials stop the runtime and throw with the provider reason',
 })
 
 test('abandon rejects every open question and drops their saved records', async () => {
-  const directory = createDirectory()
+  const database = createDatabase()
   const stop = vi.fn(async () => undefined)
   const provider = createFakeProvider({
     name: 'fakepair',
@@ -441,7 +448,7 @@ test('abandon rejects every open question and drops their saved records', async 
   })
   const { running, runtime } = await start({
     provider,
-    directory,
+    database,
     people: createPeople({ persons: ['u1', 'u2'] }),
   })
   const first = running.bot.service.request({ ...REQUEST, recipient: 'u1' })
@@ -452,5 +459,5 @@ test('abandon rejects every open question and drops their saved records', async 
   expect(await first).toEqual(declined)
   expect(await second).toEqual(declined)
   expect(stop).toHaveBeenCalledTimes(1)
-  expect(JSON.parse(readFileSync(join(directory, 'state.json'), 'utf8')).requests).toEqual([])
+  expect(countRequests(database)).toBe(0)
 })

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,12 +7,11 @@ import {
   applySeed,
   createEmptyRegistry,
   loadSeed,
-  migrateLegacyBotFiles,
   NO_CLIENT_TOKEN,
+  openDatabase,
   RegistryStore,
   resolveAdminKeyPath,
-  resolveBotFiles,
-  resolveRegistryPath,
+  resolveDatabasePath,
 } from '@jaypost/store'
 import { startService } from '@jaypost/service'
 import type { RunningService } from '@jaypost/service'
@@ -223,13 +222,13 @@ test('versions compare numerically: 0.10.0 and 1.0.0 are fine, unparsable is too
   expect(err[0]).toContain('(banana)')
 })
 
-test('legacy and 0.4.0 installs are too old and nothing runs', async () => {
-  for (const recordVersion of ['0.4.0', 'legacy']) {
+test('legacy, 0.4.0 and 0.9.0 installs are too old and nothing runs', async () => {
+  for (const recordVersion of ['0.4.0', '0.9.0', 'legacy']) {
     err = []
     const targets = setup('', '1.0.0', recordVersion)
     expect(await runLog({}, deps(targets))).toBe(1)
     expect(err).toEqual([
-      `the installed service (${recordVersion}) doesn't keep a log; run jaypost init to upgrade`,
+      `the installed service (${recordVersion}) keeps its log where this CLI can't read it; run jaypost init to upgrade`,
     ])
     expect(targets.systemd.readAuditLog).not.toHaveBeenCalled()
   }
@@ -249,50 +248,99 @@ test('a failing readAuditLog prints its message and exits 1', async () => {
   expect(out).toEqual([])
 })
 
-test('without an install reads the files next to the env config', async () => {
-  const directory = join(tmp, 'elsewhere')
-  mkdirSync(directory)
-  writeFileSync(join(directory, 'audit.jsonl'), asked('a', '2026-10-19T06:00:00.000Z'))
-  const targets = {
+/** Seeds the db next to `configPath` with the seed bot (b1) as the service would have. */
+function seedRegistry(configPath: string): void {
+  writeFileSync(configPath, JSON.stringify({ provider: 'fakepair', fakeKey: 'k', fakeOwner: 'u1' }))
+  const loaded = loadSeed({ JAYPOST_CONFIG: configPath }, PAIRING_PROVIDERS)
+  if (loaded.kind !== 'seed') {
+    throw new Error(loaded.message)
+  }
+  const seeded = applySeed(createEmptyRegistry(), loaded.seed, true, () => 'SEED1111', NOW)
+  const database = openDatabase(resolveDatabasePath(configPath))
+  try {
+    new RegistryStore(database).save(seeded.registry)
+  } finally {
+    database.close()
+  }
+}
+
+function noTargets() {
+  return {
     quadlet: fake('quadlet'),
     compose: fake('compose'),
     systemd: fake('systemd'),
     launchd: fake('launchd'),
   }
-  const code = await runLog(
-    {},
-    deps(targets, { env: { HOME: tmp, JAYPOST_CONFIG: join(directory, 'config.json') } }),
-  )
+}
+
+test('without an install reads the db next to the env config', async () => {
+  const directory = join(tmp, 'elsewhere')
+  mkdirSync(directory)
+  const configPath = join(directory, 'config.json')
+  seedRegistry(configPath)
+  saveQuestions(configPath, asked('a', '2026-10-19T06:00:00.000Z'))
+  const targets = noTargets()
+  const code = await runLog({}, deps(targets, { env: { HOME: tmp, JAYPOST_CONFIG: configPath } }))
   expect(code).toBe(0)
   expect(out[0]).toContain('question a')
   expect(targets.systemd.readAuditLog).not.toHaveBeenCalled()
 })
 
-test.skipIf(process.getuid?.() === 0)(
-  'without an install, an unreadable log exits 1 with the path',
-  async () => {
-    const directory = join(tmp, 'elsewhere')
-    mkdirSync(directory)
-    const file = join(directory, 'audit.jsonl')
-    writeFileSync(file, asked('a', '2026-10-19T06:00:00.000Z'))
-    chmodSync(file, 0o000)
-    const targets = {
-      quadlet: fake('quadlet'),
-      compose: fake('compose'),
-      systemd: fake('systemd'),
-      launchd: fake('launchd'),
-    }
-    const code = await runLog(
-      {},
-      deps(targets, { env: { HOME: tmp, JAYPOST_CONFIG: join(directory, 'config.json') } }),
-    )
-    expect(code).toBe(1)
-    expect(err).toHaveLength(1)
-    expect(err[0]).toContain(file)
-  },
-)
+test('without an install and no db prints the empty message and creates no db', async () => {
+  const directory = join(tmp, 'elsewhere')
+  mkdirSync(directory)
+  const configPath = join(directory, 'config.json')
+  const code = await runLog(
+    {},
+    deps(noTargets(), { env: { HOME: tmp, JAYPOST_CONFIG: configPath } }),
+  )
+  expect(code).toBe(0)
+  expect(out).toEqual(['No questions logged.'])
+  expect(existsSync(resolveDatabasePath(configPath))).toBe(false)
+})
+
+test('without an install, a corrupt db exits 1 with a message', async () => {
+  const directory = join(tmp, 'elsewhere')
+  mkdirSync(directory)
+  const configPath = join(directory, 'config.json')
+  writeFileSync(resolveDatabasePath(configPath), 'not a database'.repeat(100))
+  const code = await runLog(
+    {},
+    deps(noTargets(), { env: { HOME: tmp, JAYPOST_CONFIG: configPath } }),
+  )
+  expect(code).toBe(1)
+  expect(err).toHaveLength(1)
+  expect(out).toEqual([])
+})
 
 type Started = { readonly port: number; readonly adminKey: string; readonly configPath: string }
+
+/** Puts the jsonl `log` lines into bot 1's question rows, as the service would have written them. */
+function saveQuestions(configPath: string, log: string): void {
+  const database = openDatabase(resolveDatabasePath(configPath))
+  try {
+    for (const line of log.split('\n').filter(Boolean)) {
+      const record = JSON.parse(line)
+      database
+        .prepare(
+          "INSERT INTO questions (bot_id, id, asked_at, project, text, options, timeout_option, timeout_seconds, key_id, pairing_id) VALUES ('b1', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          record.id,
+          record.at,
+          record.project ?? null,
+          record.text,
+          JSON.stringify(record.options),
+          record.timeoutOption,
+          record.timeoutSeconds,
+          record.key ?? null,
+          record.pairing ?? null,
+        )
+    }
+  } finally {
+    database.close()
+  }
+}
 
 /** A real service whose bot 1 (fakepair) is paired to u1 with key 1, its log holding `log`. */
 async function start(log: string): Promise<Started> {
@@ -318,9 +366,7 @@ async function start(log: string): Promise<Started> {
   await running.started
   await running.server.listen({ port: 0, host: '127.0.0.1' })
   const { port } = running.server.server.address() as AddressInfo
-  const files = resolveBotFiles(configPath, 'b1')
-  mkdirSync(files.directory, { recursive: true })
-  writeFileSync(files.auditPath, log)
+  saveQuestions(configPath, log)
   const adminKey = readFileSync(resolveAdminKeyPath(configPath), 'utf8').trim()
   return { port, adminKey, configPath }
 }
@@ -336,24 +382,26 @@ function installedOn(port: number, adminKey: string, log = '') {
 const TWO_KEYS_LOG =
   askedBy('a', '2026-10-19T06:00:00.000Z', 'k1') + askedBy('b', '2026-10-19T06:01:00.000Z', 'k2')
 
-test('audit dump prints bot 1 lines after the upgrade moved them', () => {
+test("audit dump prints the seed bot's lines, not other bots'", () => {
   const directory = join(tmp, 'data')
   mkdirSync(directory)
   const configPath = join(directory, 'config.json')
-  writeFileSync(configPath, JSON.stringify({ provider: 'fakepair', fakeKey: 'k', fakeOwner: 'u1' }))
-  writeFileSync(join(directory, 'audit.jsonl'), asked('a', '2026-10-19T06:00:00.000Z'))
-  const env = { JAYPOST_CONFIG: configPath }
-  const loaded = loadSeed(env, PAIRING_PROVIDERS)
-  if (loaded.kind !== 'seed') {
-    throw new Error(loaded.message)
+  seedRegistry(configPath)
+  saveQuestions(configPath, asked('a', '2026-10-19T06:00:00.000Z'))
+  const database = openDatabase(resolveDatabasePath(configPath))
+  try {
+    database
+      .prepare(
+        "INSERT INTO questions (bot_id, id, asked_at, text, options, timeout_option, timeout_seconds) VALUES ('b2', 'x', '2026-10-19T06:30:00.000Z', 'other', '[]', 'No', 1)",
+      )
+      .run()
+  } finally {
+    database.close()
   }
-  const seeded = applySeed(createEmptyRegistry(), loaded.seed, true, () => 'SEED1111', NOW)
-  new RegistryStore(resolveRegistryPath(configPath)).save(seeded.registry)
-  migrateLegacyBotFiles(configPath, 'b1')
-  expect(existsSync(join(directory, 'audit.jsonl'))).toBe(false)
   const written: string[] = []
-  expect(runAudit(['dump'], env, (text) => written.push(text))).toBe(0)
-  expect(written).toEqual([asked('a', '2026-10-19T06:00:00.000Z')])
+  expect(runAudit(['dump'], { JAYPOST_CONFIG: configPath }, (text) => written.push(text))).toBe(0)
+  const lines = written.join('').split('\n').filter(Boolean)
+  expect(lines.map((line) => JSON.parse(line).id)).toEqual(['a'])
 })
 
 test('log --key k2 goes through the admin route with the local admin key', async () => {
@@ -441,7 +489,13 @@ test('log with a corrupt registry and no install exits 1 without quoting it', as
   const directory = join(tmp, 'elsewhere')
   mkdirSync(directory)
   const configPath = join(directory, 'config.json')
-  writeFileSync(resolveRegistryPath(configPath), '{"bots": "secret-bot-token"')
+  const database = openDatabase(resolveDatabasePath(configPath))
+  database
+    .prepare(
+      "INSERT INTO bots (id, provider, settings, created_at) VALUES ('b1', 'fakepair', ?, '')",
+    )
+    .run('{"fakeKey": "secret-bot-token"')
+  database.close()
   const targets = {
     quadlet: fake('quadlet'),
     compose: fake('compose'),
@@ -452,6 +506,6 @@ test('log with a corrupt registry and no install exits 1 without quoting it', as
     1,
   )
   expect(err).toEqual([
-    `registry file ${JSON.stringify(resolveRegistryPath(configPath))} contains invalid JSON`,
+    `database ${JSON.stringify(resolveDatabasePath(configPath))} has an invalid registry`,
   ])
 })
