@@ -1,18 +1,19 @@
 export {
-  AUDIT_FILE_NAME,
+  AUDIT_RETENTION_MS,
   AuditLog,
   DEFAULT_LOG_LIMIT,
   formatAuditJsonLines,
+  formatAuditLines,
   formatAuditTable,
   MIN_AUDIT_VERSION,
   parseAuditLog,
   parseSince,
-  readAuditFiles,
-  removeAuditFiles,
-  resolveAuditPath,
+  pruneAuditLog,
+  readAuditEntries,
+  readSeedAuditLog,
   selectAuditEntries,
 } from './audit/index.ts'
-export type { AuditEntry, AuditFilter, AuditReadResult } from './audit/index.ts'
+export type { AuditEntry, AuditFilter, AuditReadResult, BotAuditEntry } from './audit/index.ts'
 export {
   AUTHORIZATION_PATTERN,
   generateToken,
@@ -29,6 +30,13 @@ export {
   writeTokenFile,
 } from './auth/index.ts'
 export type { ApiAuth, ClientToken } from './auth/index.ts'
+export {
+  DATABASE_FILE_NAME,
+  openDatabase,
+  removeDatabaseFiles,
+  resolveDatabasePath,
+  SCHEMA_VERSION,
+} from './database/index.ts'
 export { URL_ENV_VAR } from './config/constants.ts'
 export {
   APPROVERS_ENV_VAR,
@@ -54,7 +62,6 @@ export {
   ADMIN_KEY_PREFIX,
   API_KEY_PREFIX,
   applySeed,
-  BOTS_DIRECTORY_NAME,
   claimCode,
   claimPairing,
   countBotRecords,
@@ -72,24 +79,18 @@ export {
   loadSeed,
   listKeys,
   LOCAL_PERSON,
-  migrateLegacyBotFiles,
-  REGISTRY_FILE_NAME,
   RegistryStore,
   removeBot,
   removePairing,
   resetPairing,
   resolveAdminKey,
   resolveAdminKeyPath,
-  resolveBotFiles,
-  resolveRegistryPath,
-  resolveSeedAuditPath,
   revokeKey,
   updateKey,
   updatePairingQuiet,
   writeAdminKeyFile,
 } from './registry/index.ts'
 export type {
-  BotFiles,
   BotRecord,
   BotRecordCounts,
   ClaimCodeResult,
@@ -106,7 +107,7 @@ export type {
   SeedLoad,
   SeedRecord,
 } from './registry/index.ts'
-export { resolveStatePath, STATE_FILE_NAME, StateStore } from './state/index.ts'
+export { StateStore } from './state/index.ts'
 export {
   ensureLinger,
   isMissingFileError,

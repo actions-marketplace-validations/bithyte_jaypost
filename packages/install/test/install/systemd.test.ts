@@ -13,7 +13,15 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, expect, test, vi } from 'vite-plus/test'
-import { MissingCommandError, NO_AUTH, readConfigFile } from '@jaypost/store'
+import {
+  createEmptyRegistry,
+  MissingCommandError,
+  NO_AUTH,
+  openDatabase,
+  readConfigFile,
+  RegistryStore,
+  resolveDatabasePath,
+} from '@jaypost/store'
 import {
   resolveInstallPaths,
   createSystemdTarget,
@@ -201,8 +209,8 @@ test('already global: no npm install', async () => {
 test('remove without purge keeps config; with purge deletes it', async () => {
   const { t, paths } = make()
   const rec = await t.install(base)
-  const stateFile = join(dirname(paths.configFile), 'state.json')
-  writeFileSync(stateFile, '{}')
+  const stateFile = resolveDatabasePath(paths.configFile)
+  writeFileSync(stateFile, 'db')
   await t.remove(rec, false)
   expect(existsSync(paths.systemdUnit)).toBe(false)
   expect(existsSync(paths.configFile)).toBe(true)
@@ -265,8 +273,8 @@ test('relative JAYPOST_CONFIG is resolved to an absolute path and recorded', asy
 test('readSecrets, clearOwner and purge use the recorded configFile, not the env', async () => {
   const recorded = join(tmp, 'recorded.json')
   writeFileSync(recorded, JSON.stringify({ botToken: 'rt', ownerId: 5 }))
-  const recordedState = join(tmp, 'state.json')
-  writeFileSync(recordedState, '{}')
+  const recordedState = resolveDatabasePath(recorded)
+  writeFileSync(recordedState, 'db')
   const { t, paths } = make({ JAYPOST_CONFIG: join(tmp, 'other.json') })
   const rec = { target: 'systemd' as const, port: 1, version: 'v', configFile: recorded }
   expect(await t.readSecrets(rec)).toEqual({
@@ -292,11 +300,28 @@ test('forgetSeedOwner removes the owner from the recorded configFile only', asyn
   expect(calls).toEqual([])
 })
 
-test('readAuditLog reads both files next to the recorded configFile', async () => {
+function seedQuestionDb(configFile: string, botId: string): void {
+  const database = openDatabase(resolveDatabasePath(configFile))
+  try {
+    new RegistryStore(database).save({
+      ...createEmptyRegistry(),
+      lastIds: { bot: 3, pairing: 1, key: 1 },
+      seed: { fingerprint: 'f', botId, pairingId: 'p1', keyId: 'k1', isOpen: false },
+    })
+    const insert = database.prepare(
+      "INSERT INTO questions (bot_id, id, asked_at, text, options, timeout_option, timeout_seconds) VALUES (?, ?, '2026-10-19T06:00:00.000Z', 'q', '[]', 'No', 1)",
+    )
+    insert.run(botId, 'mine')
+    insert.run('b9', 'theirs')
+  } finally {
+    database.close()
+  }
+}
+
+test("readAuditLog reads the seed bot's questions from the recorded configFile's db", async () => {
   const directory = join(tmp, 'recorded-dir')
   mkdirSync(directory)
-  writeFileSync(join(directory, 'audit.jsonl.1'), 'old\n')
-  writeFileSync(join(directory, 'audit.jsonl'), 'new\n')
+  seedQuestionDb(join(directory, 'config.json'), 'b3')
   const { t } = make({ JAYPOST_CONFIG: join(tmp, 'other.json') })
   const rec = {
     target: 'systemd' as const,
@@ -304,88 +329,53 @@ test('readAuditLog reads both files next to the recorded configFile', async () =
     version: 'v',
     configFile: join(directory, 'config.json'),
   }
-  expect(await t.readAuditLog(rec)).toBe('old\nnew\n')
-  expect(await t.readAuditLog({ ...rec, configFile: join(tmp, 'empty', 'config.json') })).toBe('')
+  const lines = (await t.readAuditLog(rec)).split('\n').filter(Boolean)
+  expect(lines.map((line) => JSON.parse(line).id)).toEqual(['mine'])
+  const missing = join(tmp, 'empty', 'config.json')
+  expect(await t.readAuditLog({ ...rec, configFile: missing })).toBe('')
+  expect(existsSync(resolveDatabasePath(missing))).toBe(false)
 })
 
-test('purge deletes audit.jsonl and audit.jsonl.1; remove without purge keeps them', async () => {
+test('purge deletes the db with its wal and shm; remove without purge keeps them', async () => {
   const configFile = join(tmp, 'config.json')
   writeFileSync(configFile, '{}')
-  const current = join(tmp, 'audit.jsonl')
-  const rotated = join(tmp, 'audit.jsonl.1')
-  writeFileSync(current, 'a\n')
-  writeFileSync(rotated, 'b\n')
-  const { t } = make()
-  const rec = { target: 'systemd' as const, port: 1, version: 'v', configFile }
-  await t.remove(rec, false)
-  expect(existsSync(current)).toBe(true)
-  expect(existsSync(rotated)).toBe(true)
-  vi.spyOn(console, 'log').mockImplementation(() => {})
-  await t.remove(rec, true)
-  expect(existsSync(current)).toBe(false)
-  expect(existsSync(rotated)).toBe(false)
-})
-
-test('native purge removes the registry, admin key and bot directories', async () => {
-  const configFile = join(tmp, 'config.json')
-  writeFileSync(configFile, '{}')
-  const registry = join(tmp, 'registry.json')
   const adminKey = join(tmp, 'admin-key')
-  const botAudit = join(tmp, 'bots', 'b2', 'audit.jsonl')
-  writeFileSync(registry, '{}')
   writeFileSync(adminKey, 'key\n')
-  mkdirSync(dirname(botAudit), { recursive: true })
-  writeFileSync(botAudit, 'a\n')
-  writeFileSync(join(tmp, 'bots', 'b2', 'state.json'), '{}')
+  const databasePath = resolveDatabasePath(configFile)
+  const files = [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]
+  for (const file of files) {
+    writeFileSync(file, 'x')
+  }
   const { t } = make()
   const rec = { target: 'systemd' as const, port: 1, version: 'v', configFile }
   await t.remove(rec, false)
-  expect([existsSync(registry), existsSync(adminKey), existsSync(botAudit)]).toEqual([
+  expect([...files, adminKey, configFile].map((file) => existsSync(file))).toEqual([
+    true,
+    true,
     true,
     true,
     true,
   ])
   vi.spyOn(console, 'log').mockImplementation(() => {})
   await t.remove(rec, true)
-  expect([existsSync(registry), existsSync(adminKey), existsSync(join(tmp, 'bots'))]).toEqual([
+  expect([...files, adminKey, configFile].map((file) => existsSync(file))).toEqual([
+    false,
+    false,
     false,
     false,
     false,
   ])
-})
-
-test("readAuditLog reads the seed bot's files once the registry has a seed", async () => {
-  const directory = join(tmp, 'recorded-dir')
-  mkdirSync(join(directory, 'bots', 'b3'), { recursive: true })
-  writeFileSync(join(directory, 'audit.jsonl'), 'legacy\n')
-  writeFileSync(join(directory, 'bots', 'b3', 'audit.jsonl.1'), 'old\n')
-  writeFileSync(join(directory, 'bots', 'b3', 'audit.jsonl'), 'new\n')
-  writeFileSync(
-    join(directory, 'registry.json'),
-    JSON.stringify({
-      version: 1,
-      lastIds: { bot: 3, pairing: 1, key: 1 },
-      bots: [],
-      pairings: [],
-      keys: [],
-      seed: { fingerprint: 'f', botId: 'b3', pairingId: 'p1', keyId: 'k1', isOpen: false },
-    }),
-  )
-  const { t } = make()
-  const rec = {
-    target: 'systemd' as const,
-    port: 1,
-    version: 'v',
-    configFile: join(directory, 'config.json'),
-  }
-  expect(await t.readAuditLog(rec)).toBe('old\nnew\n')
 })
 
 test('readAuditLog with a corrupt registry throws without quoting it', async () => {
   const directory = join(tmp, 'recorded-dir')
   mkdirSync(directory)
-  const registry = join(directory, 'registry.json')
-  writeFileSync(registry, '{"bots": "secret-bot-token"')
+  const databasePath = resolveDatabasePath(join(directory, 'config.json'))
+  const database = openDatabase(databasePath)
+  database
+    .prepare("INSERT INTO bots (id, provider, settings, created_at) VALUES ('b1', 'fake', ?, '')")
+    .run('{"fakeKey": "secret-bot-token"')
+  database.close()
   const { t } = make()
   const rec = {
     target: 'systemd' as const,
@@ -394,8 +384,9 @@ test('readAuditLog with a corrupt registry throws without quoting it', async () 
     configFile: join(directory, 'config.json'),
   }
   await expect(t.readAuditLog(rec)).rejects.toThrow(
-    `registry file ${JSON.stringify(registry)} contains invalid JSON`,
+    `database ${JSON.stringify(databasePath)} has an invalid registry`,
   )
+  await expect(t.readAuditLog(rec)).rejects.not.toThrow(/secret-bot-token/)
 })
 
 test('install without ownerId keeps a stored owner', async () => {
